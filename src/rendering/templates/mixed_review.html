@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mixed Practice — {{ course_title }}</title>
+    <style>
+{{ css|safe }}
+    </style>
+    <script>
+    (function(){
+        try {
+            var k = 'lxp_{{ course_slug }}_theme';
+            var t = localStorage.getItem(k);
+            if (t) document.documentElement.setAttribute('data-theme', t);
+        } catch(e) {}
+    })();
+    </script>
+</head>
+<body style="overflow-y: auto; height: auto;">
+
+<nav class="course-header">
+    <div class="course-header-left">
+        <a href="index.html" class="breadcrumb-home" title="Back to course index">{{ course_title }}</a>
+        <span class="breadcrumb-sep">/</span>
+        <span class="breadcrumb-current">Mixed Practice</span>
+    </div>
+    <div class="course-header-right">
+        <a href="review.html" class="review-crossnav">&#8592; Switch to Spaced Review</a>
+        <button class="theme-toggle" onclick="__lxpToggleTheme()" title="Toggle theme">&#9788;</button>
+    </div>
+</nav>
+
+<div class="index-container">
+    <h1 class="index-title">Mixed Practice</h1>
+    <p class="index-subtitle" id="mixedSubtitle">Interleaved exercises from across chapters</p>
+
+    <div id="emptyState" style="display:none; text-align:center; margin-top:3rem;">
+        <p style="font-size:1.2rem; color:var(--text-muted);">No exercises available yet.</p>
+        <p style="color:var(--text-muted); margin-top:0.5rem;">Complete some chapter exercises to populate your mixed practice deck.</p>
+        <a href="index.html" class="nav-btn" style="display:inline-block; margin-top:1.5rem; text-decoration:none;">Back to Course</a>
+    </div>
+
+    <div id="doneState" style="display:none; text-align:center; margin-top:3rem;">
+        <p style="font-size:1.5rem; color:var(--success); font-weight:700;">Session Complete!</p>
+        <p style="color:var(--text-muted); margin-top:0.5rem;" id="sessionSummary"></p>
+        <a href="index.html" class="nav-btn" style="display:inline-block; margin-top:1.5rem; text-decoration:none;">Back to Course</a>
+        <button class="nav-btn" style="display:inline-block; margin-top:1.5rem; margin-left:0.5rem;" onclick="location.reload()">Practice Again</button>
+    </div>
+
+    <div id="exerciseArea" style="display:none;">
+        <div class="review-stats" id="mixedStats">
+            <span class="review-stat"><strong id="statTotal">0</strong> exercises</span>
+            <span class="review-stat"><strong id="statChapters">0</strong> chapters</span>
+            <span class="review-stat"><strong id="statCorrect">0</strong> correct</span>
+        </div>
+
+        <div id="exerciseCard" class="mixed-exercise-card"></div>
+
+        <div class="review-progress" id="exerciseProgress"></div>
+    </div>
+</div>
+
+<script>
+// ── Learner Model ─────────────────────────────────────────────────────────
+{% include '_learner_model.js' %}
+
+// ── FSRS-5 Algorithm (shared) ────────────────────────────────────────────
+{% include '_fsrs.js' %}
+
+// ── Theme toggle ──────────────────────────────────────────────────────────
+window.__lxpToggleTheme = function() {
+    var current = document.documentElement.getAttribute('data-theme') || 'dark';
+    var next = current === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    try { localStorage.setItem('lxp_{{ course_slug }}_theme', next); } catch(e) {}
+    var btn = document.querySelector('.theme-toggle');
+    if (btn) btn.textContent = next === 'dark' ? '\u2606' : '\u263D';
+};
+(function() {
+    var theme = document.documentElement.getAttribute('data-theme') || 'dark';
+    var btn = document.querySelector('.theme-toggle');
+    if (btn) btn.textContent = theme === 'dark' ? '\u2606' : '\u263D';
+})();
+
+// ── Mixed Practice Session ───────────────────────────────────────────────
+(function() {
+    var COURSE_SLUG = '{{ course_slug }}';
+    var EXERCISES_KEY = 'lxp_' + COURSE_SLUG + '_exercises';
+    var PROGRESS_KEY = 'lxp_' + COURSE_SLUG + '_progress';
+    var learnerModel = __lxpCreateLearnerModel(COURSE_SLUG);
+
+    var BLOOM_ORDER = { 'remember': 1, 'understand': 2, 'apply': 3,
+                        'analyze': 4, 'evaluate': 5, 'create': 6 };
+
+    var exercises = [];
+    try { exercises = JSON.parse(localStorage.getItem(EXERCISES_KEY) || '[]'); } catch(e) {}
+
+    // Filter to chapters with any attempted sections (includes partially completed)
+    var eligibleChapters = {};
+    try {
+        var progress = JSON.parse(localStorage.getItem(PROGRESS_KEY) || '{}');
+        var chapters = progress.chapters || {};
+        Object.keys(chapters).forEach(function(k) {
+            var ch = chapters[k];
+            // Include fully completed chapters
+            if (ch.completed) {
+                eligibleChapters[parseInt(k)] = true;
+                return;
+            }
+            // Also include partially completed chapters (any attempted sections)
+            if (ch.sectionMastery) {
+                var hasAttempted = false;
+                Object.keys(ch.sectionMastery).forEach(function(key) {
+                    if (ch.sectionMastery[key].attempted > 0) hasAttempted = true;
+                });
+                if (hasAttempted) eligibleChapters[parseInt(k)] = true;
+            }
+        });
+    } catch(e) {}
+
+    exercises = exercises.filter(function(ex) {
+        return eligibleChapters[ex.chapter];
+    });
+
+    if (exercises.length === 0) {
+        document.getElementById('emptyState').style.display = 'block';
+        return;
+    }
+
+    // Sort by least recently practiced first (deprioritize recently-practiced items)
+    exercises.sort(function(a, b) {
+        var ta = a.lastPracticed ? new Date(a.lastPracticed).getTime() : 0;
+        var tb = b.lastPracticed ? new Date(b.lastPracticed).getTime() : 0;
+        return ta - tb;  // least recently practiced first
+    });
+
+    // Sort by Bloom level for difficulty ramp
+    exercises.sort(function(a, b) {
+        var aLevel = BLOOM_ORDER[a.bloom.toLowerCase()] || 3;
+        var bLevel = BLOOM_ORDER[b.bloom.toLowerCase()] || 3;
+        return aLevel - bLevel;
+    });
+
+    // Interleave: ensure adjacent exercises are from different chapters
+    var interleaved = [];
+    var buckets = {};
+    exercises.forEach(function(ex) {
+        if (!buckets[ex.chapter]) buckets[ex.chapter] = [];
+        buckets[ex.chapter].push(ex);
+    });
+    var chapterKeys = Object.keys(buckets);
+
+    // Round-robin across chapters within each Bloom tier
+    var bloomTiers = {};
+    exercises.forEach(function(ex) {
+        var tier = BLOOM_ORDER[ex.bloom.toLowerCase()] || 3;
+        if (!bloomTiers[tier]) bloomTiers[tier] = {};
+        if (!bloomTiers[tier][ex.chapter]) bloomTiers[tier][ex.chapter] = [];
+        bloomTiers[tier][ex.chapter].push(ex);
+    });
+
+    var tierKeys = Object.keys(bloomTiers).sort(function(a, b) { return a - b; });
+    tierKeys.forEach(function(tier) {
+        var tierBuckets = bloomTiers[tier];
+        var tierChapters = Object.keys(tierBuckets);
+        var maxLen = 0;
+        tierChapters.forEach(function(ch) {
+            if (tierBuckets[ch].length > maxLen) maxLen = tierBuckets[ch].length;
+        });
+        for (var i = 0; i < maxLen; i++) {
+            tierChapters.forEach(function(ch) {
+                if (i < tierBuckets[ch].length) {
+                    interleaved.push(tierBuckets[ch][i]);
+                }
+            });
+        }
+    });
+
+    // Cap at 30 exercises per session
+    interleaved = interleaved.slice(0, 30);
+
+    var uniqueChapters = {};
+    interleaved.forEach(function(ex) { uniqueChapters[ex.chapter] = true; });
+
+    document.getElementById('statTotal').textContent = interleaved.length;
+    document.getElementById('statChapters').textContent = Object.keys(uniqueChapters).length;
+    document.getElementById('exerciseArea').style.display = 'block';
+    document.getElementById('mixedSubtitle').textContent =
+        'Interleaved exercises from ' + Object.keys(uniqueChapters).length + ' chapters';
+
+    var currentIdx = 0;
+    var correctCount = 0;
+
+    function renderExercise() {
+        if (currentIdx >= interleaved.length) {
+            document.getElementById('exerciseArea').style.display = 'none';
+            document.getElementById('doneState').style.display = 'block';
+            var pct = Math.round(correctCount / interleaved.length * 100);
+            document.getElementById('sessionSummary').textContent =
+                correctCount + ' / ' + interleaved.length + ' correct (' + pct + '%)';
+
+            // Record session in learner model
+            learnerModel.recordSession(0, interleaved.length, pct / 100);
+            return;
+        }
+
+        var ex = interleaved[currentIdx];
+        var card = document.getElementById('exerciseCard');
+        document.getElementById('exerciseProgress').textContent =
+            (currentIdx + 1) + ' / ' + interleaved.length;
+
+        if (ex.type === 'quiz') {
+            renderQuiz(card, ex);
+        } else if (ex.type === 'fitb') {
+            renderFitb(card, ex);
+        } else if (ex.type === 'matching') {
+            renderMatching(card, ex);
+        } else if (ex.type === 'self_explain') {
+            renderSelfExplain(card, ex);
+        }
+    }
+
+    function renderQuiz(container, ex) {
+        var q = ex.data;
+        var html = '<div class="quiz-container">' +
+            '<div class="quiz-title">Chapter ' + ex.chapter + ' — ' + ex.section + '</div>';
+        if (ex.bloom) {
+            html += '<span class="bloom-badge bloom-' + ex.bloom.toLowerCase() + '">' +
+                    ex.bloom + '</span>';
+        }
+        html += '<div class="quiz-question"><p class="quiz-question-text">' +
+                escapeHtml(q.question) + '</p><ul class="quiz-options">';
+        q.options.forEach(function(opt, i) {
+            html += '<li class="quiz-option" data-idx="' + i + '" onclick="selectMixedOption(this)">' +
+                    '<span class="quiz-option-marker">' + String.fromCharCode(65 + i) + '</span>' +
+                    '<span>' + escapeHtml(opt) + '</span></li>';
+        });
+        html += '</ul><div class="quiz-explanation" id="mixedExplanation">' +
+                escapeHtml(q.explanation) + '</div>' +
+                '<button class="quiz-check-btn" id="mixedCheckBtn" onclick="checkMixedQuiz(' +
+                q.correct + ')" disabled>Check Answer</button></div></div>';
+        container.innerHTML = html;
+    }
+
+    var selectedOption = -1;
+
+    window.selectMixedOption = function(el) {
+        var opts = el.parentNode.querySelectorAll('.quiz-option');
+        opts.forEach(function(o) { o.classList.remove('selected'); });
+        el.classList.add('selected');
+        selectedOption = parseInt(el.dataset.idx);
+        document.getElementById('mixedCheckBtn').disabled = false;
+    };
+
+    window.checkMixedQuiz = function(correctIdx) {
+        var opts = document.querySelectorAll('#exerciseCard .quiz-option');
+        opts.forEach(function(o) {
+            o.onclick = null;
+            var idx = parseInt(o.dataset.idx);
+            if (idx === correctIdx) o.classList.add('correct');
+            if (idx === selectedOption && idx !== correctIdx) o.classList.add('incorrect');
+        });
+        document.getElementById('mixedExplanation').classList.add('visible');
+        document.getElementById('mixedCheckBtn').style.display = 'none';
+
+        var isCorrect = selectedOption === correctIdx;
+        if (isCorrect) correctCount++;
+        document.getElementById('statCorrect').textContent = correctCount;
+
+        // Record in learner model
+        var ex = interleaved[currentIdx];
+        if (ex && ex.concepts && ex.concepts.length > 0) {
+            learnerModel.recordAnswer(ex.concepts, ex.bloom || '', isCorrect);
+        }
+
+        // Persist exercise state across sessions
+        try {
+            var storedExercises = JSON.parse(localStorage.getItem(EXERCISES_KEY) || '[]');
+            if (Array.isArray(storedExercises) && currentIdx < interleaved.length) {
+                var currentEx = interleaved[currentIdx];
+                for (var sei = 0; sei < storedExercises.length; sei++) {
+                    if (storedExercises[sei].data && currentEx.data &&
+                        storedExercises[sei].data.question === currentEx.data.question &&
+                        storedExercises[sei].chapter === currentEx.chapter) {
+                        storedExercises[sei].lastPracticed = new Date().toISOString();
+                        storedExercises[sei].practiceCount = (storedExercises[sei].practiceCount || 0) + 1;
+                        storedExercises[sei].lastResult = isCorrect ? 'correct' : 'incorrect';
+                        break;
+                    }
+                }
+                localStorage.setItem(EXERCISES_KEY, JSON.stringify(storedExercises));
+            }
+        } catch(e) {}
+
+        addNextButton();
+    };
+
+    function renderFitb(container, ex) {
+        var q = ex.data;
+        var html = '<div class="fitb-container">' +
+            '<div class="quiz-title">Chapter ' + ex.chapter + ' — ' + ex.section + '</div>';
+        if (ex.bloom) {
+            html += '<span class="bloom-badge bloom-' + ex.bloom.toLowerCase() + '">' +
+                    ex.bloom + '</span>';
+        }
+        html += '<p class="fitb-statement">';
+        // Create input fields for blanks
+        var blanksCount = q.answers.length;
+        for (var i = 0; i < blanksCount; i++) {
+            html += '<input type="text" class="fitb-blank" data-blank-index="' + i +
+                    '" placeholder="...">';
+            if (i < blanksCount - 1) html += ' ';
+        }
+        html += '</p>';
+        if (q.hint) {
+            html += '<p class="fitb-hint" style="display:none;">' + escapeHtml(q.hint) + '</p>';
+        }
+        html += '<button class="quiz-check-btn" onclick="checkMixedFitb()">Check</button></div>';
+        container.innerHTML = html;
+        container.dataset.answers = JSON.stringify(q.answers);
+    }
+
+    window.checkMixedFitb = function() {
+        var container = document.getElementById('exerciseCard');
+        var answers = JSON.parse(container.dataset.answers || '[]');
+        var blanks = container.querySelectorAll('.fitb-blank');
+        var allCorrect = true;
+
+        blanks.forEach(function(blank, i) {
+            var expected = (answers[i] || '').trim().toLowerCase();
+            var given = blank.value.trim().toLowerCase();
+            if (given === expected) {
+                blank.classList.add('correct');
+                blank.classList.remove('incorrect');
+            } else {
+                blank.classList.add('incorrect');
+                blank.classList.remove('correct');
+                blank.value = answers[i];
+                allCorrect = false;
+            }
+            blank.disabled = true;
+        });
+
+        var hint = container.querySelector('.fitb-hint');
+        if (hint) hint.style.display = 'block';
+
+        if (allCorrect) correctCount++;
+        document.getElementById('statCorrect').textContent = correctCount;
+
+        // Record in learner model
+        var ex = interleaved[currentIdx];
+        if (ex && ex.concepts && ex.concepts.length > 0) {
+            learnerModel.recordAnswer(ex.concepts, ex.bloom || '', allCorrect);
+        }
+
+        // Persist exercise state across sessions
+        try {
+            var storedExercises = JSON.parse(localStorage.getItem(EXERCISES_KEY) || '[]');
+            if (Array.isArray(storedExercises) && currentIdx < interleaved.length) {
+                var currentEx = interleaved[currentIdx];
+                for (var sei = 0; sei < storedExercises.length; sei++) {
+                    if (storedExercises[sei].data && currentEx.data &&
+                        JSON.stringify(storedExercises[sei].data.answers) === JSON.stringify(currentEx.data.answers) &&
+                        storedExercises[sei].chapter === currentEx.chapter) {
+                        storedExercises[sei].lastPracticed = new Date().toISOString();
+                        storedExercises[sei].practiceCount = (storedExercises[sei].practiceCount || 0) + 1;
+                        storedExercises[sei].lastResult = allCorrect ? 'correct' : 'incorrect';
+                        break;
+                    }
+                }
+                localStorage.setItem(EXERCISES_KEY, JSON.stringify(storedExercises));
+            }
+        } catch(e) {}
+
+        container.querySelector('.quiz-check-btn').style.display = 'none';
+        addNextButton();
+    };
+
+    // Gap 3: Matching exercise renderer for mixed review
+    function renderMatching(container, ex) {
+        var q = ex.data;
+        var html = '<div class="matching-container">' +
+            '<div class="quiz-title">Chapter ' + ex.chapter + ' — ' + ex.section + '</div>';
+        if (ex.bloom) {
+            html += '<span class="bloom-badge bloom-' + ex.bloom.toLowerCase() + '">' +
+                    ex.bloom + '</span>';
+        }
+        if (q.title) {
+            html += '<div class="matching-title">' + escapeHtml(q.title) + '</div>';
+        }
+        html += '<div class="matching-review"><h3>Match the following:</h3>';
+        var leftItems = q.leftItems || [];
+        var rightItems = q.rightItems || [];
+        for (var i = 0; i < leftItems.length; i++) {
+            html += '<div class="match-item" style="display:flex;gap:0.5rem;align-items:center;padding:0.5rem 0;">' +
+                    '<strong>' + escapeHtml(leftItems[i]) + '</strong>' +
+                    ' <span style="color:var(--text-muted);">&rarr;</span> ' +
+                    '<span>' + escapeHtml(rightItems[i] || '') + '</span></div>';
+        }
+        html += '</div>';
+        html += '<button class="quiz-check-btn" onclick="checkMixedMatching()">I reviewed these matches</button>';
+        html += '</div>';
+        container.innerHTML = html;
+    }
+
+    window.checkMixedMatching = function() {
+        // Matching in review mode is self-assessed — count as correct
+        correctCount++;
+        document.getElementById('statCorrect').textContent = correctCount;
+
+        // Record in learner model
+        var ex = interleaved[currentIdx];
+        if (ex && ex.concepts && ex.concepts.length > 0) {
+            learnerModel.recordAnswer(ex.concepts, ex.bloom || '', true);
+        }
+
+        var container = document.getElementById('exerciseCard');
+        container.querySelector('.quiz-check-btn').style.display = 'none';
+        addNextButton();
+    };
+
+    // Gap 3: Self-explain exercise renderer for mixed review
+    function renderSelfExplain(container, ex) {
+        var q = ex.data;
+        var html = '<div class="self-explain-review">' +
+            '<div class="quiz-title">Chapter ' + ex.chapter + ' — ' + ex.section + '</div>';
+        if (ex.bloom) {
+            html += '<span class="bloom-badge bloom-' + ex.bloom.toLowerCase() + '">' +
+                    ex.bloom + '</span>';
+        }
+        html += '<p class="self-explain-prompt">' + escapeHtml(q.prompt || 'Explain this concept') + '</p>';
+        html += '<textarea class="explain-textarea self-explain-input" rows="4" placeholder="Type your explanation..."></textarea>';
+        html += '<button class="quiz-check-btn" onclick="checkMixedSelfExplain()" disabled>Submit Explanation</button>';
+        html += '</div>';
+        container.innerHTML = html;
+
+        // Enable submit when user types something
+        var textarea = container.querySelector('.self-explain-input');
+        textarea.addEventListener('input', function() {
+            var words = textarea.value.trim().split(/\s+/).filter(function(w) { return w.length > 0; });
+            container.querySelector('.quiz-check-btn').disabled = words.length < 3;
+        });
+    }
+
+    window.checkMixedSelfExplain = function() {
+        var container = document.getElementById('exerciseCard');
+        var textarea = container.querySelector('.self-explain-input');
+        textarea.readOnly = true;
+
+        var ex = interleaved[currentIdx];
+        var rubric = (ex && ex.data && ex.data.rubric) || [];
+
+        if (rubric.length > 0) {
+            var rubricHtml = '<div class="explain-rubric" style="margin-top:1rem;">' +
+                '<h4>Key points to check:</h4><ul>';
+            rubric.forEach(function(point) {
+                rubricHtml += '<li>' + escapeHtml(point) + '</li>';
+            });
+            rubricHtml += '</ul></div>';
+            container.querySelector('.quiz-check-btn').insertAdjacentHTML('afterend', rubricHtml);
+        }
+
+        // Self-explain is self-assessed — count as correct
+        correctCount++;
+        document.getElementById('statCorrect').textContent = correctCount;
+
+        if (ex && ex.concepts && ex.concepts.length > 0) {
+            learnerModel.recordAnswer(ex.concepts, ex.bloom || '', true);
+        }
+
+        container.querySelector('.quiz-check-btn').style.display = 'none';
+        addNextButton();
+    };
+
+    function addNextButton() {
+        var card = document.getElementById('exerciseCard');
+        var btn = document.createElement('button');
+        btn.className = 'nav-btn';
+        btn.style.marginTop = '1rem';
+        btn.textContent = currentIdx < interleaved.length - 1 ? 'Next Exercise →' : 'Finish';
+        btn.onclick = function() {
+            currentIdx++;
+            selectedOption = -1;
+            renderExercise();
+        };
+        card.appendChild(btn);
+    }
+
+    function escapeHtml(str) {
+        if (!str) return '';
+        var div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
+    }
+
+    renderExercise();
+})();
+</script>
+
+</body>
+</html>

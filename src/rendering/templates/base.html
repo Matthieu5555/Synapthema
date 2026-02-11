@@ -1,0 +1,1842 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ module_title }}</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+    <style>
+{{ css|safe }}
+    </style>
+    <script>
+    (function(){
+        try {
+            var k = 'lxp_{{ course_slug }}_theme';
+            var t = localStorage.getItem(k);
+            if (t) document.documentElement.setAttribute('data-theme', t);
+        } catch(e) {}
+    })();
+    mermaid.initialize({
+        startOnLoad: false,
+        theme: document.documentElement.getAttribute('data-theme') === 'light' ? 'default' : 'dark',
+        flowchart: { useMaxWidth: false },
+        sequence: { useMaxWidth: false }
+    });
+    </script>
+</head>
+<body>
+
+<nav class="course-header">
+    <div class="course-header-left">
+        <a href="index.html" class="breadcrumb-home" title="Back to course index">{{ course_title }}</a>
+        <span class="breadcrumb-sep">/</span>
+        <span class="breadcrumb-current">Chapter {{ chapter_number }}: {{ module_title }}</span>
+        {% if source_book_title %}
+        <span class="source-badge">Source: {{ source_book_title }}</span>
+        {% endif %}
+    </div>
+    <div class="course-header-right">
+        <span class="mastery-nav-indicator" id="masteryNavIndicator" title="Concept mastery"></span>
+        <a href="review.html" class="review-nav-badge" id="reviewNavBadge" title="Spaced review" style="display:none;">
+            <span id="reviewBadgeCount">0</span> due
+        </a>
+        <a href="mixed_review.html" class="nav-link" title="Mixed Practice">Mixed Practice</a>
+        {% if prev_chapter %}
+        <a href="{{ prev_chapter.filename }}" class="chapter-nav-btn" title="Previous: {{ prev_chapter.title }}">&#8592; Prev</a>
+        {% endif %}
+        {% if next_chapter %}
+        <a href="{{ next_chapter.filename }}" class="chapter-nav-btn" title="Next: {{ next_chapter.title }}">Next &#8594;</a>
+        {% endif %}
+        <button class="theme-toggle" onclick="__lxpToggleTheme()" title="Toggle theme">&#9788;</button>
+        <button class="settings-btn" onclick="openSettings()" title="AI Tutor Settings">&#9881;</button>
+    </div>
+</nav>
+
+<button class="sidebar-toggle" onclick="toggleSidebar()">&#9776;</button>
+
+<div class="course-container">
+    <!-- Sidebar navigation -->
+    <nav class="sidebar" id="sidebar">
+        <div class="sidebar-header">{{ module_title }}</div>
+        <div class="sidebar-sections">
+            {% for section in sections %}
+            <div class="sidebar-section{% if loop.first %} active{% endif %}"
+                 data-section-index="{{ loop.index0 }}"
+                 data-start="{{ section.start_index }}"
+                 data-count="{{ section.element_count }}"
+                 onclick="goToSection({{ section.start_index }})">
+                <div class="sidebar-section-status">{{ loop.index }}</div>
+                <div class="sidebar-section-title">{{ section.title }}</div>
+                <div class="sidebar-section-count">{{ section.element_count }}</div>
+            </div>
+            {% endfor %}
+        </div>
+    </nav>
+
+    <!-- Main content area -->
+    <div class="main-content">
+        <div class="slide-viewport">
+            {% set ns = namespace(section_idx=0) %}
+            {% for element in elements %}
+            {# Insert section divider at section boundaries #}
+            {% if sections and ns.section_idx < sections|length and loop.index0 == sections[ns.section_idx].start_index %}
+            <div class="section-divider" data-section="{{ ns.section_idx }}" {% if loop.first %}style="display:block"{% else %}style="display:none"{% endif %}>
+                <div class="section-divider-title">{{ sections[ns.section_idx].title }}</div>
+                {% if sections[ns.section_idx].source_pages %}
+                <div class="section-divider-pages">{{ sections[ns.section_idx].source_pages }}</div>
+                {% endif %}
+                {% if sections[ns.section_idx].learning_objectives %}
+                <details class="learning-objectives">
+                    <summary>Learning Objectives</summary>
+                    <ul>
+                        {% for obj in sections[ns.section_idx].learning_objectives %}
+                        <li>{{ obj }}</li>
+                        {% endfor %}
+                    </ul>
+                </details>
+                {% endif %}
+                {# Verification notes are stored in training_modules.json for author review
+                   but not rendered in the learner-facing output. #}
+            </div>
+            {% set ns.section_idx = ns.section_idx + 1 %}
+            {% endif %}
+
+            <div class="slide" data-index="{{ loop.index0 }}" data-element-id="{{ element.element_id }}" data-concepts='{{ element.concepts_tested | tojson }}' {% if loop.first %}style="display:block"{% endif %}>
+
+                {% if element.element_type == "slide" %}
+                <span class="element-badge slide-badge">Slide</span>
+                {% if element.bloom_level %}<span class="bloom-badge bloom-{{ element.bloom_level }}">{{ element.bloom_level }}</span>{% endif %}
+                <h1>{{ element.slide.title }}</h1>
+                <div class="slide-content">
+                    {{ element.slide.content_html|safe }}
+                </div>
+                {% if element.slide.image_data %}
+                <img class="slide-image" src="{{ element.slide.image_data }}" alt="{{ element.slide.title }}">
+                {% endif %}
+                {% if element.slide.source_pages %}
+                <div class="source-attribution">{{ element.slide.source_pages }}</div>
+                {% endif %}
+
+                {% elif element.element_type == "quiz" %}
+                <span class="element-badge quiz-badge">Quiz</span>
+                {% if element.bloom_level %}<span class="bloom-badge bloom-{{ element.bloom_level }}">{{ element.bloom_level }}</span>{% endif %}
+                <div class="quiz-container">
+                    <div class="quiz-title">{{ element.quiz.title }}</div>
+                    {% for q in element.quiz.questions %}
+                    <div class="quiz-question" data-correct="{{ q.correct_index }}"
+                         data-hint-meta="{{ q.hint_metacognitive }}"
+                         data-hint-strategic="{{ q.hint_strategic }}"
+                         data-hint-eliminate="{{ q.hint_eliminate_index }}"
+                         data-attempts="0">
+                        <div class="quiz-question-text">{{ loop.index }}. {{ q.question }}</div>
+                        <ul class="quiz-options">
+                            {% for option in q.options %}
+                            <li class="quiz-option" data-option-index="{{ loop.index0 }}" onclick="selectOption(this)">
+                                <span class="quiz-option-marker">{{ ['A','B','C','D','E'][loop.index0] }}</span>
+                                <span>{{ option }}</span>
+                            </li>
+                            {% endfor %}
+                        </ul>
+                        <button class="quiz-check-btn" onclick="checkAnswer(this)" disabled>Check Answer</button>
+                        <div class="quiz-hint hint-metacognitive"></div>
+                        <div class="quiz-hint hint-strategic"></div>
+                        <div class="quiz-confidence" style="display:none;">
+                            <div class="confidence-prompt">How confident are you?</div>
+                            <div class="confidence-dots">
+                                <span class="confidence-dot" data-value="1" onclick="selectConfidence(this)">1</span>
+                                <span class="confidence-dot" data-value="2" onclick="selectConfidence(this)">2</span>
+                                <span class="confidence-dot" data-value="3" onclick="selectConfidence(this)">3</span>
+                                <span class="confidence-dot" data-value="4" onclick="selectConfidence(this)">4</span>
+                                <span class="confidence-dot" data-value="5" onclick="selectConfidence(this)">5</span>
+                            </div>
+                            <button class="quiz-check-btn confidence-confirm-btn" onclick="confirmWithConfidence(this)" disabled>Confirm</button>
+                        </div>
+                        <div class="quiz-explanation">{{ q.explanation }}</div>
+                        <div class="quiz-hypercorrection" style="display:none;"></div>
+                    </div>
+                    {% endfor %}
+                    <button class="add-review-btn" onclick="addToReview(this)" title="Add to spaced review">+ Review</button>
+                </div>
+
+                {% elif element.element_type == "flashcard" %}
+                <span class="element-badge flashcard-badge">Flashcard</span>
+                {% if element.bloom_level %}<span class="bloom-badge bloom-{{ element.bloom_level }}">{{ element.bloom_level }}</span>{% endif %}
+                <div class="flashcard-container">
+                    <div class="flashcard" onclick="this.classList.toggle('flipped')">
+                        <div class="flashcard-front">
+                            {{ element.flashcard.front }}
+                            <div class="flashcard-hint">Click to reveal</div>
+                        </div>
+                        <div class="flashcard-back">
+                            {{ element.flashcard.back }}
+                        </div>
+                    </div>
+                </div>
+                <button class="add-review-btn" onclick="addToReview(this)" title="Add to spaced review">+ Review</button>
+
+                {% elif element.element_type == "fill_in_the_blank" %}
+                <span class="element-badge fill-badge">Fill in the Blank</span>
+                {% if element.bloom_level %}<span class="bloom-badge bloom-{{ element.bloom_level }}">{{ element.bloom_level }}</span>{% endif %}
+                <div class="fitb-container" data-answers='{{ element.fill_in_the_blank.answers_json }}' data-hint-first-letter="{{ element.fill_in_the_blank.hint_first_letter|lower }}" data-attempts="0">
+                    {% if element.fill_in_the_blank.hint %}
+                    <div class="fitb-hint" style="display:none;">Hint: {{ element.fill_in_the_blank.hint }}</div>
+                    {% endif %}
+                    <div class="fitb-statement">{{ element.fill_in_the_blank.statement_html|safe }}</div>
+                    <button class="quiz-check-btn" onclick="checkFillBlanks(this)">Check Answers</button>
+                    <button class="add-review-btn" onclick="addToReview(this)" title="Add to spaced review">+ Review</button>
+                </div>
+
+                {% elif element.element_type == "matching" %}
+                <span class="element-badge matching-badge">Matching</span>
+                {% if element.bloom_level %}<span class="bloom-badge bloom-{{ element.bloom_level }}">{{ element.bloom_level }}</span>{% endif %}
+                <div class="matching-container" data-correct='{{ element.matching.correct_json }}' data-pair-explanations='{{ element.matching.pair_explanations_json }}'>
+                    <div class="matching-title">{{ element.matching.title }}</div>
+                    <div class="matching-grid">
+                        {% for item in element.matching.left_items %}
+                        <div class="matching-left-item" data-idx="{{ loop.index0 }}" onclick="selectMatchItem(this, 'left')">{{ item }}</div>
+                        <div class="matching-arrow">&#8594;</div>
+                        <div class="matching-right-item" data-idx="{{ loop.index0 }}" onclick="selectMatchItem(this, 'right')">{{ element.matching.shuffled_right[loop.index0] }}</div>
+                        {% endfor %}
+                    </div>
+                    <div class="matching-explanations" style="display:none;"></div>
+                </div>
+
+                {% elif element.element_type == "mermaid" %}
+                <span class="element-badge mermaid-badge">Diagram</span>
+                {% if element.bloom_level %}<span class="bloom-badge bloom-{{ element.bloom_level }}">{{ element.bloom_level }}</span>{% endif %}
+                <h2>{{ element.mermaid.title }}</h2>
+                <div class="mermaid-container">
+                    <pre class="mermaid">{{ element.mermaid.diagram_code }}</pre>
+                </div>
+                {% if element.mermaid.caption %}
+                <p class="diagram-caption">{{ element.mermaid.caption }}</p>
+                {% endif %}
+
+                {% elif element.element_type == "concept_map" %}
+                <span class="element-badge cmap-badge">Concept Map</span>
+                {% if element.bloom_level %}<span class="bloom-badge bloom-{{ element.bloom_level }}">{{ element.bloom_level }}</span>{% endif %}
+                <h2>{{ element.concept_map.title }}</h2>
+                <div class="concept-map-container"
+                     id="cmap-{{ loop.index0 }}"
+                     data-nodes='{{ element.concept_map.nodes_json }}'
+                     data-edges='{{ element.concept_map.edges_json }}'
+                     data-blanks='{{ element.concept_map.blank_indices_json }}'>
+                    <svg class="concept-map-svg"></svg>
+                    <div class="cmap-controls">
+                        <button class="quiz-check-btn" onclick="checkConceptMap({{ loop.index0 }})">Check Answers</button>
+                    </div>
+                </div>
+
+                {% elif element.element_type == "self_explain" %}
+                <span class="element-badge explain-badge">Explain</span>
+                {% if element.bloom_level %}<span class="bloom-badge bloom-{{ element.bloom_level }}">{{ element.bloom_level }}</span>{% endif %}
+                <div class="self-explain-container" data-key-points='{{ element.self_explain.key_points_json }}' data-min-words="{{ element.self_explain.minimum_words }}">
+                    <div class="explain-prompt">
+                        <h2>Explain in Your Own Words</h2>
+                        <p>{{ element.self_explain.prompt }}</p>
+                    </div>
+                    <textarea class="explain-textarea"
+                              placeholder="Type your explanation here (minimum {{ element.self_explain.minimum_words }} words)..."
+                              rows="8"
+                              oninput="updateWordCount(this)"></textarea>
+                    <div class="explain-word-count">
+                        <span class="word-count">0</span> / {{ element.self_explain.minimum_words }} words minimum
+                    </div>
+                    <button class="explain-submit-btn" onclick="submitExplanation(this)" disabled>
+                        Submit My Explanation
+                    </button>
+                    <div class="explain-rubric" style="display:none;">
+                        <h3>Self-Assessment</h3>
+                        <p>Check each point your explanation covered:</p>
+                        <div class="rubric-checklist"></div>
+                        <div class="rubric-score" style="display:none;">
+                            <p>You covered <span class="score-count">0</span> out of <span class="score-total">0</span> key points.</p>
+                        </div>
+                        <button class="show-model-btn" onclick="showModelResponse(this)">See Model Response</button>
+                        <div class="model-response" style="display:none;">
+                            {{ element.self_explain.example_response|safe }}
+                        </div>
+                    </div>
+                    {% if element.self_explain.source_pages %}
+                    <div class="source-attribution">{{ element.self_explain.source_pages }}</div>
+                    {% endif %}
+                </div>
+
+                {% elif element.element_type == "interactive_essay" %}
+                <span class="element-badge essay-badge">Interactive Essay</span>
+                {% if element.bloom_level %}<span class="bloom-badge bloom-{{ element.bloom_level }}">{{ element.bloom_level }}</span>{% endif %}
+                <div class="essay-container"
+                     data-threshold="{{ element.interactive_essay.passing_threshold }}"
+                     data-tutor-prompt='{{ element.interactive_essay.tutor_system_prompt_json }}'>
+                    <div class="essay-header">
+                        <h2>{{ element.interactive_essay.title }}</h2>
+                        <p class="essay-subtitle">Synthesize and explain what you've learned</p>
+                        <div class="concepts-tested">
+                            <strong>Concepts tested:</strong>
+                            {% for concept in element.interactive_essay.concepts_tested %}
+                            <span class="concept-tag">{{ concept }}</span>
+                            {% endfor %}
+                        </div>
+                    </div>
+
+                    {% for prompt in element.interactive_essay.prompts %}
+                    <div class="essay-prompt" data-prompt-index="{{ loop.index0 }}"
+                         data-key-points='{{ prompt.key_points_json }}' data-min-words="{{ prompt.minimum_words }}">
+                        <h3>Question {{ loop.index }}</h3>
+                        <p>{{ prompt.prompt }}</p>
+                        <textarea class="explain-textarea" rows="6"
+                                  placeholder="Minimum {{ prompt.minimum_words }} words..."
+                                  oninput="updateWordCount(this)"></textarea>
+                        <div class="explain-word-count">
+                            <span class="word-count">0</span> / {{ prompt.minimum_words }} words minimum
+                        </div>
+                    </div>
+                    {% endfor %}
+
+                    <button class="essay-submit-btn" onclick="submitEssay(this)" disabled>
+                        Submit All Answers
+                    </button>
+
+                    <div class="essay-results" style="display:none;">
+                        <div class="essay-rubric"></div>
+                        <div class="essay-verdict" style="display:none;"></div>
+                    </div>
+
+                    <div class="llm-tutor-panel" style="display:none;">
+                        <h3>AI Tutor Review</h3>
+                        <p>Get personalized feedback from an AI tutor:</p>
+                        <div class="tutor-chat-history"></div>
+                        <div class="tutor-input-area">
+                            <input type="text" class="tutor-input" placeholder="Ask a follow-up or respond to feedback..."
+                                   onkeydown="if(event.key==='Enter')sendToTutor(this.closest('.llm-tutor-panel').querySelector('.tutor-send-btn'))">
+                            <button class="tutor-send-btn" onclick="sendToTutor(this)">Send</button>
+                        </div>
+                        <div class="tutor-verdict" style="display:none;"></div>
+                    </div>
+                </div>
+
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+
+        <div class="nav-bar">
+            <button class="nav-btn" id="prevBtn" onclick="navigate(-1)" disabled>Previous</button>
+            <div class="progress-info">
+                <span class="progress-text" id="progressText">1 / {{ elements | length }}</span>
+                <div class="progress-bar-track">
+                    <div class="progress-bar-fill" id="progressFill" style="width: {{ (1 / (elements|length or 1) * 100)|round(1) }}%"></div>
+                </div>
+            </div>
+            <button class="nav-btn" id="nextBtn" onclick="navigate(1)">Next</button>
+        </div>
+    </div>
+</div>
+
+<!-- Mastery gating modal -->
+<div class="mastery-modal" id="masteryModal" style="display:none;">
+    <div class="mastery-modal-content">
+        <h3>Section Review Suggested</h3>
+        <p id="masteryModalText"></p>
+        <div class="mastery-modal-actions">
+            <button class="nav-btn" onclick="reviewCurrentSection()">Review Section</button>
+            <button class="nav-btn mastery-continue-btn" onclick="dismissMasteryModal()">Continue Anyway</button>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/contrib/auto-render.min.js"></script>
+<script>
+// ── Learner Model ─────────────────────────────────────────────────────────
+{% include '_learner_model.js' %}
+
+// ── FSRS-5 Algorithm (shared) ────────────────────────────────────────────
+{% include '_fsrs.js' %}
+
+// ── Theme toggle ──────────────────────────────────────────────────────────
+window.__lxpToggleTheme = function() {
+    var current = document.documentElement.getAttribute('data-theme') || 'dark';
+    var next = current === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    try { localStorage.setItem('lxp_{{ course_slug }}_theme', next); } catch(e) {}
+    var btn = document.querySelector('.theme-toggle');
+    if (btn) btn.textContent = next === 'dark' ? '\u2606' : '\u263D';
+};
+// Set initial icon
+(function() {
+    var theme = document.documentElement.getAttribute('data-theme') || 'dark';
+    var btn = document.querySelector('.theme-toggle');
+    if (btn) btn.textContent = theme === 'dark' ? '\u2606' : '\u263D';
+})();
+
+// ── Main course interaction ───────────────────────────────────────────────
+(function() {
+    var COURSE_SLUG = '{{ course_slug }}';
+    var CHAPTER_NUM = '{{ chapter_number }}';
+    var PROGRESS_KEY = 'lxp_' + COURSE_SLUG + '_progress';
+    var nextChapterUrl = {{ ("'" + next_chapter.filename + "'")|safe if next_chapter else 'null' }};
+
+    // ── Learner model instance ───────────────────────────────────────────
+    var learnerModel = __lxpCreateLearnerModel(COURSE_SLUG);
+
+    // Helper: read concepts_tested from a slide element's data attribute
+    function getSlideConceptsAndBloom(slideEl) {
+        var concepts = [];
+        var bloom = '';
+        try { concepts = JSON.parse(slideEl.getAttribute('data-concepts') || '[]'); } catch(e) {}
+        var bloomBadge = slideEl.querySelector('.bloom-badge');
+        if (bloomBadge) bloom = bloomBadge.textContent.trim().toLowerCase();
+        return { concepts: concepts, bloom: bloom };
+    }
+
+    let current = 0;
+    const slides = document.querySelectorAll('.slide');
+    const dividers = document.querySelectorAll('.section-divider');
+    const total = slides.length;
+    const prevBtn = document.getElementById('prevBtn');
+    const nextBtn = document.getElementById('nextBtn');
+    const progressText = document.getElementById('progressText');
+    const progressFill = document.getElementById('progressFill');
+    const sidebarSections = document.querySelectorAll('.sidebar-section');
+
+    // Build section ranges from sidebar data
+    const sectionRanges = [];
+    sidebarSections.forEach(function(el) {
+        sectionRanges.push({
+            start: parseInt(el.dataset.start),
+            count: parseInt(el.dataset.count)
+        });
+    });
+
+    function findCurrentSection(slideIndex) {
+        for (var i = sectionRanges.length - 1; i >= 0; i--) {
+            if (slideIndex >= sectionRanges[i].start) return i;
+        }
+        return 0;
+    }
+
+    function updateSidebar(slideIndex) {
+        var sectionIdx = findCurrentSection(slideIndex);
+        sidebarSections.forEach(function(el, i) {
+            el.classList.remove('active');
+            // Mark completed if all elements in section have been visited
+            if (i < sectionIdx) el.classList.add('completed');
+            if (i === sectionIdx) el.classList.add('active');
+        });
+    }
+
+    function renderMath(el) {
+        renderMathInElement(el, {
+            delimiters: [
+                {left: '$$', right: '$$', display: true},
+                {left: '$', right: '$', display: false},
+                {left: '\\(', right: '\\)', display: false},
+                {left: '\\[', right: '\\]', display: true}
+            ],
+            throwOnError: false
+        });
+    }
+
+    // ── Progress persistence ──────────────────────────────────────────────
+    function loadProgress() {
+        try {
+            var data = JSON.parse(localStorage.getItem(PROGRESS_KEY) || '{}');
+            return data.chapters || {};
+        } catch(e) { return {}; }
+    }
+
+    function saveProgress(chapters) {
+        try {
+            localStorage.setItem(PROGRESS_KEY, JSON.stringify({ chapters: chapters }));
+        } catch(e) {}
+    }
+
+    function updateProgress(slideIndex) {
+        var chapters = loadProgress();
+        if (!chapters[CHAPTER_NUM]) {
+            chapters[CHAPTER_NUM] = {
+                currentSlide: 0,
+                totalSlides: total,
+                completedSections: [],
+                completed: false,
+                lastVisited: null
+            };
+        }
+        var ch = chapters[CHAPTER_NUM];
+        ch.currentSlide = slideIndex;
+        ch.totalSlides = total;
+        ch.lastVisited = new Date().toISOString();
+
+        // Mark sections complete when user advances past them
+        var sectionIdx = findCurrentSection(slideIndex);
+        for (var i = 0; i < sectionIdx; i++) {
+            if (ch.completedSections.indexOf(i) === -1) {
+                ch.completedSections.push(i);
+            }
+        }
+
+        // Mark chapter complete when user reaches the last slide
+        if (slideIndex === total - 1) {
+            ch.completed = true;
+            if (sectionRanges.length > 0) {
+                var lastSec = sectionRanges.length - 1;
+                if (ch.completedSections.indexOf(lastSec) === -1) {
+                    ch.completedSections.push(lastSec);
+                }
+            }
+        }
+
+        chapters[CHAPTER_NUM] = ch;
+        saveProgress(chapters);
+    }
+
+    // ── Slide navigation ──────────────────────────────────────────────────
+    function showSlide(index) {
+        slides.forEach(function(s) { s.style.display = 'none'; s.classList.remove('active'); });
+        dividers.forEach(function(d) { d.style.display = 'none'; });
+
+        slides[index].style.display = 'block';
+        slides[index].classList.add('active');
+
+        // Show section divider if this is the first element of a section
+        dividers.forEach(function(d) {
+            var sectionStart = -1;
+            sectionRanges.forEach(function(r, ri) {
+                if (r.start === index) sectionStart = ri;
+            });
+            if (sectionStart >= 0 && parseInt(d.dataset.section) === sectionStart) {
+                d.style.display = 'block';
+            }
+        });
+
+        current = index;
+        prevBtn.disabled = current === 0;
+        progressText.textContent = (current + 1) + ' / ' + total;
+        progressFill.style.width = ((current + 1) / total * 100) + '%';
+        document.querySelector('.slide-viewport').scrollTop = 0;
+        renderMath(slides[index]);
+
+        // Re-render Mermaid diagrams when their slide becomes visible
+        var currentSlide = slides[index];
+        var mermaidElements = currentSlide.querySelectorAll('.mermaid:not([data-processed])');
+        if (mermaidElements.length > 0) {
+            mermaid.run({ nodes: mermaidElements });
+        }
+
+        // Render concept maps on first visit
+        var cmapContainers = currentSlide.querySelectorAll('.concept-map-container:not([data-rendered])');
+        cmapContainers.forEach(function(container) {
+            renderConceptMap(container);
+            container.setAttribute('data-rendered', 'true');
+        });
+
+        updateSidebar(index);
+        updateProgress(index);
+
+        // End-of-chapter: transform Next into "Next Chapter" link
+        if (current === total - 1 && nextChapterUrl) {
+            nextBtn.disabled = false;
+            nextBtn.textContent = 'Next Chapter \u2192';
+            nextBtn.onclick = function() { window.location.href = nextChapterUrl; };
+        } else {
+            nextBtn.disabled = current === total - 1;
+            nextBtn.textContent = 'Next';
+            nextBtn.onclick = function() { navigate(1); };
+        }
+    }
+
+    window.navigate = function(direction) {
+        var next = current + direction;
+        if (next >= 0 && next < total) showSlide(next);
+    };
+
+    var pendingNavTarget = -1;
+
+    window.goToSection = function(startIndex) {
+        // Check mastery of current section before allowing forward navigation
+        var currentSectionIdx = findCurrentSection(current);
+        var targetSectionIdx = findCurrentSection(startIndex);
+        if (targetSectionIdx > currentSectionIdx) {
+            var mastery = getSectionMasteryScore(currentSectionIdx);
+            if (mastery >= 0 && mastery < 0.8) {
+                pendingNavTarget = startIndex;
+                showMasteryModal(currentSectionIdx, mastery);
+                return;
+            }
+        }
+        if (startIndex >= 0 && startIndex < total) showSlide(startIndex);
+        document.getElementById('sidebar').classList.remove('open');
+    };
+
+    function showMasteryModal(sectionIdx, score) {
+        var pct = Math.round(score * 100);
+        var modal = document.getElementById('masteryModal');
+        var text = document.getElementById('masteryModalText');
+        text.textContent = 'You scored ' + pct + '% on this section. ' +
+            'Mastery requires 80%. Would you like to review before continuing?';
+        modal.style.display = 'flex';
+    }
+
+    window.reviewCurrentSection = function() {
+        var modal = document.getElementById('masteryModal');
+        modal.style.display = 'none';
+        var sectionIdx = findCurrentSection(current);
+        var range = sectionRanges[sectionIdx];
+        if (range) showSlide(range.start);
+    };
+
+    window.dismissMasteryModal = function() {
+        var modal = document.getElementById('masteryModal');
+        modal.style.display = 'none';
+        if (pendingNavTarget >= 0) {
+            showSlide(pendingNavTarget);
+            pendingNavTarget = -1;
+        }
+        document.getElementById('sidebar').classList.remove('open');
+    };
+
+    window.toggleSidebar = function() {
+        document.getElementById('sidebar').classList.toggle('open');
+    };
+
+    document.addEventListener('keydown', function(e) {
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+        if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); navigate(1); }
+        if (e.key === 'ArrowLeft') { e.preventDefault(); navigate(-1); }
+    });
+
+    // ── Score tracking ─────────────────────────────────────────────────
+    function recordScore(slideIndex, isCorrect, attempts, confidence, bloomLevel) {
+        // Record in learner model (concept-level tracking)
+        var slideEl = slides[slideIndex];
+        if (slideEl) {
+            var info = getSlideConceptsAndBloom(slideEl);
+            // Compute continuous score: 1.0 for correct first try, scaled down by attempts
+            var score = isCorrect ? Math.max(0.2, 1.0 / Math.max(1, attempts)) : 0.0;
+            learnerModel.recordAnswer(
+                info.concepts, info.bloom || bloomLevel, isCorrect,
+                typeof confidence === 'number' ? confidence : undefined,
+                score
+            );
+            updateMasteryNavIndicator();
+
+            // Gap 4: Update FSRS card if it exists in localStorage
+            var flashcardKey = 'lxp_' + COURSE_SLUG + '_flashcards';
+            try {
+                var flashcards = JSON.parse(localStorage.getItem(flashcardKey) || '{}');
+                var elemId = slideEl.getAttribute('data-element-id');
+                if (elemId && flashcards[elemId] && typeof FSRS !== 'undefined') {
+                    var grade = isCorrect ? (attempts <= 1 ? 4 : 3) : 1;
+                    flashcards[elemId] = FSRS.scheduleCard(flashcards[elemId], grade);
+                    localStorage.setItem(flashcardKey, JSON.stringify(flashcards));
+                }
+            } catch(e) {}
+        }
+        var chapters = loadProgress();
+        if (!chapters[CHAPTER_NUM]) return;
+        var ch = chapters[CHAPTER_NUM];
+        if (!ch.scores) ch.scores = {};
+        if (!ch.scores[slideIndex]) {
+            ch.scores[slideIndex] = {
+                correct: isCorrect,
+                attempts: attempts,
+                confidence: confidence || 0,
+                bloom: bloomLevel || ''
+            };
+        }
+        // Update section mastery
+        if (!ch.sectionMastery) ch.sectionMastery = {};
+        var sectionIdx = findCurrentSection(slideIndex);
+        var range = sectionRanges[sectionIdx];
+        if (range) {
+            var attempted = 0;
+            var correctCount = 0;
+            for (var i = range.start; i < range.start + range.count; i++) {
+                if (ch.scores[i]) {
+                    attempted++;
+                    if (ch.scores[i].correct) correctCount++;
+                }
+            }
+            ch.sectionMastery[sectionIdx] = {
+                score: attempted > 0 ? correctCount / attempted : -1,
+                attempted: attempted,
+                correct: correctCount
+            };
+        }
+        chapters[CHAPTER_NUM] = ch;
+        saveProgress(chapters);
+    }
+
+    function getSectionMasteryScore(sectionIdx) {
+        var chapters = loadProgress();
+        var ch = chapters[CHAPTER_NUM];
+        if (!ch || !ch.sectionMastery || !ch.sectionMastery[sectionIdx]) return -1;
+        return ch.sectionMastery[sectionIdx].score;
+    }
+
+    // ── Quiz interaction (multi-attempt with graduated hints) ────────────
+    window.selectOption = function(el) {
+        var question = el.closest('.quiz-question');
+        if (question.classList.contains('answered')) return;
+        if (el.classList.contains('eliminated') || el.classList.contains('attempted-wrong')) return;
+        question.querySelectorAll('.quiz-option').forEach(function(o) {
+            if (!o.classList.contains('eliminated') && !o.classList.contains('attempted-wrong')) {
+                o.classList.remove('selected');
+            }
+        });
+        el.classList.add('selected');
+        question.querySelector('.quiz-check-btn').disabled = false;
+    };
+
+    window.checkAnswer = function(btn) {
+        var question = btn.closest('.quiz-question');
+        if (question.classList.contains('answered')) return;
+
+        var selected = question.querySelector('.quiz-option.selected');
+        if (!selected) return;
+
+        var attempts = parseInt(question.dataset.attempts || '0') + 1;
+        question.dataset.attempts = attempts;
+
+        var correctIdx = parseInt(question.dataset.correct);
+        var selectedIdx = parseInt(selected.dataset.optionIndex);
+
+        if (selectedIdx === correctIdx) {
+            // Correct — show confidence prompt before revealing
+            showConfidenceStep(question, true, attempts);
+        } else if (attempts === 1) {
+            // First wrong attempt — show metacognitive hint
+            var hintMeta = question.dataset.hintMeta;
+            if (hintMeta) {
+                var hintEl = question.querySelector('.hint-metacognitive');
+                hintEl.textContent = hintMeta;
+                hintEl.style.display = 'block';
+            }
+            selected.classList.remove('selected');
+            selected.classList.add('attempted-wrong');
+            btn.disabled = true;
+        } else if (attempts === 2) {
+            // Second wrong attempt — show strategic hint + eliminate
+            var hintStrategic = question.dataset.hintStrategic;
+            if (hintStrategic) {
+                var stratEl = question.querySelector('.hint-strategic');
+                stratEl.textContent = hintStrategic;
+                stratEl.style.display = 'block';
+            }
+            var eliminateIdx = parseInt(question.dataset.hintEliminate);
+            if (eliminateIdx >= 0) {
+                var options = question.querySelectorAll('.quiz-option');
+                if (options[eliminateIdx] && !options[eliminateIdx].classList.contains('attempted-wrong')) {
+                    options[eliminateIdx].classList.add('eliminated');
+                }
+            }
+            selected.classList.remove('selected');
+            selected.classList.add('attempted-wrong');
+            btn.disabled = true;
+        } else {
+            // Third wrong attempt — show confidence prompt then reveal
+            showConfidenceStep(question, false, attempts);
+        }
+    };
+
+    function showConfidenceStep(question, isCorrect, attempts) {
+        var checkBtn = question.querySelector('.quiz-check-btn');
+        checkBtn.style.display = 'none';
+        var confidenceEl = question.querySelector('.quiz-confidence');
+        confidenceEl.style.display = 'block';
+        confidenceEl.dataset.isCorrect = isCorrect;
+        confidenceEl.dataset.attempts = attempts;
+    }
+
+    window.selectConfidence = function(dot) {
+        var container = dot.closest('.confidence-dots');
+        container.querySelectorAll('.confidence-dot').forEach(function(d) {
+            d.classList.remove('selected');
+        });
+        dot.classList.add('selected');
+        var confirmBtn = dot.closest('.quiz-confidence').querySelector('.confidence-confirm-btn');
+        confirmBtn.disabled = false;
+    };
+
+    window.confirmWithConfidence = function(btn) {
+        var confidenceEl = btn.closest('.quiz-confidence');
+        var question = confidenceEl.closest('.quiz-question');
+        var selectedDot = confidenceEl.querySelector('.confidence-dot.selected');
+        var confidence = selectedDot ? parseInt(selectedDot.dataset.value) : 0;
+        var isCorrect = confidenceEl.dataset.isCorrect === 'true';
+        var attempts = parseInt(confidenceEl.dataset.attempts);
+
+        question.classList.add('answered');
+        confidenceEl.style.display = 'none';
+
+        var correctIdx = parseInt(question.dataset.correct);
+        var options = question.querySelectorAll('.quiz-option');
+        options[correctIdx].classList.add('correct');
+
+        if (!isCorrect) {
+            var selected = question.querySelector('.quiz-option.selected');
+            if (selected) selected.classList.add('incorrect');
+        }
+
+        question.querySelector('.quiz-explanation').classList.add('visible');
+
+        // Hypercorrection: high confidence + wrong
+        if (confidence >= 4 && !isCorrect) {
+            var hyperEl = question.querySelector('.quiz-hypercorrection');
+            hyperEl.textContent = 'You were quite confident, but this is a common misconception. ' +
+                'Research shows that high-confidence errors, once corrected, are remembered ' +
+                'better than low-confidence ones. Pay extra attention to this explanation.';
+            hyperEl.style.display = 'block';
+        }
+
+        // Record score
+        var slideIdx = parseInt(question.closest('.slide').dataset.index);
+        var bloomBadge = question.closest('.slide').querySelector('.bloom-badge');
+        var bloom = bloomBadge ? bloomBadge.textContent.trim() : '';
+        recordScore(slideIdx, isCorrect, attempts, confidence, bloom);
+    };
+
+    // ── Fill-in-the-blank interaction (multi-attempt) ────────────────────
+    window.checkFillBlanks = function(btn) {
+        var container = btn.closest('.fitb-container');
+        var answers = JSON.parse(container.dataset.answers);
+        var inputs = container.querySelectorAll('.fitb-blank');
+        var attempts = parseInt(container.dataset.attempts || '0') + 1;
+        container.dataset.attempts = attempts;
+
+        var allCorrect = true;
+        inputs.forEach(function(input, i) {
+            var userAnswer = input.value.trim().toLowerCase();
+            var correct = answers[i].toLowerCase();
+            if (userAnswer === correct) {
+                input.classList.add('correct');
+                input.classList.remove('incorrect');
+            } else {
+                allCorrect = false;
+                input.classList.add('incorrect');
+                input.classList.remove('correct');
+            }
+        });
+
+        if (allCorrect || attempts >= 3) {
+            btn.disabled = true;
+            btn.textContent = allCorrect ? 'Correct!' : 'Showing answers';
+            if (!allCorrect) {
+                inputs.forEach(function(input, i) {
+                    if (!input.classList.contains('correct')) {
+                        input.value = answers[i];
+                        input.classList.remove('incorrect');
+                        input.classList.add('revealed');
+                    }
+                });
+            }
+            var slideIdx = parseInt(container.closest('.slide').dataset.index);
+            recordScore(slideIdx, allCorrect, attempts, 0, '');
+        } else if (attempts === 1) {
+            var hintEl = container.querySelector('.fitb-hint');
+            if (hintEl) hintEl.style.display = 'block';
+            btn.textContent = 'Try Again';
+        } else if (attempts === 2 && container.dataset.hintFirstLetter === 'true') {
+            inputs.forEach(function(input, i) {
+                if (!input.classList.contains('correct')) {
+                    input.placeholder = answers[i].charAt(0) + '...';
+                }
+            });
+            btn.textContent = 'Last Try';
+        }
+    };
+
+    // ── Concept map rendering (hierarchical layout) ────────────────────
+    function renderConceptMap(container) {
+        var nodes = JSON.parse(container.dataset.nodes);
+        var edges = JSON.parse(container.dataset.edges);
+        var blanks = JSON.parse(container.dataset.blanks);
+        var svg = container.querySelector('.concept-map-svg');
+        svg.innerHTML = '';
+        if (!nodes.length) return;
+
+        var svgNS = 'http://www.w3.org/2000/svg';
+
+        // ── Text measurement ──
+        var _c = document.createElement('canvas');
+        var _x = _c.getContext('2d');
+        _x.font = '13px system-ui,-apple-system,sans-serif';
+
+        var PAD_X = 18, PAD_Y = 10, NODE_MIN_H = 36, NODE_MIN_W = 80, NODE_MAX_W = 200;
+        var LAYER_GAP = 120, NODE_GAP = 28, MARGIN = 50, LINE_H = 16;
+
+        function wrapLabel(label) {
+            var maxW = NODE_MAX_W - PAD_X * 2;
+            var words = label.split(/\s+/);
+            if (!words.length) return [''];
+            var lines = [], cur = words[0];
+            for (var i = 1; i < words.length; i++) {
+                var test = cur + ' ' + words[i];
+                if (_x.measureText(test).width > maxW) { lines.push(cur); cur = words[i]; }
+                else cur = test;
+            }
+            lines.push(cur);
+            return lines;
+        }
+
+        // ── Build node map with measured sizes ──
+        var nm = {};
+        nodes.forEach(function(n) {
+            var lines = wrapLabel(n.label);
+            var maxLW = 0;
+            lines.forEach(function(l) { var w = _x.measureText(l).width; if (w > maxLW) maxLW = w; });
+            nm[n.id] = {
+                id: n.id, label: n.label, lines: lines,
+                w: Math.max(NODE_MIN_W, Math.min(NODE_MAX_W, Math.ceil(maxLW) + PAD_X * 2)),
+                h: Math.max(NODE_MIN_H, lines.length * LINE_H + PAD_Y * 2),
+                x: 0, y: 0, layer: -1
+            };
+        });
+
+        // ── Adjacency lists ──
+        var childOf = {}, parentOf = {};
+        nodes.forEach(function(n) { childOf[n.id] = []; parentOf[n.id] = []; });
+        edges.forEach(function(e) { childOf[e.source].push(e.target); parentOf[e.target].push(e.source); });
+
+        // ── Layer assignment (longest-path from roots) ──
+        var roots = nodes.filter(function(n) { return parentOf[n.id].length === 0; });
+        if (!roots.length) roots = [nodes[0]];
+        roots.forEach(function(r) { nm[r.id].layer = 0; });
+        var changed = true, safe = 0;
+        while (changed && ++safe < 200) {
+            changed = false;
+            edges.forEach(function(e) {
+                var sl = nm[e.source].layer;
+                if (sl >= 0 && sl + 1 > nm[e.target].layer) { nm[e.target].layer = sl + 1; changed = true; }
+            });
+        }
+        nodes.forEach(function(n) { if (nm[n.id].layer < 0) nm[n.id].layer = 0; });
+
+        // ── Group by layer ──
+        var layerMap = {}, maxLayer = 0;
+        nodes.forEach(function(n) {
+            var l = nm[n.id].layer;
+            if (!layerMap[l]) layerMap[l] = [];
+            layerMap[l].push(nm[n.id]);
+            if (l > maxLayer) maxLayer = l;
+        });
+
+        // ── Barycenter ordering (minimize edge crossings) ──
+        for (var pass = 0; pass < 8; pass++) {
+            for (var l = 1; l <= maxLayer; l++) {
+                var grp = layerMap[l];
+                grp.forEach(function(nd) {
+                    var pars = parentOf[nd.id];
+                    if (pars.length) {
+                        var prev = layerMap[l - 1] || [];
+                        var sum = 0, cnt = 0;
+                        pars.forEach(function(pid) {
+                            for (var k = 0; k < prev.length; k++) {
+                                if (prev[k].id === pid) { sum += k; cnt++; break; }
+                            }
+                        });
+                        nd._bc = cnt ? sum / cnt : 0;
+                    }
+                });
+                grp.sort(function(a, b) { return (a._bc || 0) - (b._bc || 0); });
+            }
+        }
+
+        // ── Position nodes (center each layer horizontally) ──
+        for (var l = 0; l <= maxLayer; l++) {
+            var grp = layerMap[l];
+            var totalW = 0;
+            grp.forEach(function(nd) { totalW += nd.w; });
+            totalW += Math.max(0, grp.length - 1) * NODE_GAP;
+            var xOff = -totalW / 2;
+            grp.forEach(function(nd) {
+                nd.x = xOff + nd.w / 2;
+                nd.y = l * LAYER_GAP;
+                xOff += nd.w + NODE_GAP;
+            });
+        }
+
+        // ── Compute bounding box & set viewBox ──
+        var minX = Infinity, maxX = -Infinity, maxH = 0;
+        nodes.forEach(function(n) {
+            var nd = nm[n.id];
+            var left = nd.x - nd.w / 2, right = nd.x + nd.w / 2;
+            if (left < minX) minX = left;
+            if (right > maxX) maxX = right;
+            if (nd.h > maxH) maxH = nd.h;
+        });
+        var viewW = maxX - minX + MARGIN * 2;
+        var viewH = maxLayer * LAYER_GAP + maxH + MARGIN * 2;
+        var oX = -minX + MARGIN, oY = MARGIN + maxH / 2;
+        nodes.forEach(function(n) { nm[n.id].x += oX; nm[n.id].y += oY; });
+
+        svg.setAttribute('viewBox', '0 0 ' + Math.ceil(viewW) + ' ' + Math.ceil(viewH));
+        svg.removeAttribute('height');
+        svg.style.maxHeight = Math.min(Math.ceil(viewH), 550) + 'px';
+
+        // ── Defs: arrow marker + drop shadow ──
+        var defs = document.createElementNS(svgNS, 'defs');
+        var cid = container.id;
+
+        var marker = document.createElementNS(svgNS, 'marker');
+        marker.setAttribute('id', 'cmap-arr-' + cid);
+        marker.setAttribute('markerWidth', '8'); marker.setAttribute('markerHeight', '6');
+        marker.setAttribute('refX', '7'); marker.setAttribute('refY', '3');
+        marker.setAttribute('orient', 'auto'); marker.setAttribute('markerUnits', 'userSpaceOnUse');
+        var arrP = document.createElementNS(svgNS, 'path');
+        arrP.setAttribute('d', 'M0,0.5 L7,3 L0,5.5');
+        arrP.setAttribute('fill', 'none'); arrP.setAttribute('stroke', 'var(--accent)');
+        arrP.setAttribute('stroke-width', '1.2'); arrP.setAttribute('stroke-linejoin', 'round');
+        marker.appendChild(arrP); defs.appendChild(marker);
+
+        var flt = document.createElementNS(svgNS, 'filter');
+        flt.setAttribute('id', 'cmap-sh-' + cid);
+        flt.setAttribute('x', '-8%'); flt.setAttribute('y', '-8%');
+        flt.setAttribute('width', '116%'); flt.setAttribute('height', '124%');
+        var fds = document.createElementNS(svgNS, 'feDropShadow');
+        fds.setAttribute('dx', '0'); fds.setAttribute('dy', '2');
+        fds.setAttribute('stdDeviation', '3'); fds.setAttribute('flood-opacity', '0.1');
+        flt.appendChild(fds); defs.appendChild(flt);
+        svg.appendChild(defs);
+
+        // ── Draw edges (cubic bezier curves) ──
+        edges.forEach(function(edge, idx) {
+            var src = nm[edge.source], tgt = nm[edge.target];
+            if (!src || !tgt) return;
+
+            var sx = src.x, sy = src.y + src.h / 2;   // bottom center of source
+            var tx = tgt.x, ty = tgt.y - tgt.h / 2;   // top center of target
+            var d;
+            if (Math.abs(sy - ty) < 5) {
+                // Same layer: arc above
+                var arcY = Math.min(sy, ty) - 50;
+                d = 'M' + sx + ',' + sy + ' Q' + ((sx + tx) / 2) + ',' + arcY + ' ' + tx + ',' + ty;
+            } else {
+                // Normal: smooth cubic bezier flowing downward
+                var gap = ty - sy;
+                d = 'M' + sx + ',' + sy + ' C' + sx + ',' + (sy + gap * 0.4) +
+                    ' ' + tx + ',' + (ty - gap * 0.4) + ' ' + tx + ',' + ty;
+            }
+
+            var path = document.createElementNS(svgNS, 'path');
+            path.setAttribute('d', d);
+            path.setAttribute('fill', 'none');
+            path.setAttribute('stroke', 'var(--border)');
+            path.setAttribute('stroke-width', '1.5');
+            path.setAttribute('marker-end', 'url(#cmap-arr-' + cid + ')');
+            svg.appendChild(path);
+
+            // Label at edge midpoint
+            var lx = (sx + tx) / 2, ly = (sy + ty) / 2;
+
+            if (blanks.indexOf(idx) !== -1) {
+                var foW = 140, foH = 30;
+                var fo = document.createElementNS(svgNS, 'foreignObject');
+                fo.setAttribute('x', lx - foW / 2); fo.setAttribute('y', ly - foH / 2);
+                fo.setAttribute('width', foW); fo.setAttribute('height', foH);
+                var input = document.createElement('input');
+                input.type = 'text'; input.className = 'cmap-edge-input';
+                input.dataset.edgeIndex = idx; input.dataset.correctLabel = edge.label;
+                input.placeholder = '?';
+                fo.appendChild(input); svg.appendChild(fo);
+            } else {
+                var labelW = _x.measureText(edge.label).width + 14;
+                var labelH = 20;
+                var bg = document.createElementNS(svgNS, 'rect');
+                bg.setAttribute('x', lx - labelW / 2); bg.setAttribute('y', ly - labelH / 2);
+                bg.setAttribute('width', labelW); bg.setAttribute('height', labelH);
+                bg.setAttribute('rx', '4'); bg.setAttribute('class', 'cmap-label-bg');
+                svg.appendChild(bg);
+
+                var text = document.createElementNS(svgNS, 'text');
+                text.setAttribute('x', lx); text.setAttribute('y', ly);
+                text.setAttribute('class', 'cmap-edge-label');
+                text.setAttribute('text-anchor', 'middle');
+                text.setAttribute('dominant-baseline', 'central');
+                text.textContent = edge.label;
+                svg.appendChild(text);
+            }
+        });
+
+        // ── Draw nodes (on top of edges) ──
+        nodes.forEach(function(node) {
+            var nd = nm[node.id];
+            var g = document.createElementNS(svgNS, 'g');
+            g.setAttribute('class', 'cmap-node-group');
+
+            var rect = document.createElementNS(svgNS, 'rect');
+            rect.setAttribute('x', nd.x - nd.w / 2); rect.setAttribute('y', nd.y - nd.h / 2);
+            rect.setAttribute('width', nd.w); rect.setAttribute('height', nd.h);
+            rect.setAttribute('rx', '10'); rect.setAttribute('class', 'cmap-node');
+            rect.setAttribute('filter', 'url(#cmap-sh-' + cid + ')');
+            g.appendChild(rect);
+
+            var textEl = document.createElementNS(svgNS, 'text');
+            textEl.setAttribute('class', 'cmap-node-text');
+            textEl.setAttribute('text-anchor', 'middle');
+            if (nd.lines.length === 1) {
+                textEl.setAttribute('x', nd.x); textEl.setAttribute('y', nd.y);
+                textEl.setAttribute('dominant-baseline', 'central');
+                textEl.textContent = nd.label;
+            } else {
+                var startY = nd.y - ((nd.lines.length - 1) * LINE_H) / 2;
+                nd.lines.forEach(function(line, li) {
+                    var ts = document.createElementNS(svgNS, 'tspan');
+                    ts.setAttribute('x', nd.x);
+                    ts.setAttribute('y', startY + li * LINE_H);
+                    ts.setAttribute('dominant-baseline', 'central');
+                    ts.textContent = line;
+                    textEl.appendChild(ts);
+                });
+            }
+            g.appendChild(textEl);
+            svg.appendChild(g);
+        });
+    }
+
+    window.checkConceptMap = function(slideIndex) {
+        var container = document.getElementById('cmap-' + slideIndex);
+        if (!container) return;
+        var inputs = container.querySelectorAll('.cmap-edge-input');
+        var allCorrect = true;
+        inputs.forEach(function(input) {
+            var userAnswer = input.value.trim().toLowerCase();
+            var correct = input.dataset.correctLabel.toLowerCase();
+            if (userAnswer === correct) {
+                input.style.borderColor = 'var(--success)';
+                input.style.color = 'var(--success)';
+            } else {
+                input.style.borderColor = 'var(--error)';
+                input.style.color = 'var(--error)';
+                allCorrect = false;
+            }
+        });
+        var btn = container.querySelector('.quiz-check-btn');
+        if (btn) {
+            btn.disabled = true;
+            btn.textContent = allCorrect ? 'All Correct!' : 'Try Again';
+            if (!allCorrect) {
+                setTimeout(function() { btn.disabled = false; btn.textContent = 'Check Answers'; }, 1500);
+            }
+        }
+        var slideIdx = parseInt(container.closest('.slide').dataset.index);
+        recordScore(slideIdx, allCorrect, 1, 0, '');
+    };
+
+    // ── Matching interaction ──────────────────────────────────────────────
+    var matchState = { left: null, right: null, animating: false };
+
+    window.selectMatchItem = function(el, side) {
+        if (el.classList.contains('matched')) return;
+        if (matchState.animating) return;  // Block clicks during wrong-pair animation
+        var container = el.closest('.matching-container');
+        var items = container.querySelectorAll('.matching-' + side + '-item');
+        items.forEach(function(item) { if (!item.classList.contains('matched')) item.classList.remove('selected'); });
+        el.classList.add('selected');
+        matchState[side] = el;
+
+        if (matchState.left && matchState.right) {
+            var correct = JSON.parse(container.dataset.correct);
+            var leftIdx = parseInt(matchState.left.dataset.idx);
+            var rightIdx = parseInt(matchState.right.dataset.idx);
+            if (correct[leftIdx] === rightIdx) {
+                matchState.left.classList.add('matched');
+                matchState.left.classList.remove('selected');
+                matchState.right.classList.add('matched');
+                matchState.right.classList.remove('selected');
+
+                // Check if all pairs matched — show explanations
+                var allItems = container.querySelectorAll('.matching-left-item');
+                var allMatched = true;
+                allItems.forEach(function(item) {
+                    if (!item.classList.contains('matched')) allMatched = false;
+                });
+                if (allMatched) {
+                    var explanationsJson = container.dataset.pairExplanations;
+                    if (explanationsJson) {
+                        try {
+                            var explanations = JSON.parse(explanationsJson);
+                            if (explanations.length > 0) {
+                                var explDiv = container.querySelector('.matching-explanations');
+                                var html = '<h4>Why these pairs match:</h4>';
+                                explanations.forEach(function(expl, i) {
+                                    if (expl) html += '<p><strong>' + (i+1) + '.</strong> ' + expl + '</p>';
+                                });
+                                explDiv.innerHTML = html;
+                                explDiv.style.display = 'block';
+                            }
+                        } catch(e) {}
+                    }
+                    var slideIdx = parseInt(container.closest('.slide').dataset.index);
+                    var wrongAttempts = parseInt(container.dataset.wrongAttempts || '0');
+                    recordScore(slideIdx, true, wrongAttempts + 1, 0, '');
+                }
+            } else {
+                container.dataset.wrongAttempts = (parseInt(container.dataset.wrongAttempts || '0') + 1).toString();
+                matchState.left.classList.add('wrong');
+                matchState.right.classList.add('wrong');
+                matchState.animating = true;
+                var wrongLeft = matchState.left;
+                var wrongRight = matchState.right;
+                setTimeout(function() {
+                    wrongLeft.classList.remove('wrong', 'selected');
+                    wrongRight.classList.remove('wrong', 'selected');
+                    matchState.left = null;
+                    matchState.right = null;
+                    matchState.animating = false;
+                }, 600);
+                return;
+            }
+            matchState.left = null;
+            matchState.right = null;
+        }
+    };
+
+    // ── Nav bar badges ──────────────────────────────────────────────────
+    function updateReviewNavBadge() {
+        var flashcardKey = 'lxp_' + COURSE_SLUG + '_flashcards';
+        try {
+            var flashcards = JSON.parse(localStorage.getItem(flashcardKey) || '{}');
+            var keys = Object.keys(flashcards);
+            if (keys.length === 0) return;
+            var now = Date.now();
+            var dueCount = 0;
+            keys.forEach(function(k) {
+                var c = flashcards[k];
+                if (c.reps === 0 || !c.nextReview || c.nextReview <= now) dueCount++;
+            });
+            var badge = document.getElementById('reviewNavBadge');
+            if (badge && dueCount > 0) {
+                document.getElementById('reviewBadgeCount').textContent = dueCount;
+                badge.style.display = 'inline-flex';
+            }
+        } catch(e) {}
+    }
+
+    function updateMasteryNavIndicator() {
+        var stats = learnerModel.getStats();
+        var indicator = document.getElementById('masteryNavIndicator');
+        if (indicator && (stats.concepts_mastered > 0 || stats.concepts_struggling > 0)) {
+            var total = stats.concepts_mastered + stats.concepts_struggling +
+                (stats.total_attempts > 0 ? Object.keys(learnerModel.getConceptMastery()).length - stats.concepts_mastered - stats.concepts_struggling : 0);
+            if (total > 0) {
+                indicator.textContent = stats.concepts_mastered + '/' + total + ' mastered';
+                indicator.style.display = 'inline';
+            }
+        }
+    }
+
+    // ── Add to Review ────────────────────────────────────────────────────
+    window.addToReview = function(btn) {
+        var slideEl = btn.closest('.slide');
+        if (!slideEl) return;
+        var elementId = slideEl.getAttribute('data-element-id');
+        var sectionIdx = findCurrentSection(parseInt(slideEl.dataset.index));
+        var sectionTitle = sidebarSections[sectionIdx] ?
+            sidebarSections[sectionIdx].querySelector('.sidebar-section-title').textContent.trim() : '';
+        var info = getSlideConceptsAndBloom(slideEl);
+        var concepts = info.concepts;
+        var bloom = info.bloom;
+
+        var flashcardKey = 'lxp_' + COURSE_SLUG + '_flashcards';
+        var flashcards = {};
+        try { flashcards = JSON.parse(localStorage.getItem(flashcardKey) || '{}'); } catch(e) {}
+
+        if (flashcards[elementId]) {
+            btn.textContent = 'Already added';
+            btn.disabled = true;
+            return;
+        }
+
+        // Extract content based on element type
+        var front = '', back = '';
+        var fcEl = slideEl.querySelector('.flashcard');
+        if (fcEl) {
+            var frontEl = slideEl.querySelector('.flashcard-front');
+            var backEl = slideEl.querySelector('.flashcard-back');
+            front = frontEl ? frontEl.childNodes[0].textContent.trim() : '';
+            back = backEl ? backEl.textContent.trim() : '';
+        }
+        var quizEl = slideEl.querySelector('.quiz-question-text');
+        if (quizEl) {
+            front = quizEl.textContent.trim();
+            var explEl = slideEl.querySelector('.quiz-explanation');
+            back = explEl ? explEl.textContent.trim() : '';
+        }
+        var fitbEl = slideEl.querySelector('.fitb-container');
+        if (fitbEl) {
+            front = 'Fill in the blanks';
+            try { back = JSON.parse(fitbEl.dataset.answers || '[]').join(', '); } catch(e) {}
+        }
+
+        if (!front) { front = 'Review item'; back = 'See chapter ' + CHAPTER_NUM; }
+
+        flashcards[elementId] = {
+            difficulty: 0, stability: 0, lastReview: null, nextReview: null,
+            reps: 0, lapses: 0,
+            front: front, back: back,
+            chapterNum: parseInt(CHAPTER_NUM), sectionTitle: sectionTitle,
+            concepts: concepts, bloom: bloom
+        };
+
+        try { localStorage.setItem(flashcardKey, JSON.stringify(flashcards)); } catch(e) {}
+        btn.textContent = 'Added!';
+        btn.disabled = true;
+        updateReviewNavBadge();
+    };
+
+    // ── Serialize exercises for review pages ─────────────────────────────
+    function cacheExercisesForReview() {
+        var flashcardKey = 'lxp_' + COURSE_SLUG + '_flashcards';
+        var exercisesKey = 'lxp_' + COURSE_SLUG + '_exercises';
+        var flashcards = {};
+        try { flashcards = JSON.parse(localStorage.getItem(flashcardKey) || '{}'); } catch(e) {}
+        var exercises = [];
+        try { exercises = JSON.parse(localStorage.getItem(exercisesKey) || '[]'); } catch(e) {}
+        exercises = exercises.filter(function(ex) { return ex.chapter !== parseInt(CHAPTER_NUM); });
+
+        slides.forEach(function(slideEl, idx) {
+            var sectionIdx = findCurrentSection(idx);
+            var sectionTitle = sidebarSections[sectionIdx] ?
+                sidebarSections[sectionIdx].querySelector('.sidebar-section-title').textContent.trim() : '';
+            var bloomBadge = slideEl.querySelector('.bloom-badge');
+            var bloom = bloomBadge ? bloomBadge.textContent.trim() : '';
+
+            var concepts = [];
+            try { concepts = JSON.parse(slideEl.getAttribute('data-concepts') || '[]'); } catch(e) {}
+
+            var flashcardEl = slideEl.querySelector('.flashcard');
+            if (flashcardEl) {
+                var front = slideEl.querySelector('.flashcard-front');
+                var back = slideEl.querySelector('.flashcard-back');
+                if (front && back) {
+                    var key = slideEl.getAttribute('data-element-id') || ('ch' + CHAPTER_NUM + '_e' + idx);
+                    if (!flashcards[key]) {
+                        flashcards[key] = {
+                            difficulty: 0, stability: 0, lastReview: null, nextReview: null,
+                            reps: 0, lapses: 0,
+                            front: front.childNodes[0] ? front.childNodes[0].textContent.trim() : '',
+                            back: back.textContent.trim(),
+                            chapterNum: parseInt(CHAPTER_NUM), sectionTitle: sectionTitle,
+                            concepts: concepts
+                        };
+                    }
+                }
+            }
+
+            var quizEl = slideEl.querySelector('.quiz-container');
+            if (quizEl) {
+                quizEl.querySelectorAll('.quiz-question').forEach(function(q) {
+                    var opts = [];
+                    q.querySelectorAll('.quiz-option').forEach(function(o) {
+                        var spans = o.querySelectorAll('span');
+                        opts.push(spans.length > 1 ? spans[1].textContent : o.textContent);
+                    });
+                    exercises.push({
+                        type: 'quiz', chapter: parseInt(CHAPTER_NUM),
+                        section: sectionTitle, bloom: bloom, concepts: concepts,
+                        data: { question: q.querySelector('.quiz-question-text').textContent,
+                            options: opts, correct: parseInt(q.dataset.correct),
+                            explanation: q.querySelector('.quiz-explanation').textContent }
+                    });
+                });
+            }
+
+            var fitbEl = slideEl.querySelector('.fitb-container');
+            if (fitbEl) {
+                exercises.push({
+                    type: 'fitb', chapter: parseInt(CHAPTER_NUM),
+                    section: sectionTitle, bloom: bloom, concepts: concepts,
+                    data: { answers: JSON.parse(fitbEl.dataset.answers || '[]'),
+                        hint: fitbEl.querySelector('.fitb-hint') ? fitbEl.querySelector('.fitb-hint').textContent : '' }
+                });
+            }
+
+            // Gap 3: Cache matching exercises for mixed review
+            var matchEl = slideEl.querySelector('.matching-container');
+            if (matchEl) {
+                var elementId = slideEl.getAttribute('data-element-id');
+                exercises.push({
+                    type: 'matching', chapter: parseInt(CHAPTER_NUM),
+                    section: sectionTitle, bloom: bloom, concepts: concepts,
+                    data: {
+                        pairs: JSON.parse(matchEl.dataset.correct || '{}'),
+                        title: matchEl.querySelector('.matching-title') ? matchEl.querySelector('.matching-title').textContent.trim() : '',
+                        leftItems: Array.prototype.map.call(matchEl.querySelectorAll('.matching-left-item'), function(el) { return el.textContent.trim(); }),
+                        rightItems: Array.prototype.map.call(matchEl.querySelectorAll('.matching-right-item'), function(el) { return el.textContent.trim(); })
+                    }
+                });
+            }
+
+            // Gap 3: Cache self-explain exercises for mixed review
+            var seEl = slideEl.querySelector('.self-explain-container');
+            if (seEl) {
+                var sePrompt = seEl.querySelector('.explain-prompt');
+                exercises.push({
+                    type: 'self_explain', chapter: parseInt(CHAPTER_NUM),
+                    section: sectionTitle, bloom: bloom, concepts: concepts,
+                    data: {
+                        prompt: sePrompt ? sePrompt.textContent.trim() : '',
+                        rubric: JSON.parse(seEl.getAttribute('data-key-points') || '[]')
+                    }
+                });
+            }
+        });
+
+        try {
+            localStorage.setItem(flashcardKey, JSON.stringify(flashcards));
+            localStorage.setItem(exercisesKey, JSON.stringify(exercises));
+        } catch(e) {}
+    }
+
+    // ── Self-Explain functions ─────────────────────────────────────────────
+    window.updateWordCount = function(textarea) {
+        var container = textarea.closest('.self-explain-container') || textarea.closest('.essay-prompt');
+        var text = textarea.value.trim();
+        var count = text ? text.split(/\s+/).length : 0;
+        var countSpan = container.querySelector('.word-count');
+        if (countSpan) countSpan.textContent = count;
+
+        var minWords = parseInt(container.getAttribute('data-min-words') || '50');
+        var submitBtn = container.querySelector('.explain-submit-btn');
+        if (submitBtn) submitBtn.disabled = count < minWords;
+
+        // For interactive essay: check if all prompts meet minimum
+        var essayEl = textarea.closest('.essay-container');
+        if (essayEl) checkAllMinimums(essayEl);
+    };
+
+    function checkAllMinimums(essayEl) {
+        var prompts = essayEl.querySelectorAll('.essay-prompt');
+        var allMet = true;
+        prompts.forEach(function(p) {
+            var ta = p.querySelector('.explain-textarea');
+            var text = ta ? ta.value.trim() : '';
+            var count = text ? text.split(/\s+/).length : 0;
+            var min = parseInt(p.getAttribute('data-min-words') || '50');
+            if (count < min) allMet = false;
+        });
+        var btn = essayEl.querySelector('.essay-submit-btn');
+        if (btn) btn.disabled = !allMet;
+    }
+
+    window.submitExplanation = function(btn) {
+        var container = btn.closest('.self-explain-container');
+        var textarea = container.querySelector('.explain-textarea');
+        textarea.readOnly = true;
+        btn.disabled = true;
+        btn.textContent = 'Submitted';
+
+        var keyPoints = JSON.parse(container.getAttribute('data-key-points') || '[]');
+        var rubricDiv = container.querySelector('.explain-rubric');
+        rubricDiv.innerHTML = '<h4>Self-Assessment Checklist</h4><p>Check each point your explanation covers:</p>';
+        var list = document.createElement('ul');
+        list.className = 'rubric-checklist';
+        keyPoints.forEach(function(point, i) {
+            var li = document.createElement('li');
+            var label = document.createElement('label');
+            var cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.className = 'rubric-checkbox';
+            cb.setAttribute('data-index', i);
+            cb.onchange = function() { updateRubricScore(container); };
+            label.appendChild(cb);
+            label.appendChild(document.createTextNode(' ' + point));
+            li.appendChild(label);
+            list.appendChild(li);
+        });
+        rubricDiv.appendChild(list);
+
+        var scoreDiv = document.createElement('div');
+        scoreDiv.className = 'rubric-score';
+        scoreDiv.textContent = '0 / ' + keyPoints.length + ' points covered';
+        rubricDiv.appendChild(scoreDiv);
+        rubricDiv.style.display = 'block';
+
+        // Record score (partial, updated on checkbox changes)
+        var slideEl = container.closest('.slide');
+        var slideIndex = Array.prototype.indexOf.call(slides, slideEl);
+        var bloomBadge = slideEl.querySelector('.bloom-badge');
+        var bloom = bloomBadge ? bloomBadge.textContent.trim() : '';
+        recordScore(slideIndex, false, 1, 0, bloom);
+    };
+
+    function updateRubricScore(container) {
+        var checkboxes = container.querySelectorAll('.rubric-checkbox');
+        var checked = 0;
+        checkboxes.forEach(function(cb) { if (cb.checked) checked++; });
+        var scoreDiv = container.querySelector('.rubric-score');
+        if (scoreDiv) scoreDiv.textContent = checked + ' / ' + checkboxes.length + ' points covered';
+
+        var showBtn = container.querySelector('.show-model-btn');
+        if (!showBtn) {
+            showBtn = document.createElement('button');
+            showBtn.className = 'show-model-btn';
+            showBtn.textContent = 'Show Model Response';
+            showBtn.onclick = function() { showModelResponse(container); };
+            var rubricDiv = container.querySelector('.explain-rubric');
+            rubricDiv.appendChild(showBtn);
+        }
+
+        // Update score tracking
+        var slideEl = container.closest('.slide');
+        var slideIndex = Array.prototype.indexOf.call(slides, slideEl);
+        var bloomBadge = slideEl.querySelector('.bloom-badge');
+        var bloom = bloomBadge ? bloomBadge.textContent.trim() : '';
+        var fraction = checkboxes.length > 0 ? checked / checkboxes.length : 0;
+        recordScore(slideIndex, fraction >= 0.7, 1, fraction, bloom);
+    }
+
+    function showModelResponse(container) {
+        var modelDiv = container.querySelector('.model-response');
+        if (modelDiv) modelDiv.style.display = 'block';
+    }
+
+    // ── Interactive Essay functions ──────────────────────────────────────────────
+    window.submitEssay = function(btn) {
+        var essayEl = btn.closest('.essay-container');
+        var prompts = essayEl.querySelectorAll('.essay-prompt');
+        btn.disabled = true;
+        btn.textContent = 'Submitted';
+
+        // Lock all textareas
+        prompts.forEach(function(p) {
+            var ta = p.querySelector('.explain-textarea');
+            if (ta) ta.readOnly = true;
+        });
+
+        var resultsDiv = essayEl.querySelector('.essay-results');
+        var rubricDiv = essayEl.querySelector('.essay-rubric');
+        rubricDiv.innerHTML = '';
+        var totalPoints = 0;
+        var totalChecked = 0;
+
+        prompts.forEach(function(p, promptIdx) {
+            var keyPoints = JSON.parse(p.getAttribute('data-key-points') || '[]');
+            totalPoints += keyPoints.length;
+
+            var section = document.createElement('div');
+            section.className = 'essay-prompt-rubric';
+            section.setAttribute('data-prompt-index', promptIdx);
+            section.innerHTML = '<h4>Question ' + (promptIdx + 1) + ' — Self-Assessment</h4>';
+
+            var list = document.createElement('ul');
+            list.className = 'rubric-checklist';
+            keyPoints.forEach(function(point, i) {
+                var li = document.createElement('li');
+                var label = document.createElement('label');
+                var cb = document.createElement('input');
+                cb.type = 'checkbox';
+                cb.className = 'rubric-checkbox essay-rubric-cb';
+                cb.setAttribute('data-prompt-index', promptIdx);
+                cb.setAttribute('data-index', i);
+                cb.onchange = function() { updateEssayScore(essayEl); };
+                label.appendChild(cb);
+                label.appendChild(document.createTextNode(' ' + point));
+                li.appendChild(label);
+                list.appendChild(li);
+            });
+            section.appendChild(list);
+
+            var exampleBtn = document.createElement('button');
+            exampleBtn.className = 'show-model-btn';
+            exampleBtn.textContent = 'Show Example Response';
+            exampleBtn.onclick = function() {
+                var ex = p.querySelector('.model-response');
+                if (!ex) {
+                    // Model responses are rendered in the essay-results for each prompt
+                    var exDiv = section.querySelector('.prompt-model-response');
+                    if (exDiv) exDiv.style.display = 'block';
+                }
+            };
+            section.appendChild(exampleBtn);
+
+            rubricDiv.appendChild(section);
+        });
+
+        var scoreDiv = document.createElement('div');
+        scoreDiv.className = 'essay-score';
+        scoreDiv.textContent = '0 / ' + totalPoints + ' total points covered';
+        rubricDiv.appendChild(scoreDiv);
+
+        resultsDiv.style.display = 'block';
+        essayEl.setAttribute('data-total-points', totalPoints);
+
+        // Show tutor panel if API key is configured
+        initTutorPanel(essayEl);
+    };
+
+    function updateEssayScore(essayEl) {
+        var checkboxes = essayEl.querySelectorAll('.essay-rubric-cb');
+        var checked = 0;
+        checkboxes.forEach(function(cb) { if (cb.checked) checked++; });
+        var total = parseInt(essayEl.getAttribute('data-total-points') || '0');
+        var scoreDiv = essayEl.querySelector('.essay-score');
+        if (scoreDiv) scoreDiv.textContent = checked + ' / ' + total + ' total points covered';
+
+        checkEssayVerdict(essayEl, checked, total);
+    }
+
+    function checkEssayVerdict(essayEl, checked, total) {
+        var threshold = parseFloat(essayEl.getAttribute('data-threshold') || '0.7');
+        var fraction = total > 0 ? checked / total : 0;
+        var verdictDiv = essayEl.querySelector('.essay-verdict');
+        if (!verdictDiv) return;
+
+        if (fraction >= threshold) {
+            verdictDiv.className = 'essay-verdict verdict-pass';
+            verdictDiv.innerHTML = '<strong>PASS</strong> — You demonstrated understanding of ' +
+                Math.round(fraction * 100) + '% of key points (threshold: ' + Math.round(threshold * 100) + '%)';
+            verdictDiv.style.display = 'block';
+            markEssayComplete(essayEl);
+        } else if (checked > 0) {
+            verdictDiv.className = 'essay-verdict verdict-review';
+            verdictDiv.innerHTML = '<strong>Keep reviewing</strong> — ' +
+                Math.round(fraction * 100) + '% covered (need ' + Math.round(threshold * 100) + '% to pass). ' +
+                'Use the AI tutor below for personalized guidance, or review the material and try again.';
+            verdictDiv.style.display = 'block';
+            showRetryOptions(essayEl);
+        }
+
+        // Update score tracking
+        var slideEl = essayEl.closest('.slide');
+        var slideIndex = Array.prototype.indexOf.call(slides, slideEl);
+        var bloomBadge = slideEl.querySelector('.bloom-badge');
+        var bloom = bloomBadge ? bloomBadge.textContent.trim() : '';
+        recordScore(slideIndex, fraction >= threshold, 1, fraction, bloom);
+    }
+
+    function markEssayComplete(essayEl) {
+        var btn = essayEl.querySelector('.essay-submit-btn');
+        if (btn) {
+            btn.textContent = 'Passed!';
+            btn.className += ' essay-passed';
+        }
+    }
+
+    function showRetryOptions(essayEl) {
+        var existing = essayEl.querySelector('.retry-btn');
+        if (existing) return;
+        var btn = document.createElement('button');
+        btn.className = 'retry-btn';
+        btn.textContent = 'Reset & Try Again';
+        btn.onclick = function() { resetEssay(essayEl); };
+        var verdictDiv = essayEl.querySelector('.essay-verdict');
+        if (verdictDiv) verdictDiv.appendChild(btn);
+    }
+
+    function resetEssay(essayEl) {
+        var prompts = essayEl.querySelectorAll('.essay-prompt');
+        prompts.forEach(function(p) {
+            var ta = p.querySelector('.explain-textarea');
+            if (ta) { ta.readOnly = false; ta.value = ''; }
+            var countSpan = p.querySelector('.word-count');
+            if (countSpan) countSpan.textContent = '0';
+        });
+        var submitBtn = essayEl.querySelector('.essay-submit-btn');
+        if (submitBtn) {
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Submit All Answers';
+            submitBtn.className = submitBtn.className.replace(' essay-passed', '');
+        }
+        var resultsDiv = essayEl.querySelector('.essay-results');
+        if (resultsDiv) resultsDiv.style.display = 'none';
+        var rubricDiv = essayEl.querySelector('.essay-rubric');
+        if (rubricDiv) rubricDiv.innerHTML = '';
+        var verdictDiv = essayEl.querySelector('.essay-verdict');
+        if (verdictDiv) { verdictDiv.style.display = 'none'; verdictDiv.innerHTML = ''; }
+        var tutorPanel = essayEl.querySelector('.llm-tutor-panel');
+        if (tutorPanel) {
+            tutorPanel.style.display = 'none';
+            var chatHistory = tutorPanel.querySelector('.tutor-chat-history');
+            if (chatHistory) chatHistory.innerHTML = '';
+        }
+    }
+
+    // ── LLM Tutor functions (Tier 2) ────────────────────────────────────
+    function initTutorPanel(essayEl) {
+        var apiKey = localStorage.getItem('lxp_tutor_api_key') || '';
+        if (!apiKey) return;
+        var panel = essayEl.querySelector('.llm-tutor-panel');
+        if (panel) panel.style.display = 'block';
+    }
+
+    window.sendToTutor = function(btn) {
+        var panel = btn.closest('.llm-tutor-panel');
+        var essayEl = panel.closest('.essay-container');
+        var input = panel.querySelector('.tutor-input');
+        var userMsg = input.value.trim();
+        if (!userMsg) return;
+
+        input.value = '';
+        btn.disabled = true;
+        appendChatMessage(panel, 'user', userMsg);
+
+        var apiKey = localStorage.getItem('lxp_tutor_api_key') || '';
+        var baseUrl = localStorage.getItem('lxp_tutor_base_url') || 'https://api.openai.com/v1';
+        var model = localStorage.getItem('lxp_tutor_model') || 'gpt-4o-mini';
+
+        var messages = buildTutorMessages(essayEl, panel, userMsg);
+
+        fetch(baseUrl.replace(/\/$/, '') + '/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer ' + apiKey
+            },
+            body: JSON.stringify({ model: model, messages: messages, temperature: 0.7 })
+        })
+        .then(function(res) {
+            if (!res.ok) throw new Error('API error: ' + res.status);
+            return res.json();
+        })
+        .then(function(data) {
+            var reply = data.choices && data.choices[0] && data.choices[0].message
+                ? data.choices[0].message.content : 'No response received.';
+            appendChatMessage(panel, 'assistant', reply);
+            showTutorVerdict(panel, reply);
+            btn.disabled = false;
+        })
+        .catch(function(err) {
+            appendChatMessage(panel, 'system', 'Error: ' + err.message + '. Check your API key in settings.');
+            btn.disabled = false;
+        });
+    };
+
+    function buildTutorMessages(essayEl, panel, latestUserMsg) {
+        var tutorPromptJson = essayEl.getAttribute('data-tutor-prompt') || '""';
+        var systemPrompt = JSON.parse(tutorPromptJson);
+
+        // Gather learner's responses
+        var prompts = essayEl.querySelectorAll('.essay-prompt');
+        var learnerContext = 'Here are the learner\'s written explanations:\n\n';
+        prompts.forEach(function(p, i) {
+            var ta = p.querySelector('.explain-textarea');
+            var text = ta ? ta.value.trim() : '';
+            learnerContext += 'Question ' + (i + 1) + ':\n' + text + '\n\n';
+        });
+
+        var messages = [];
+        if (systemPrompt) {
+            messages.push({ role: 'system', content: systemPrompt });
+        }
+        messages.push({ role: 'user', content: learnerContext });
+
+        // Add chat history
+        var chatMsgs = panel.querySelectorAll('.chat-message');
+        chatMsgs.forEach(function(msg) {
+            var role = msg.classList.contains('user-message') ? 'user' : 'assistant';
+            if (msg.classList.contains('system-message')) return;
+            messages.push({ role: role, content: msg.textContent });
+        });
+
+        // Add the latest user message
+        messages.push({ role: 'user', content: latestUserMsg });
+        return messages;
+    }
+
+    function appendChatMessage(panel, role, text) {
+        var history = panel.querySelector('.tutor-chat-history');
+        var div = document.createElement('div');
+        div.className = 'chat-message ' + role + '-message';
+        div.textContent = text;
+        history.appendChild(div);
+        history.scrollTop = history.scrollHeight;
+    }
+
+    function showTutorVerdict(panel, reply) {
+        var verdictDiv = panel.querySelector('.tutor-verdict');
+        if (!verdictDiv) return;
+        if (reply.indexOf('[PASS]') !== -1) {
+            verdictDiv.className = 'tutor-verdict verdict-pass';
+            verdictDiv.textContent = 'The tutor has marked this as PASSED.';
+            verdictDiv.style.display = 'block';
+        } else if (reply.indexOf('[FAIL]') !== -1) {
+            verdictDiv.className = 'tutor-verdict verdict-review';
+            verdictDiv.textContent = 'The tutor suggests reviewing. Continue the conversation for guidance.';
+            verdictDiv.style.display = 'block';
+        }
+    }
+
+    // ── Settings modal functions ─────────────────────────────────────────
+    window.openSettings = function() {
+        var modal = document.getElementById('settingsModal');
+        if (!modal) return;
+        modal.style.display = 'flex';
+        // Populate current values
+        var keyInput = modal.querySelector('#tutorApiKey');
+        var urlInput = modal.querySelector('#tutorBaseUrl');
+        var modelInput = modal.querySelector('#tutorModel');
+        if (keyInput) keyInput.value = localStorage.getItem('lxp_tutor_api_key') || '';
+        if (urlInput) urlInput.value = localStorage.getItem('lxp_tutor_base_url') || 'https://api.openai.com/v1';
+        if (modelInput) modelInput.value = localStorage.getItem('lxp_tutor_model') || 'gpt-4o-mini';
+    };
+
+    window.closeSettings = function() {
+        var modal = document.getElementById('settingsModal');
+        if (modal) modal.style.display = 'none';
+    };
+
+    window.saveTutorSettings = function() {
+        var modal = document.getElementById('settingsModal');
+        if (!modal) return;
+        var key = modal.querySelector('#tutorApiKey').value.trim();
+        var url = modal.querySelector('#tutorBaseUrl').value.trim();
+        var model = modal.querySelector('#tutorModel').value.trim();
+        if (key) localStorage.setItem('lxp_tutor_api_key', key);
+        else localStorage.removeItem('lxp_tutor_api_key');
+        localStorage.setItem('lxp_tutor_base_url', url || 'https://api.openai.com/v1');
+        localStorage.setItem('lxp_tutor_model', model || 'gpt-4o-mini');
+        closeSettings();
+    };
+
+    // ── Initialize: resume from saved position or start at 0 ──────────────
+    cacheExercisesForReview();
+    updateReviewNavBadge();
+    updateMasteryNavIndicator();
+    if (total > 0) {
+        var chapters = loadProgress();
+        var savedSlide = chapters[CHAPTER_NUM] ? chapters[CHAPTER_NUM].currentSlide : 0;
+        if (savedSlide >= total) savedSlide = total - 1;
+        if (savedSlide < 0) savedSlide = 0;
+        showSlide(savedSlide);
+    }
+})();
+</script>
+
+<!-- Settings Modal -->
+<div id="settingsModal" class="settings-overlay" style="display:none;" onclick="if(event.target===this)closeSettings()">
+    <div class="settings-modal">
+        <div class="settings-header">
+            <h2>AI Tutor Settings</h2>
+            <button class="settings-close-btn" onclick="closeSettings()">&times;</button>
+        </div>
+        <div class="settings-body">
+            <p class="settings-description">
+                Configure an OpenAI-compatible API to enable live AI tutor feedback on interactive essay exercises.
+                Your API key is stored in your browser's localStorage only.
+            </p>
+            <div class="settings-field">
+                <label for="tutorApiKey">API Key</label>
+                <input type="password" id="tutorApiKey" placeholder="sk-...">
+            </div>
+            <div class="settings-field">
+                <label for="tutorBaseUrl">API Base URL</label>
+                <input type="text" id="tutorBaseUrl" placeholder="https://api.openai.com/v1">
+            </div>
+            <div class="settings-field">
+                <label for="tutorModel">Model</label>
+                <input type="text" id="tutorModel" placeholder="gpt-4o-mini">
+            </div>
+            <div class="settings-actions">
+                <button class="settings-save-btn" onclick="saveTutorSettings()">Save</button>
+                <button class="settings-cancel-btn" onclick="closeSettings()">Cancel</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+</body>
+</html>

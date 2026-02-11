@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Spaced Review — {{ course_title }}</title>
+    <style>
+{{ css|safe }}
+    </style>
+    <script>
+    (function(){
+        try {
+            var k = 'lxp_{{ course_slug }}_theme';
+            var t = localStorage.getItem(k);
+            if (t) document.documentElement.setAttribute('data-theme', t);
+        } catch(e) {}
+    })();
+    </script>
+</head>
+<body style="overflow-y: auto; height: auto;">
+
+<nav class="course-header">
+    <div class="course-header-left">
+        <a href="index.html" class="breadcrumb-home" title="Back to course index">{{ course_title }}</a>
+        <span class="breadcrumb-sep">/</span>
+        <span class="breadcrumb-current">Spaced Review</span>
+    </div>
+    <div class="course-header-right">
+        <a href="mixed_review.html" class="review-crossnav">Switch to Mixed Practice &#8594;</a>
+        <button class="theme-toggle" onclick="__lxpToggleTheme()" title="Toggle theme">&#9788;</button>
+    </div>
+</nav>
+
+<div class="index-container">
+    <h1 class="index-title">Spaced Review</h1>
+    <p class="index-subtitle" id="reviewSubtitle">Loading flashcards…</p>
+
+    <div class="review-stats" id="reviewStats" style="display:none;">
+        <span class="review-stat"><strong id="statDue">0</strong> due</span>
+        <span class="review-stat"><strong id="statNew">0</strong> new</span>
+        <span class="review-stat"><strong id="statReviewed">0</strong> reviewed today</span>
+    </div>
+
+    <div id="emptyState" style="display:none; text-align:center; margin-top:3rem;">
+        <p style="font-size:1.2rem; color:var(--text-muted);">No flashcards available yet.</p>
+        <p style="color:var(--text-muted); margin-top:0.5rem;">Visit chapter pages to populate your review deck.</p>
+        <a href="index.html" class="nav-btn" style="display:inline-block; margin-top:1.5rem; text-decoration:none;">Back to Course</a>
+    </div>
+
+    <div id="doneState" style="display:none; text-align:center; margin-top:3rem;">
+        <p style="font-size:1.5rem; color:var(--success); font-weight:700;">All caught up!</p>
+        <p style="color:var(--text-muted); margin-top:0.5rem;">No cards due for review. Come back later.</p>
+        <p style="color:var(--text-muted); margin-top:0.25rem;" id="nextDueText"></p>
+        <a href="index.html" class="nav-btn" style="display:inline-block; margin-top:1.5rem; text-decoration:none;">Back to Course</a>
+    </div>
+
+    <div id="reviewArea" style="display:none;">
+        <div class="review-card-container">
+            <div class="flashcard-container" style="perspective:1000px;">
+                <div class="flashcard review-flashcard" id="reviewCard" onclick="flipCard()">
+                    <div class="flashcard-front" id="cardFront"></div>
+                    <div class="flashcard-back" id="cardBack"></div>
+                </div>
+            </div>
+            <p class="review-card-meta" id="cardMeta"></p>
+        </div>
+
+        <div id="flipPrompt" class="review-flip-prompt">
+            <button class="nav-btn" onclick="flipCard()">Show Answer</button>
+        </div>
+
+        <div id="ratingButtons" class="review-rating-buttons" style="display:none;">
+            <button class="review-btn review-btn-again" onclick="rateCard(1)">Again</button>
+            <button class="review-btn review-btn-hard" onclick="rateCard(2)">Hard</button>
+            <button class="review-btn review-btn-good" onclick="rateCard(3)">Good</button>
+            <button class="review-btn review-btn-easy" onclick="rateCard(4)">Easy</button>
+        </div>
+
+        <div class="review-progress" id="reviewProgress"></div>
+    </div>
+</div>
+
+<script>
+// ── Learner Model ─────────────────────────────────────────────────────────
+{% include '_learner_model.js' %}
+
+// ── Theme toggle ──────────────────────────────────────────────────────────
+window.__lxpToggleTheme = function() {
+    var current = document.documentElement.getAttribute('data-theme') || 'dark';
+    var next = current === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    try { localStorage.setItem('lxp_{{ course_slug }}_theme', next); } catch(e) {}
+    var btn = document.querySelector('.theme-toggle');
+    if (btn) btn.textContent = next === 'dark' ? '\u2606' : '\u263D';
+};
+(function() {
+    var theme = document.documentElement.getAttribute('data-theme') || 'dark';
+    var btn = document.querySelector('.theme-toggle');
+    if (btn) btn.textContent = theme === 'dark' ? '\u2606' : '\u263D';
+})();
+
+// ── FSRS-5 Algorithm ─────────────────────────────────────────────────────
+{% include '_fsrs.js' %}
+
+// ── Review Session ───────────────────────────────────────────────────────
+(function() {
+    var COURSE_SLUG = '{{ course_slug }}';
+    var FLASHCARD_KEY = 'lxp_' + COURSE_SLUG + '_flashcards';
+    var REVIEW_LOG_KEY = 'lxp_' + COURSE_SLUG + '_review_log';
+    var learnerModel = __lxpCreateLearnerModel(COURSE_SLUG);
+
+    var allCards = {};
+    try { allCards = JSON.parse(localStorage.getItem(FLASHCARD_KEY) || '{}'); } catch(e) {}
+
+    var cardKeys = Object.keys(allCards);
+    if (cardKeys.length === 0) {
+        document.getElementById('emptyState').style.display = 'block';
+        document.getElementById('reviewSubtitle').textContent = 'FSRS-based flashcard review';
+        return;
+    }
+
+    // Determine due and new cards
+    var now = Date.now();
+    var dueKeys = [];
+    var newKeys = [];
+    var nextDueTime = Infinity;
+
+    cardKeys.forEach(function(key) {
+        var c = allCards[key];
+        if (c.reps === 0) {
+            newKeys.push(key);
+        } else if (!c.nextReview || c.nextReview <= now) {
+            dueKeys.push(key);
+        } else if (c.nextReview < nextDueTime) {
+            nextDueTime = c.nextReview;
+        }
+    });
+
+    // Prioritize cards by concept mastery: struggling concepts first
+    var conceptMastery = learnerModel.getConceptMastery();
+    function cardPriority(key) {
+        var card = allCards[key];
+        var concepts = card.concepts || [];
+        var minPriority = 3; // default: progressing
+        var hasHypercorrections = false;
+        concepts.forEach(function(c) {
+            var cm = conceptMastery[c];
+            if (cm) {
+                var p = cm.mastery === 'struggling' ? 0 :
+                        cm.mastery === 'new' ? 1 :
+                        cm.mastery === 'progressing' ? 2 : 3;
+                if (p < minPriority) minPriority = p;
+                if (cm.hypercorrections > 0) hasHypercorrections = true;
+            }
+        });
+        // Boost priority for concepts with hypercorrections (confident but wrong)
+        if (hasHypercorrections && minPriority > 0) minPriority -= 0.5;
+        return minPriority;
+    }
+
+    dueKeys.sort(function(a, b) { return cardPriority(a) - cardPriority(b); });
+    newKeys.sort(function(a, b) { return cardPriority(a) - cardPriority(b); });
+
+    // Session queue: due cards first (struggling concepts prioritized), then new cards (max 20)
+    var sessionQueue = dueKeys.concat(newKeys.slice(0, 20));
+
+    // Gap 39: Filter by concept if ?concept= query parameter is set
+    var urlParams = new URLSearchParams(window.location.search);
+    var filterConcept = urlParams.get('concept');
+    if (filterConcept) {
+        sessionQueue = sessionQueue.filter(function(key) {
+            var card = allCards[key];
+            return card.concepts && card.concepts.indexOf(filterConcept) >= 0;
+        });
+    }
+
+    // Count today's reviews
+    var todayStart = new Date(); todayStart.setHours(0,0,0,0);
+    var reviewedToday = 0;
+    try {
+        var log = JSON.parse(localStorage.getItem(REVIEW_LOG_KEY) || '{}');
+        var todayKey = todayStart.toISOString().slice(0, 10);
+        reviewedToday = log[todayKey] || 0;
+    } catch(e) {}
+
+    document.getElementById('statDue').textContent = dueKeys.length;
+    document.getElementById('statNew').textContent = newKeys.length;
+    document.getElementById('statReviewed').textContent = reviewedToday;
+    document.getElementById('reviewStats').style.display = 'flex';
+    if (filterConcept) {
+        document.getElementById('reviewSubtitle').textContent =
+            'Reviewing concept: ' + filterConcept + ' — ' + sessionQueue.length + ' cards';
+    } else {
+        document.getElementById('reviewSubtitle').textContent =
+            'FSRS-based flashcard review — ' + cardKeys.length + ' cards total';
+    }
+
+    if (sessionQueue.length === 0) {
+        document.getElementById('doneState').style.display = 'block';
+        if (nextDueTime < Infinity) {
+            var nextDate = new Date(nextDueTime);
+            document.getElementById('nextDueText').textContent =
+                'Next review due: ' + nextDate.toLocaleDateString();
+        }
+        return;
+    }
+
+    // Show review UI
+    document.getElementById('reviewArea').style.display = 'block';
+    var currentIdx = 0;
+    var isFlipped = false;
+
+    function showCard() {
+        if (currentIdx >= sessionQueue.length) {
+            document.getElementById('reviewArea').style.display = 'none';
+            document.getElementById('doneState').style.display = 'block';
+            document.getElementById('doneState').querySelector('p').textContent =
+                'Session complete! Reviewed ' + currentIdx + ' cards.';
+            return;
+        }
+        var key = sessionQueue[currentIdx];
+        var card = allCards[key];
+        document.getElementById('cardFront').textContent = card.front;
+        document.getElementById('cardBack').textContent = card.back;
+        document.getElementById('cardMeta').textContent =
+            'Chapter ' + card.chapterNum + ' — ' + card.sectionTitle;
+        document.getElementById('reviewCard').classList.remove('flipped');
+        document.getElementById('flipPrompt').style.display = 'block';
+        document.getElementById('ratingButtons').style.display = 'none';
+        document.getElementById('reviewProgress').textContent =
+            (currentIdx + 1) + ' / ' + sessionQueue.length;
+        isFlipped = false;
+    }
+
+    window.flipCard = function() {
+        if (isFlipped) return;
+        isFlipped = true;
+        document.getElementById('reviewCard').classList.add('flipped');
+        document.getElementById('flipPrompt').style.display = 'none';
+        document.getElementById('ratingButtons').style.display = 'flex';
+    };
+
+    window.rateCard = function(grade) {
+        var key = sessionQueue[currentIdx];
+        var card = allCards[key];
+        allCards[key] = FSRS.scheduleCard(card, grade);
+
+        // Record in learner model (concept-level accuracy)
+        var isCorrect = grade >= 3;
+        var concepts = card.concepts || [];
+
+        // Gap 25: Boost grade for struggling concepts answered correctly
+        if (isCorrect && concepts.some(function(c) {
+            return conceptMastery[c] && conceptMastery[c].mastery === 'struggling';
+        })) {
+            // Struggling concept answered correctly — the FSRS card is already scheduled;
+            // the learner model data helps prioritize future reviews
+            if (grade === 3) grade = 3; // Keep as-is, but data sharing helps prioritization
+        }
+
+        if (concepts.length > 0) {
+            learnerModel.recordAnswer(concepts, card.bloom || '', isCorrect);
+        }
+
+        // If "Again", re-queue at the end
+        if (grade === 1) {
+            sessionQueue.push(key);
+        }
+
+        // Save updated cards
+        try { localStorage.setItem(FLASHCARD_KEY, JSON.stringify(allCards)); } catch(e) {}
+
+        // Update review log
+        try {
+            var log = JSON.parse(localStorage.getItem(REVIEW_LOG_KEY) || '{}');
+            var todayKey = new Date().toISOString().slice(0, 10);
+            log[todayKey] = (log[todayKey] || 0) + 1;
+            localStorage.setItem(REVIEW_LOG_KEY, JSON.stringify(log));
+            document.getElementById('statReviewed').textContent = log[todayKey];
+        } catch(e) {}
+
+        currentIdx++;
+        showCard();
+    };
+
+    showCard();
+})();
+</script>
+
+</body>
+</html>

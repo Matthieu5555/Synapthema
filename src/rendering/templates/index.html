@@ -1,0 +1,691 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ course_title }}</title>
+    <style>
+{{ css|safe }}
+    </style>
+    {% if graph_data or mindmap_data %}
+    <script src="https://cdn.jsdelivr.net/npm/vis-network@9/standalone/umd/vis-network.min.js"></script>
+    {% endif %}
+    <script>
+    (function(){
+        try {
+            var k = 'lxp_{{ course_slug }}_theme';
+            var t = localStorage.getItem(k);
+            if (t) document.documentElement.setAttribute('data-theme', t);
+        } catch(e) {}
+    })();
+    </script>
+</head>
+<body style="overflow-y: auto; height: auto;">
+
+<nav class="course-header">
+    <div class="course-header-left">
+        <span class="breadcrumb-home" id="breadcrumbTitle">{{ course_title }}</span>
+    </div>
+    <div class="course-header-right">
+        <button class="theme-toggle" onclick="__lxpToggleTheme()" title="Toggle theme">&#9788;</button>
+    </div>
+</nav>
+
+<div class="index-container">
+    <h1 class="index-title editable-field" contenteditable="true"
+        data-field="course_title" data-original="{{ course_title }}">{{ course_title }}</h1>
+    <p class="course-summary editable-field{% if not course_summary %} editable-empty{% endif %}"
+       contenteditable="true"
+       data-field="course_summary"
+       data-original="{{ course_summary or '' }}"
+       {% if not course_summary %}data-placeholder="Click to add a course summary..."{% endif %}>{{ course_summary or '' }}</p>
+    <p class="learner-journey editable-field{% if not learner_journey %} editable-empty{% endif %}"
+       contenteditable="true"
+       data-field="learner_journey"
+       data-original="{{ learner_journey or '' }}"
+       {% if not learner_journey %}data-placeholder="Click to add a learning path..."{% endif %}>{% if learner_journey %}<strong>Learning path:</strong> {{ learner_journey }}{% endif %}</p>
+    <p class="index-subtitle editable-field" contenteditable="true"
+       data-field="subtitle" data-original="{{ subtitle }}">{{ subtitle }}</p>
+    <div class="editable-controls" id="editableControls" style="display:none;">
+        <button class="edit-reset-btn" id="resetMetaBtn" title="Reset all fields to original values">&#8634; Reset to original</button>
+        <span class="edit-saved-indicator" id="editSavedIndicator">Saved</span>
+    </div>
+
+    <section class="mastery-overview" id="masteryOverview" style="display:none;">
+        <h2>Your Progress</h2>
+        <div class="mastery-stats">
+            <div class="mastery-stat-card">
+                <span class="mastery-stat-number" id="conceptsMastered">0</span>
+                <span class="mastery-stat-label">Mastered</span>
+            </div>
+            <div class="mastery-stat-card mastery-stat-progressing">
+                <span class="mastery-stat-number" id="conceptsProgressing">0</span>
+                <span class="mastery-stat-label">Progressing</span>
+            </div>
+            <div class="mastery-stat-card mastery-stat-struggling">
+                <span class="mastery-stat-number" id="conceptsStruggling">0</span>
+                <span class="mastery-stat-label">Need Review</span>
+            </div>
+            <div class="mastery-stat-card">
+                <span class="mastery-stat-number" id="overallAccuracy">—</span>
+                <span class="mastery-stat-label">Accuracy</span>
+            </div>
+        </div>
+        <div class="chapter-mastery-bars" id="chapterMasteryBars"></div>
+    </section>
+
+    {% if graph_data %}
+    <section class="concept-graph-section">
+        <h2>Knowledge Map</h2>
+        <p class="graph-subtitle">Top concepts across all chapters. Click a node to navigate. Node size = cross-chapter importance.</p>
+        <div id="concept-graph" class="concept-graph-container"></div>
+        <div class="concept-graph-legend" id="graphLegend"></div>
+    </section>
+    {% endif %}
+
+    {% if mindmap_data %}
+    <section class="concept-graph-section mindmap-section">
+        <h2>Concept Mind Map</h2>
+        <p class="graph-subtitle">Prerequisite hierarchy: foundational concepts at top, advanced topics flow downward.</p>
+        <div id="mindmap-graph" class="concept-graph-container mindmap-container"></div>
+        <div class="concept-graph-legend" id="mindmapLegend"></div>
+    </section>
+    {% endif %}
+
+    <ul class="chapter-list">
+        {% for chapter in chapters %}
+        <li>
+            <a class="chapter-link" href="{{ chapter.filename }}" data-chapter="{{ chapter.number }}">
+                <span class="chapter-number">{{ chapter.number }}</span>
+                <div class="chapter-info">
+                    <div class="chapter-name">{{ chapter.title }}</div>
+                    <div class="chapter-meta">{{ chapter.section_count }} sections &middot; {{ chapter.element_count }} interactive elements</div>
+                </div>
+            </a>
+        </li>
+        {% endfor %}
+    </ul>
+
+    <div class="index-review-section" id="reviewSection" style="display:none;">
+        <h2>Review &amp; Practice</h2>
+        <div class="review-links">
+            <a class="review-link-card" href="review.html">
+                <span class="review-link-icon">&#128218;</span>
+                <div class="review-link-info">
+                    <div class="review-link-title">Spaced Review</div>
+                    <div class="review-link-meta" id="reviewMeta">FSRS-based flashcard review</div>
+                </div>
+            </a>
+            <a class="review-link-card" href="mixed_review.html">
+                <span class="review-link-icon">&#127922;</span>
+                <div class="review-link-info">
+                    <div class="review-link-title">Mixed Practice</div>
+                    <div class="review-link-meta" id="mixedMeta">Interleaved exercises across chapters</div>
+                </div>
+            </a>
+        </div>
+    </div>
+</div>
+
+<script>
+// ── Learner Model ─────────────────────────────────────────────────────────
+{% include '_learner_model.js' %}
+
+// ── Theme toggle ──────────────────────────────────────────────────────────
+window.__lxpToggleTheme = function() {
+    var current = document.documentElement.getAttribute('data-theme') || 'dark';
+    var next = current === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    try { localStorage.setItem('lxp_{{ course_slug }}_theme', next); } catch(e) {}
+    var btn = document.querySelector('.theme-toggle');
+    if (btn) btn.textContent = next === 'dark' ? '\u2606' : '\u263D';
+};
+(function() {
+    var theme = document.documentElement.getAttribute('data-theme') || 'dark';
+    var btn = document.querySelector('.theme-toggle');
+    if (btn) btn.textContent = theme === 'dark' ? '\u2606' : '\u263D';
+})();
+
+// ── Editable course metadata ─────────────────────────────────────────────
+(function() {
+    var COURSE_SLUG = '{{ course_slug }}';
+    var META_KEY = 'lxp_' + COURSE_SLUG + '_meta';
+    var fields = document.querySelectorAll('.editable-field');
+    var controls = document.getElementById('editableControls');
+    var savedIndicator = document.getElementById('editSavedIndicator');
+    var resetBtn = document.getElementById('resetMetaBtn');
+
+    function loadMeta() {
+        try { return JSON.parse(localStorage.getItem(META_KEY) || '{}'); }
+        catch(e) { return {}; }
+    }
+
+    function getFieldText(el) {
+        var text = el.innerText.trim();
+        if (el.getAttribute('data-field') === 'learner_journey') {
+            text = text.replace(/^Learning path:\s*/i, '');
+        }
+        return text;
+    }
+
+    function saveMeta() {
+        var meta = {};
+        var hasEdits = false;
+        fields.forEach(function(el) {
+            var field = el.getAttribute('data-field');
+            var original = el.getAttribute('data-original');
+            var current = getFieldText(el);
+            if (current !== original) {
+                meta[field] = current;
+                hasEdits = true;
+            }
+        });
+        if (hasEdits) {
+            try { localStorage.setItem(META_KEY, JSON.stringify(meta)); } catch(e) {}
+            controls.style.display = 'flex';
+            savedIndicator.style.opacity = '1';
+            setTimeout(function() { savedIndicator.style.opacity = '0'; }, 1500);
+        } else {
+            try { localStorage.removeItem(META_KEY); } catch(e) {}
+            controls.style.display = 'none';
+        }
+        // Sync page title and breadcrumb
+        var titleEl = document.querySelector('[data-field="course_title"]');
+        if (titleEl) {
+            document.title = titleEl.innerText.trim();
+            var bc = document.getElementById('breadcrumbTitle');
+            if (bc) bc.textContent = titleEl.innerText.trim();
+        }
+    }
+
+    // Apply saved edits on page load
+    var saved = loadMeta();
+    if (Object.keys(saved).length > 0) {
+        fields.forEach(function(el) {
+            var field = el.getAttribute('data-field');
+            if (saved[field] !== undefined) {
+                if (field === 'learner_journey' && saved[field]) {
+                    el.innerHTML = '<strong>Learning path:</strong> ' + saved[field];
+                } else {
+                    el.textContent = saved[field];
+                }
+                el.classList.remove('editable-empty', 'editable-placeholder');
+            }
+        });
+        controls.style.display = 'flex';
+        if (saved.course_title) {
+            document.title = saved.course_title;
+            var bc = document.getElementById('breadcrumbTitle');
+            if (bc) bc.textContent = saved.course_title;
+        }
+    }
+
+    // Handle placeholders and editing
+    fields.forEach(function(el) {
+        var placeholder = el.getAttribute('data-placeholder');
+        if (placeholder && !el.textContent.trim()) {
+            el.textContent = placeholder;
+            el.classList.add('editable-placeholder');
+        }
+
+        el.addEventListener('focus', function() {
+            if (el.classList.contains('editable-placeholder')) {
+                el.textContent = '';
+                el.classList.remove('editable-placeholder');
+            }
+        });
+
+        el.addEventListener('blur', function() {
+            if (!el.textContent.trim() && placeholder) {
+                el.textContent = placeholder;
+                el.classList.add('editable-placeholder');
+            }
+            saveMeta();
+        });
+
+        el.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                el.blur();
+            }
+        });
+    });
+
+    // Reset button
+    resetBtn.addEventListener('click', function() {
+        fields.forEach(function(el) {
+            var original = el.getAttribute('data-original');
+            var field = el.getAttribute('data-field');
+            if (field === 'learner_journey' && original) {
+                el.innerHTML = '<strong>Learning path:</strong> ' + original;
+                el.classList.remove('editable-empty', 'editable-placeholder');
+            } else if (original) {
+                el.textContent = original;
+                el.classList.remove('editable-empty', 'editable-placeholder');
+            } else {
+                var placeholder = el.getAttribute('data-placeholder');
+                el.textContent = placeholder || '';
+                if (placeholder) el.classList.add('editable-placeholder', 'editable-empty');
+            }
+        });
+        try { localStorage.removeItem(META_KEY); } catch(e) {}
+        controls.style.display = 'none';
+        // Restore original title
+        var titleEl = document.querySelector('[data-field="course_title"]');
+        if (titleEl) {
+            document.title = titleEl.getAttribute('data-original');
+            var bc = document.getElementById('breadcrumbTitle');
+            if (bc) bc.textContent = titleEl.getAttribute('data-original');
+        }
+    });
+})();
+
+// ── Progress display + Mastery dashboard ─────────────────────────────────
+(function() {
+    var COURSE_SLUG = '{{ course_slug }}';
+    var PROGRESS_KEY = 'lxp_' + COURSE_SLUG + '_progress';
+    var learnerModel = __lxpCreateLearnerModel(COURSE_SLUG);
+
+    function loadProgress() {
+        try {
+            var data = JSON.parse(localStorage.getItem(PROGRESS_KEY) || '{}');
+            return data.chapters || {};
+        } catch(e) { return {}; }
+    }
+
+    var chapters = loadProgress();
+    var links = document.querySelectorAll('.chapter-link');
+    var completedCount = 0;
+
+    links.forEach(function(link) {
+        var chapterNum = link.getAttribute('data-chapter');
+        var ch = chapters[chapterNum];
+        if (!ch) return;
+
+        var meta = link.querySelector('.chapter-meta');
+
+        if (ch.completed) {
+            completedCount++;
+            link.classList.add('chapter-completed');
+            meta.innerHTML += ' &middot; <span class="chapter-progress-complete">&#10003; Complete</span>';
+        } else if (ch.lastVisited && ch.currentSlide > 0) {
+            var pct = Math.round((ch.currentSlide + 1) / ch.totalSlides * 100);
+            meta.innerHTML += ' &middot; <span class="chapter-progress-partial">' + pct + '% (' + (ch.currentSlide + 1) + '/' + ch.totalSlides + ')</span>';
+
+            // Add resume badge
+            var badge = document.createElement('span');
+            badge.className = 'chapter-resume-badge';
+            badge.textContent = 'Resume';
+            link.appendChild(badge);
+        }
+    });
+
+    // Overall progress in subtitle
+    if (completedCount > 0) {
+        var subtitle = document.querySelector('.index-subtitle');
+        subtitle.textContent += ' \u2014 ' + completedCount + '/' + links.length + ' chapters completed';
+    }
+
+    // ── Mastery dashboard ────────────────────────────────────────────────
+    var conceptMastery = learnerModel.getConceptMastery();
+    var conceptKeys = Object.keys(conceptMastery);
+    if (conceptKeys.length > 0) {
+        document.getElementById('masteryOverview').style.display = 'block';
+
+        var mastered = 0, progressing = 0, struggling = 0;
+        conceptKeys.forEach(function(k) {
+            var m = conceptMastery[k].mastery;
+            if (m === 'mastered') mastered++;
+            else if (m === 'struggling') struggling++;
+            else if (m === 'progressing') progressing++;
+        });
+
+        document.getElementById('conceptsMastered').textContent = mastered;
+        document.getElementById('conceptsProgressing').textContent = progressing;
+        document.getElementById('conceptsStruggling').textContent = struggling;
+
+        var stats = learnerModel.getStats();
+        if (stats.total_attempts > 0) {
+            document.getElementById('overallAccuracy').textContent =
+                Math.round(stats.accuracy * 100) + '%';
+        }
+
+        // Per-chapter mastery bars (based on section scores in progress data)
+        var barsContainer = document.getElementById('chapterMasteryBars');
+        links.forEach(function(link) {
+            var chapterNum = link.getAttribute('data-chapter');
+            var ch = chapters[chapterNum];
+            if (!ch || !ch.sectionMastery) return;
+
+            var totalScore = 0, totalSections = 0;
+            Object.keys(ch.sectionMastery).forEach(function(k) {
+                var sm = ch.sectionMastery[k];
+                if (sm.score >= 0) {
+                    totalScore += sm.score;
+                    totalSections++;
+                }
+            });
+            if (totalSections === 0) return;
+
+            var avgScore = Math.round((totalScore / totalSections) * 100);
+            var chTitle = link.querySelector('.chapter-name').textContent;
+
+            var bar = document.createElement('div');
+            bar.className = 'chapter-mastery-bar';
+            bar.innerHTML =
+                '<span class="chapter-mastery-label">Ch ' + chapterNum + '</span>' +
+                '<div class="chapter-mastery-track">' +
+                    '<div class="chapter-mastery-fill" style="width:' + avgScore + '%;' +
+                    'background:' + (avgScore >= 80 ? 'var(--success)' : avgScore >= 50 ? 'var(--warning)' : 'var(--error)') + '"></div>' +
+                '</div>' +
+                '<span class="chapter-mastery-pct">' + avgScore + '%</span>';
+            bar.title = chTitle + ' — ' + avgScore + '% mastery';
+            barsContainer.appendChild(bar);
+        });
+    }
+
+    // Gap 25: Merge FSRS stability data into concept mastery display
+    var flashcardKey = 'lxp_' + COURSE_SLUG + '_flashcards';
+    try {
+        var fsrsCards = JSON.parse(localStorage.getItem(flashcardKey) || '{}');
+        Object.keys(fsrsCards).forEach(function(key) {
+            var card = fsrsCards[key];
+            if (card.concepts) {
+                card.concepts.forEach(function(c) {
+                    if (conceptMastery[c]) {
+                        conceptMastery[c].fsrs_stability = card.stability || 0;
+                        conceptMastery[c].fsrs_reps = card.reps || 0;
+                    }
+                });
+            }
+        });
+    } catch(e) {}
+
+    // Show review section if any flashcards or exercises exist
+    var exercisesKey = 'lxp_' + COURSE_SLUG + '_exercises';
+    var flashcards = {};
+    var exercises = [];
+    try { flashcards = JSON.parse(localStorage.getItem(flashcardKey) || '{}'); } catch(e) {}
+    try { exercises = JSON.parse(localStorage.getItem(exercisesKey) || '[]'); } catch(e) {}
+
+    var cardKeys = Object.keys(flashcards);
+    if (cardKeys.length > 0 || exercises.length > 0) {
+        document.getElementById('reviewSection').style.display = 'block';
+
+        // Count due FSRS cards
+        var now = Date.now();
+        var dueCount = 0;
+        var newCount = 0;
+        cardKeys.forEach(function(key) {
+            var c = flashcards[key];
+            if (c.reps === 0) newCount++;
+            else if (!c.nextReview || c.nextReview <= now) dueCount++;
+        });
+        var reviewMeta = document.getElementById('reviewMeta');
+        if (dueCount > 0 || newCount > 0) {
+            var parts = [];
+            if (dueCount > 0) parts.push(dueCount + ' due');
+            if (newCount > 0) parts.push(newCount + ' new');
+            reviewMeta.textContent = parts.join(', ') + ' — ' + cardKeys.length + ' cards total';
+        } else {
+            reviewMeta.textContent = 'All caught up! ' + cardKeys.length + ' cards total';
+        }
+
+        var mixedMeta = document.getElementById('mixedMeta');
+        if (exercises.length > 0) {
+            mixedMeta.textContent = exercises.length + ' exercises from completed chapters';
+        }
+    }
+})();
+
+{% if graph_data %}
+// ── Concept Graph Visualization ──────────────────────────────────────────
+(function() {
+    var graphData = {{ graph_data | tojson }};
+    if (!graphData || !graphData.nodes || graphData.nodes.length === 0) return;
+
+    var container = document.getElementById('concept-graph');
+    if (!container) return;
+
+    var nodes = new vis.DataSet(graphData.nodes);
+    var edges = new vis.DataSet(graphData.edges);
+
+    var isDark = document.documentElement.getAttribute('data-theme') !== 'light';
+    var textColor = isDark ? '#e2e8f0' : '#1e293b';
+    var edgeColor = isDark ? 'rgba(148,163,184,0.3)' : 'rgba(100,116,139,0.25)';
+
+    var options = {
+        physics: {
+            stabilization: { iterations: 200 },
+            forceAtlas2Based: {
+                gravitationalConstant: -40,
+                centralGravity: 0.008,
+                springLength: 120,
+                springConstant: 0.02,
+                damping: 0.5
+            },
+            solver: 'forceAtlas2Based',
+            maxVelocity: 30
+        },
+        interaction: {
+            hover: true,
+            tooltipDelay: 150,
+            zoomView: true,
+            dragView: true
+        },
+        nodes: {
+            shape: 'dot',
+            font: { size: 11, color: textColor, face: 'system-ui, -apple-system, sans-serif', strokeWidth: 3, strokeColor: isDark ? '#0f172a' : '#ffffff' },
+            borderWidth: 0,
+            shadow: { enabled: true, size: 6, x: 0, y: 2, color: 'rgba(0,0,0,0.15)' },
+            chosen: { node: function(values) { values.size *= 1.3; values.shadowSize = 12; } }
+        },
+        edges: {
+            width: 1,
+            smooth: { type: 'continuous', roundness: 0.15 },
+            color: { color: edgeColor, highlight: isDark ? '#818cf8' : '#6366f1', opacity: 0.6 },
+            arrows: { to: { scaleFactor: 0.5 } }
+        }
+    };
+
+    var network = new vis.Network(container, { nodes: nodes, edges: edges }, options);
+
+    // Build chapter color legend
+    var legendEl = document.getElementById('graphLegend');
+    if (legendEl) {
+        var seen = {};
+        graphData.nodes.forEach(function(n) {
+            if (!seen[n.group]) { seen[n.group] = n.color; }
+        });
+        var chapterLinks = document.querySelectorAll('.chapter-link');
+        Object.keys(seen).sort(function(a,b){ return a-b; }).forEach(function(ch) {
+            var chLink = document.querySelector('.chapter-link[data-chapter="' + ch + '"]');
+            var chName = chLink ? chLink.querySelector('.chapter-name').textContent : 'Ch ' + ch;
+            var item = document.createElement('span');
+            item.className = 'concept-graph-legend-item';
+            item.innerHTML = '<span class="concept-graph-legend-dot" style="background:' + seen[ch] + '"></span>' + ch;
+            item.title = chName;
+            legendEl.appendChild(item);
+        });
+    }
+
+    // Click node — show action popup with Go to Chapter and Review options
+    var activePopup = null;
+    function removeActivePopup() {
+        if (activePopup && activePopup.parentNode) {
+            activePopup.parentNode.removeChild(activePopup);
+        }
+        activePopup = null;
+    }
+
+    // Close popup on click outside
+    document.addEventListener('click', function(e) {
+        if (activePopup && !activePopup.contains(e.target)) {
+            removeActivePopup();
+        }
+    });
+
+    network.on('click', function(params) {
+        removeActivePopup();
+        if (params.nodes.length > 0) {
+            var nodeId = params.nodes[0];
+            var node = graphData.nodes.find(function(n) { return n.id === nodeId; });
+            if (node && node.group) {
+                var conceptName = node.id;
+                var chapterNum = String(node.group).padStart(2, '0');
+                var canvasPos = params.pointer.DOM;
+
+                var popup = document.createElement('div');
+                popup.className = 'concept-popup';
+                popup.style.left = canvasPos.x + 'px';
+                popup.style.top = canvasPos.y + 'px';
+                popup.innerHTML = '<div class="concept-popup-title">' + conceptName + '</div>'
+                    + '<a href="chapter_' + chapterNum + '.html" class="concept-popup-action">Go to Chapter</a>'
+                    + '<a href="review.html?concept=' + encodeURIComponent(conceptName) + '" class="concept-popup-action">Review this Concept</a>';
+                container.style.position = 'relative';
+                container.appendChild(popup);
+                activePopup = popup;
+
+                // Prevent immediate close from the same click event
+                params.event.stopPropagation();
+            }
+        }
+    });
+
+    // Color mastery overlay from learner model
+    try {
+        var lm = __lxpCreateLearnerModel('{{ course_slug }}');
+        var mastery = lm.getConceptMastery();
+        var updates = [];
+        graphData.nodes.forEach(function(n) {
+            var cm = mastery[n.id];
+            if (cm) {
+                var borderColor = cm.mastery === 'mastered' ? '#22c55e' :
+                                  cm.mastery === 'struggling' ? '#ef4444' :
+                                  cm.mastery === 'progressing' ? '#f59e0b' : null;
+                if (borderColor) {
+                    updates.push({ id: n.id, borderWidth: 3, color: { border: borderColor, background: n.color } });
+                }
+            }
+        });
+        if (updates.length > 0) nodes.update(updates);
+    } catch(e) {}
+})();
+{% endif %}
+
+{% if mindmap_data %}
+// ── Concept Mind Map (hierarchical) ─────────────────────────────────────
+(function() {
+    var mmData = {{ mindmap_data | tojson }};
+    if (!mmData || !mmData.nodes || mmData.nodes.length === 0) return;
+
+    var container = document.getElementById('mindmap-graph');
+    if (!container) return;
+
+    var nodes = new vis.DataSet(mmData.nodes);
+    var edges = new vis.DataSet(mmData.edges);
+
+    var isDark = document.documentElement.getAttribute('data-theme') !== 'light';
+    var textColor = isDark ? '#e2e8f0' : '#1e293b';
+    var edgeColor = isDark ? 'rgba(148,163,184,0.35)' : 'rgba(100,116,139,0.3)';
+
+    var options = {
+        layout: {
+            hierarchical: {
+                direction: 'UD',
+                sortMethod: 'directed',
+                levelSeparation: 130,
+                nodeSpacing: 90,
+                treeSpacing: 180,
+                shakeTowards: 'roots',
+                blockShifting: true,
+                edgeMinimization: true
+            }
+        },
+        physics: false,
+        interaction: {
+            hover: true,
+            tooltipDelay: 150,
+            zoomView: true,
+            dragView: true,
+            dragNodes: false
+        },
+        nodes: {
+            shape: 'dot',
+            font: { size: 10, color: textColor, face: 'system-ui, -apple-system, sans-serif', strokeWidth: 3, strokeColor: isDark ? '#0f172a' : '#ffffff' },
+            borderWidth: 0,
+            shadow: { enabled: true, size: 4, x: 0, y: 2, color: 'rgba(0,0,0,0.12)' }
+        },
+        edges: {
+            width: 1.2,
+            smooth: { type: 'cubicBezier', forceDirection: 'vertical', roundness: 0.4 },
+            color: { color: edgeColor, highlight: isDark ? '#818cf8' : '#6366f1', opacity: 0.7 },
+            arrows: { to: { scaleFactor: 0.4 } }
+        }
+    };
+
+    var network = new vis.Network(container, { nodes: nodes, edges: edges }, options);
+
+    // Fit to content after initial render
+    network.once('afterDrawing', function() {
+        network.fit({ animation: { duration: 400, easingFunction: 'easeOutQuad' } });
+    });
+
+    // Build chapter color legend
+    var legendEl = document.getElementById('mindmapLegend');
+    if (legendEl) {
+        var seen = {};
+        mmData.nodes.forEach(function(n) {
+            if (!seen[n.group]) { seen[n.group] = n.color; }
+        });
+        Object.keys(seen).sort(function(a,b){ return a-b; }).forEach(function(ch) {
+            var chLink = document.querySelector('.chapter-link[data-chapter="' + ch + '"]');
+            var chName = chLink ? chLink.querySelector('.chapter-name').textContent : 'Ch ' + ch;
+            var item = document.createElement('span');
+            item.className = 'concept-graph-legend-item';
+            item.innerHTML = '<span class="concept-graph-legend-dot" style="background:' + seen[ch] + '"></span>' + ch;
+            item.title = chName;
+            legendEl.appendChild(item);
+        });
+    }
+
+    // Click node — navigate to chapter
+    var activePopup = null;
+    function removePopup() {
+        if (activePopup && activePopup.parentNode) activePopup.parentNode.removeChild(activePopup);
+        activePopup = null;
+    }
+    document.addEventListener('click', function(e) {
+        if (activePopup && !activePopup.contains(e.target)) removePopup();
+    });
+
+    network.on('click', function(params) {
+        removePopup();
+        if (params.nodes.length > 0) {
+            var nodeId = params.nodes[0];
+            var node = mmData.nodes.find(function(n) { return n.id === nodeId; });
+            if (node && node.group) {
+                var conceptName = node.id;
+                var chapterNum = String(node.group).padStart(2, '0');
+                var canvasPos = params.pointer.DOM;
+
+                var popup = document.createElement('div');
+                popup.className = 'concept-popup';
+                popup.style.left = canvasPos.x + 'px';
+                popup.style.top = canvasPos.y + 'px';
+                popup.innerHTML = '<div class="concept-popup-title">' + conceptName + '</div>'
+                    + '<a href="chapter_' + chapterNum + '.html" class="concept-popup-action">Go to Chapter</a>'
+                    + '<a href="review.html?concept=' + encodeURIComponent(conceptName) + '" class="concept-popup-action">Review this Concept</a>';
+                container.style.position = 'relative';
+                container.appendChild(popup);
+                activePopup = popup;
+                params.event.stopPropagation();
+            }
+        }
+    });
+})();
+{% endif %}
+</script>
+
+</body>
+</html>

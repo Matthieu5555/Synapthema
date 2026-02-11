@@ -1,0 +1,29 @@
+# Environment and secrets
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.venv/
+
+# Pipeline output (generated per-run)
+extracted/
+output/
+input/
+
+# PDFs (large binary files — don't commit source material)
+*.pdf
+*.PDF
+
+# IDE / tooling
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.DS_Store
+
+# Claude Code
+.claude/
