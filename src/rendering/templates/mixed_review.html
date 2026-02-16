@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Mixed Practice — {{ course_title }}</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.css">
     <style>
 {{ css|safe }}
     </style>
@@ -28,12 +29,34 @@
     <div class="course-header-right">
         <a href="review.html" class="review-crossnav">&#8592; Switch to Spaced Review</a>
         <button class="theme-toggle" onclick="__lxpToggleTheme()" title="Toggle theme">&#9788;</button>
+        <button class="help-btn" onclick="openHelp()" title="How this course works"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg></button>
     </div>
 </nav>
 
 <div class="index-container">
     <h1 class="index-title">Mixed Practice</h1>
     <p class="index-subtitle" id="mixedSubtitle">Interleaved exercises from across chapters</p>
+
+    <details class="help-section" style="max-width:48rem; margin:1rem auto;">
+        <summary class="help-section-title">Why mixed practice works</summary>
+        <div class="help-section-content">
+            <p>
+                Interleaved (mixed) practice — where you encounter different exercise
+                types and topics in unpredictable order — outperforms blocked practice
+                by a significant margin. It feels harder in the moment, but the added
+                difficulty of switching between contexts forces deeper processing and
+                better discrimination between similar concepts. Different exercise types
+                (quizzes, ordering, matching, fill-in-the-blank) engage different
+                cognitive pathways, creating richer and more flexible knowledge.
+            </p>
+            <p style="color:var(--text-muted); font-size:0.85rem; margin-top:0.5rem;">
+                Based on: Brunmair &amp; Richter (2019) meta-analysis, effect size
+                g&nbsp;=&nbsp;0.42; Kornell &amp; Bjork (2008); Roediger &amp; Karpicke
+                (2006) testing effect; Bjork &amp; Bjork (2011) desirable difficulties
+                framework.
+            </p>
+        </div>
+    </details>
 
     <div id="emptyState" style="display:none; text-align:center; margin-top:3rem;">
         <p style="font-size:1.2rem; color:var(--text-muted);">No exercises available yet.</p>
@@ -67,6 +90,45 @@
 
 // ── FSRS-5 Algorithm (shared) ────────────────────────────────────────────
 {% include '_fsrs.js' %}
+
+function renderMath(el) {
+    if (typeof renderMathInElement === 'function') {
+        renderMathInElement(el, {
+            delimiters: [
+                {left: '$$', right: '$$', display: true},
+                {left: '$', right: '$', display: false},
+                {left: '\\(', right: '\\)', display: false},
+                {left: '\\[', right: '\\]', display: true}
+            ],
+            throwOnError: false
+        });
+    }
+}
+
+// ── Progressive letter-reveal hint ────────────────────────────────────────
+window.revealNextLetters = function(input) {
+    var answer = input.dataset.answer || input.dataset.correctLabel || '';
+    if (!answer) return;
+    var level = parseInt(input.dataset.hintLevel || '0') + 1;
+    input.dataset.hintLevel = level;
+    var words = answer.split(/\s+/);
+    var placeholder = words.map(function(word) {
+        var chars = [];
+        for (var i = 0; i < word.length; i++) {
+            if (level === 1) { chars.push('_'); }
+            else if (i < level - 1) { chars.push(word[i]); }
+            else { chars.push('_'); }
+        }
+        return chars.join(' ');
+    }).join('   ');
+    input.placeholder = placeholder;
+    var btn = input.nextElementSibling;
+    if (!btn || !btn.classList.contains('hint-letter-btn')) {
+        btn = input.parentElement && input.parentElement.querySelector('.hint-letter-btn');
+    }
+    var maxLetters = Math.max.apply(null, words.map(function(w) { return w.length; }));
+    if (btn && level > maxLetters) { btn.disabled = true; btn.style.opacity = '0.3'; }
+};
 
 // ── Theme toggle ──────────────────────────────────────────────────────────
 window.__lxpToggleTheme = function() {
@@ -218,6 +280,14 @@ window.__lxpToggleTheme = function() {
             renderMatching(card, ex);
         } else if (ex.type === 'self_explain') {
             renderSelfExplain(card, ex);
+        } else if (ex.type === 'ordering') {
+            renderOrdering(card, ex);
+        } else if (ex.type === 'categorization') {
+            renderCategorization(card, ex);
+        } else if (ex.type === 'error_detection') {
+            renderErrorDetection(card, ex);
+        } else if (ex.type === 'analogy') {
+            renderAnalogy(card, ex);
         }
     }
 
@@ -230,17 +300,18 @@ window.__lxpToggleTheme = function() {
                     ex.bloom + '</span>';
         }
         html += '<div class="quiz-question"><p class="quiz-question-text">' +
-                escapeHtml(q.question) + '</p><ul class="quiz-options">';
+                (q.question || '') + '</p><ul class="quiz-options">';
         q.options.forEach(function(opt, i) {
             html += '<li class="quiz-option" data-idx="' + i + '" onclick="selectMixedOption(this)">' +
                     '<span class="quiz-option-marker">' + String.fromCharCode(65 + i) + '</span>' +
-                    '<span>' + escapeHtml(opt) + '</span></li>';
+                    '<span>' + (opt || '') + '</span></li>';
         });
         html += '</ul><div class="quiz-explanation" id="mixedExplanation">' +
-                escapeHtml(q.explanation) + '</div>' +
+                (q.explanation || '') + '</div>' +
                 '<button class="quiz-check-btn" id="mixedCheckBtn" onclick="checkMixedQuiz(' +
                 q.correct + ')" disabled>Check Answer</button></div></div>';
         container.innerHTML = html;
+        renderMath(container);
     }
 
     var selectedOption = -1;
@@ -309,15 +380,17 @@ window.__lxpToggleTheme = function() {
         var blanksCount = q.answers.length;
         for (var i = 0; i < blanksCount; i++) {
             html += '<input type="text" class="fitb-blank" data-blank-index="' + i +
-                    '" placeholder="...">';
+                    '" data-answer="' + (q.answers[i] || '') + '" placeholder="...">';
+            html += '<button class="hint-letter-btn fitb-hint-letter-btn" onclick="revealNextLetters(this.previousElementSibling)" title="Reveal a letter">?</button>';
             if (i < blanksCount - 1) html += ' ';
         }
         html += '</p>';
         if (q.hint) {
-            html += '<p class="fitb-hint" style="display:none;">' + escapeHtml(q.hint) + '</p>';
+            html += '<p class="fitb-hint" style="display:none;">' + (q.hint || '') + '</p>';
         }
         html += '<button class="quiz-check-btn" onclick="checkMixedFitb()">Check</button></div>';
         container.innerHTML = html;
+        renderMath(container);
         container.dataset.answers = JSON.stringify(q.answers);
     }
 
@@ -387,21 +460,22 @@ window.__lxpToggleTheme = function() {
                     ex.bloom + '</span>';
         }
         if (q.title) {
-            html += '<div class="matching-title">' + escapeHtml(q.title) + '</div>';
+            html += '<div class="matching-title">' + (q.title || '') + '</div>';
         }
         html += '<div class="matching-review"><h3>Match the following:</h3>';
         var leftItems = q.leftItems || [];
         var rightItems = q.rightItems || [];
         for (var i = 0; i < leftItems.length; i++) {
             html += '<div class="match-item" style="display:flex;gap:0.5rem;align-items:center;padding:0.5rem 0;">' +
-                    '<strong>' + escapeHtml(leftItems[i]) + '</strong>' +
+                    '<strong>' + (leftItems[i] || '') + '</strong>' +
                     ' <span style="color:var(--text-muted);">&rarr;</span> ' +
-                    '<span>' + escapeHtml(rightItems[i] || '') + '</span></div>';
+                    '<span>' + (rightItems[i] || '') + '</span></div>';
         }
         html += '</div>';
         html += '<button class="quiz-check-btn" onclick="checkMixedMatching()">I reviewed these matches</button>';
         html += '</div>';
         container.innerHTML = html;
+        renderMath(container);
     }
 
     window.checkMixedMatching = function() {
@@ -429,11 +503,12 @@ window.__lxpToggleTheme = function() {
             html += '<span class="bloom-badge bloom-' + ex.bloom.toLowerCase() + '">' +
                     ex.bloom + '</span>';
         }
-        html += '<p class="self-explain-prompt">' + escapeHtml(q.prompt || 'Explain this concept') + '</p>';
+        html += '<p class="self-explain-prompt">' + (q.prompt || 'Explain this concept') + '</p>';
         html += '<textarea class="explain-textarea self-explain-input" rows="4" placeholder="Type your explanation..."></textarea>';
         html += '<button class="quiz-check-btn" onclick="checkMixedSelfExplain()" disabled>Submit Explanation</button>';
         html += '</div>';
         container.innerHTML = html;
+        renderMath(container);
 
         // Enable submit when user types something
         var textarea = container.querySelector('.self-explain-input');
@@ -455,7 +530,7 @@ window.__lxpToggleTheme = function() {
             var rubricHtml = '<div class="explain-rubric" style="margin-top:1rem;">' +
                 '<h4>Key points to check:</h4><ul>';
             rubric.forEach(function(point) {
-                rubricHtml += '<li>' + escapeHtml(point) + '</li>';
+                rubricHtml += '<li>' + (point || '') + '</li>';
             });
             rubricHtml += '</ul></div>';
             container.querySelector('.quiz-check-btn').insertAdjacentHTML('afterend', rubricHtml);
@@ -472,6 +547,391 @@ window.__lxpToggleTheme = function() {
         container.querySelector('.quiz-check-btn').style.display = 'none';
         addNextButton();
     };
+
+    // ── Shared helper: persist exercise result ─────────────────────────
+    function persistExerciseResult(ex, isCorrect) {
+        if (isCorrect) correctCount++;
+        document.getElementById('statCorrect').textContent = correctCount;
+
+        if (ex && ex.concepts && ex.concepts.length > 0) {
+            learnerModel.recordAnswer(ex.concepts, ex.bloom || '', isCorrect);
+        }
+
+        try {
+            var storedExercises = JSON.parse(localStorage.getItem(EXERCISES_KEY) || '[]');
+            for (var i = 0; i < storedExercises.length; i++) {
+                if (storedExercises[i].type === ex.type &&
+                    storedExercises[i].chapter === ex.chapter &&
+                    storedExercises[i].data && ex.data &&
+                    storedExercises[i].data.title === ex.data.title) {
+                    storedExercises[i].lastPracticed = new Date().toISOString();
+                    storedExercises[i].practiceCount = (storedExercises[i].practiceCount || 0) + 1;
+                    storedExercises[i].lastResult = isCorrect ? 'correct' : 'incorrect';
+                    break;
+                }
+            }
+            localStorage.setItem(EXERCISES_KEY, JSON.stringify(storedExercises));
+        } catch(e) {}
+    }
+
+    // ── Ordering renderer ────────────────────────────────────────────────
+    function renderOrdering(container, ex) {
+        var q = ex.data;
+        var html = '<div class="ordering-container" data-attempts="0">' +
+            '<div class="quiz-title">Chapter ' + ex.chapter + ' — ' + ex.section + '</div>';
+        if (ex.bloom) {
+            html += '<span class="bloom-badge bloom-' + ex.bloom.toLowerCase() + '">' +
+                    ex.bloom + '</span>';
+        }
+        if (q.title) html += '<div class="ordering-title">' + (q.title || '') + '</div>';
+        if (q.instruction) html += '<p class="ordering-instruction">' + (q.instruction || '') + '</p>';
+        html += '<ol class="ordering-list">';
+        q.items.forEach(function(item, i) {
+            html += '<li class="ordering-item" data-idx="' + i + '">' +
+                    '<span class="ordering-handle">&#9776;</span>' +
+                    '<span class="ordering-text">' + (item || '') + '</span>' +
+                    '<span class="ordering-arrows">' +
+                    '<button class="ordering-arrow-btn" onclick="mixedMoveItem(this,-1)" title="Move up">&#9650;</button>' +
+                    '<button class="ordering-arrow-btn" onclick="mixedMoveItem(this,1)" title="Move down">&#9660;</button>' +
+                    '</span></li>';
+        });
+        html += '</ol>';
+        if (q.hint) html += '<div class="ordering-hint" style="display:none;">Hint: ' + (q.hint || '') + '</div>';
+        if (q.explanation) html += '<div class="ordering-explanation" style="display:none;">' + (q.explanation || '') + '</div>';
+        html += '<button class="quiz-check-btn" onclick="checkMixedOrdering()">Check Order</button></div>';
+        container.innerHTML = html;
+        renderMath(container);
+        container.dataset.correctOrder = JSON.stringify(q.correctOrder);
+    }
+
+    window.mixedMoveItem = function(btn, direction) {
+        var item = btn.closest('.ordering-item');
+        var list = item.parentNode;
+        var items = Array.from(list.children);
+        var idx = items.indexOf(item);
+        if (direction === -1 && idx > 0) {
+            list.insertBefore(item, items[idx - 1]);
+        } else if (direction === 1 && idx < items.length - 1) {
+            list.insertBefore(items[idx + 1], item);
+        }
+    };
+
+    window.checkMixedOrdering = function() {
+        var container = document.querySelector('#exerciseCard .ordering-container');
+        var correctOrder = JSON.parse(document.getElementById('exerciseCard').dataset.correctOrder);
+        var items = container.querySelectorAll('.ordering-item');
+        var attempts = parseInt(container.dataset.attempts || '0') + 1;
+        container.dataset.attempts = attempts;
+
+        var allCorrect = true;
+        items.forEach(function(item, i) {
+            if (correctOrder[i] === i) {
+                item.classList.add('ordering-correct');
+                item.classList.remove('ordering-wrong');
+            } else {
+                item.classList.remove('ordering-correct');
+                item.classList.add('ordering-wrong');
+                allCorrect = false;
+            }
+        });
+
+        var btn = container.querySelector('.quiz-check-btn');
+        if (allCorrect || attempts >= 3) {
+            btn.disabled = true;
+            btn.textContent = allCorrect ? 'Correct Order!' : 'Showing correct order';
+            if (!allCorrect) {
+                var list = container.querySelector('.ordering-list');
+                var itemArr = Array.from(items);
+                var slots = new Array(itemArr.length);
+                itemArr.forEach(function(el, i) { slots[correctOrder[i]] = el; });
+                slots.forEach(function(el) {
+                    el.classList.remove('ordering-wrong');
+                    el.classList.add('ordering-revealed');
+                    list.appendChild(el);
+                });
+            }
+            var explEl = container.querySelector('.ordering-explanation');
+            if (explEl) explEl.style.display = 'block';
+            container.querySelectorAll('.ordering-arrow-btn').forEach(function(b) { b.disabled = true; });
+
+            persistExerciseResult(interleaved[currentIdx], allCorrect);
+            btn.style.display = 'none';
+            addNextButton();
+        } else if (attempts === 1) {
+            var hintEl = container.querySelector('.ordering-hint');
+            if (hintEl) hintEl.style.display = 'block';
+            btn.textContent = 'Try Again';
+        } else if (attempts === 2) {
+            items.forEach(function(item, i) {
+                if (correctOrder[i] === i) item.classList.add('ordering-locked');
+            });
+            btn.textContent = 'Last Try';
+        }
+    };
+
+    // ── Categorization renderer ──────────────────────────────────────────
+    function renderCategorization(container, ex) {
+        var q = ex.data;
+        var html = '<div class="categorization-container" data-attempts="0">' +
+            '<div class="quiz-title">Chapter ' + ex.chapter + ' — ' + ex.section + '</div>';
+        if (ex.bloom) {
+            html += '<span class="bloom-badge bloom-' + ex.bloom.toLowerCase() + '">' +
+                    ex.bloom + '</span>';
+        }
+        if (q.title) html += '<div class="categorization-title">' + (q.title || '') + '</div>';
+        if (q.instruction) html += '<p class="categorization-instruction">' + (q.instruction || '') + '</p>';
+        html += '<div class="categorization-categories">';
+        var catNames = q.categoryNames || [];
+        catNames.forEach(function(name, i) {
+            html += '<div class="categorization-bucket" data-cat-idx="' + i + '">' +
+                    '<div class="categorization-bucket-title">' + (name || '') + '</div>' +
+                    '<div class="categorization-bucket-items"></div></div>';
+        });
+        html += '</div><div class="categorization-pool" id="mixedCatPool"></div>';
+        if (q.hint) html += '<div class="categorization-hint" style="display:none;">Hint: ' + (q.hint || '') + '</div>';
+        if (q.explanation) html += '<div class="categorization-explanation" style="display:none;">' + (q.explanation || '') + '</div>';
+        html += '<button class="quiz-check-btn" onclick="checkMixedCategorization()">Check Categories</button></div>';
+        container.innerHTML = html;
+        renderMath(container);
+
+        // Populate items in the pool
+        var pool = container.querySelector('#mixedCatPool');
+        var items = q.items || [];
+        // Shuffle items for display
+        var shuffled = items.map(function(item, i) { return { item: item, idx: i }; });
+        for (var si = shuffled.length - 1; si > 0; si--) {
+            var sj = Math.floor(Math.random() * (si + 1));
+            var tmp = shuffled[si]; shuffled[si] = shuffled[sj]; shuffled[sj] = tmp;
+        }
+        shuffled.forEach(function(s) {
+            var el = document.createElement('div');
+            el.className = 'categorization-item';
+            el.innerHTML = s.item.text || '';
+            el.dataset.itemIdx = s.idx;
+            el.dataset.correctCat = s.item.correct_cat;
+            el.onclick = function() {
+                if (el.classList.contains('cat-placed')) return;
+                el.classList.toggle('cat-selected');
+            };
+            pool.appendChild(el);
+        });
+
+        // Click bucket to place selected item
+        container.querySelectorAll('.categorization-bucket').forEach(function(bucket) {
+            bucket.onclick = function(e) {
+                if (e.target.closest('.categorization-item')) return;
+                var selected = pool.querySelector('.categorization-item.cat-selected');
+                if (!selected) return;
+                selected.classList.remove('cat-selected');
+                selected.classList.add('cat-placed');
+                bucket.querySelector('.categorization-bucket-items').appendChild(selected);
+            };
+        });
+    }
+
+    window.checkMixedCategorization = function() {
+        var container = document.querySelector('#exerciseCard .categorization-container');
+        var attempts = parseInt(container.dataset.attempts || '0') + 1;
+        container.dataset.attempts = attempts;
+
+        var buckets = container.querySelectorAll('.categorization-bucket');
+        var allCorrect = true;
+        buckets.forEach(function(bucket) {
+            var catIdx = parseInt(bucket.dataset.catIdx);
+            bucket.querySelectorAll('.categorization-item').forEach(function(item) {
+                if (parseInt(item.dataset.correctCat) === catIdx) {
+                    item.classList.add('cat-correct');
+                    item.classList.remove('cat-wrong');
+                } else {
+                    item.classList.add('cat-wrong');
+                    item.classList.remove('cat-correct');
+                    allCorrect = false;
+                }
+            });
+        });
+
+        var poolItems = container.querySelectorAll('.categorization-pool .categorization-item');
+        if (poolItems.length > 0) allCorrect = false;
+
+        var btn = container.querySelector('.quiz-check-btn');
+        if (allCorrect || attempts >= 3) {
+            btn.disabled = true;
+            btn.textContent = allCorrect ? 'All Correct!' : 'Showing answers';
+            if (!allCorrect) {
+                container.querySelectorAll('.categorization-item.cat-wrong').forEach(function(item) {
+                    var correctCat = parseInt(item.dataset.correctCat);
+                    var correctBucket = container.querySelector('.categorization-bucket[data-cat-idx="' + correctCat + '"]');
+                    item.classList.remove('cat-wrong');
+                    item.classList.add('cat-revealed');
+                    correctBucket.querySelector('.categorization-bucket-items').appendChild(item);
+                });
+                poolItems.forEach(function(item) {
+                    var correctCat = parseInt(item.dataset.correctCat);
+                    var correctBucket = container.querySelector('.categorization-bucket[data-cat-idx="' + correctCat + '"]');
+                    item.classList.add('cat-revealed');
+                    correctBucket.querySelector('.categorization-bucket-items').appendChild(item);
+                });
+            }
+            var explEl = container.querySelector('.categorization-explanation');
+            if (explEl) explEl.style.display = 'block';
+
+            persistExerciseResult(interleaved[currentIdx], allCorrect);
+            btn.style.display = 'none';
+            addNextButton();
+        } else if (attempts === 1) {
+            var hintEl = container.querySelector('.categorization-hint');
+            if (hintEl) hintEl.style.display = 'block';
+            btn.textContent = 'Try Again';
+        } else if (attempts === 2) {
+            btn.textContent = 'Last Try';
+        }
+    };
+
+    // ── Error Detection renderer ─────────────────────────────────────────
+    function renderErrorDetection(container, ex) {
+        var q = ex.data;
+        var html = '<div class="error-detection-container">' +
+            '<div class="quiz-title">Chapter ' + ex.chapter + ' — ' + ex.section + '</div>';
+        if (ex.bloom) {
+            html += '<span class="bloom-badge bloom-' + ex.bloom.toLowerCase() + '">' +
+                    ex.bloom + '</span>';
+        }
+        if (q.title) html += '<div class="error-detection-title">' + (q.title || '') + '</div>';
+        if (q.instruction) html += '<p class="error-detection-instruction">' + (q.instruction || '') + '</p>';
+        if (q.context) html += '<p class="error-detection-context">' + (q.context || '') + '</p>';
+        q.items.forEach(function(item, i) {
+            html += '<div class="error-item" data-idx="' + i + '">' +
+                    '<div class="error-statement">' + (i + 1) + '. ' + (item.statement || '') + '</div>' +
+                    '<button class="quiz-check-btn error-reveal-btn" onclick="mixedRevealError(this)">Reveal Error</button>' +
+                    '<div class="error-feedback" style="display:none;">' +
+                    '<div class="error-explanation"><strong>Error:</strong> ' + (item.explanation || '') + '</div>' +
+                    '<div class="error-corrected"><strong>Corrected:</strong> ' + (item.corrected || '') + '</div>' +
+                    '</div></div>';
+        });
+        html += '</div>';
+        container.innerHTML = html;
+        renderMath(container);
+    }
+
+    window.mixedRevealError = function(btn) {
+        var item = btn.closest('.error-item');
+        btn.style.display = 'none';
+        item.querySelector('.error-feedback').style.display = 'block';
+        item.querySelector('.error-statement').classList.add('error-shown');
+
+        // Check if all items revealed
+        var container = document.querySelector('#exerciseCard .error-detection-container');
+        var allRevealed = true;
+        container.querySelectorAll('.error-item').forEach(function(ei) {
+            if (ei.querySelector('.error-feedback').style.display === 'none') allRevealed = false;
+        });
+        if (allRevealed) {
+            persistExerciseResult(interleaved[currentIdx], true);
+            addNextButton();
+        }
+    };
+
+    // ── Analogy renderer ─────────────────────────────────────────────────
+    function renderAnalogy(container, ex) {
+        var q = ex.data;
+        var html = '<div class="analogy-container">' +
+            '<div class="quiz-title">Chapter ' + ex.chapter + ' — ' + ex.section + '</div>';
+        if (ex.bloom) {
+            html += '<span class="bloom-badge bloom-' + ex.bloom.toLowerCase() + '">' +
+                    ex.bloom + '</span>';
+        }
+        if (q.title) html += '<div class="analogy-title">' + (q.title || '') + '</div>';
+        html += '<div class="analogy-items" id="mixedAnalogyItems"></div></div>';
+        container.innerHTML = html;
+        renderMath(container);
+
+        var itemsDiv = container.querySelector('#mixedAnalogyItems');
+        var items = q.items || [];
+        var answeredCount = 0;
+        var correctCount2 = 0;
+
+        items.forEach(function(item, idx) {
+            var qDiv = document.createElement('div');
+            qDiv.className = 'analogy-question';
+            qDiv.dataset.correct = item.correct_index;
+            qDiv.dataset.attempts = '0';
+
+            var stemEl = document.createElement('div');
+            stemEl.className = 'analogy-stem';
+            stemEl.innerHTML = item.stem || '';
+            renderMath(stemEl);
+            qDiv.appendChild(stemEl);
+
+            var optList = document.createElement('ul');
+            optList.className = 'analogy-options';
+            item.options.forEach(function(opt, oi) {
+                var li = document.createElement('li');
+                li.className = 'analogy-option';
+                li.dataset.optionIndex = oi;
+                li.innerHTML = opt || '';
+                renderMath(li);
+                li.onclick = function() {
+                    if (qDiv.classList.contains('analogy-answered')) return;
+                    optList.querySelectorAll('.analogy-option').forEach(function(o) {
+                        o.classList.remove('analogy-selected');
+                    });
+                    li.classList.add('analogy-selected');
+                    qDiv.querySelector('.analogy-check-btn').disabled = false;
+                };
+                optList.appendChild(li);
+            });
+            qDiv.appendChild(optList);
+
+            var checkBtn = document.createElement('button');
+            checkBtn.className = 'quiz-check-btn analogy-check-btn';
+            checkBtn.textContent = 'Check';
+            checkBtn.disabled = true;
+            checkBtn.onclick = function() {
+                var selected = qDiv.querySelector('.analogy-option.analogy-selected');
+                if (!selected) return;
+                var selIdx = parseInt(selected.dataset.optionIndex);
+                var correctIdx = parseInt(qDiv.dataset.correct);
+                var att = parseInt(qDiv.dataset.attempts) + 1;
+                qDiv.dataset.attempts = att;
+
+                if (selIdx === correctIdx || att >= 3) {
+                    qDiv.classList.add('analogy-answered');
+                    var opts = qDiv.querySelectorAll('.analogy-option');
+                    opts[correctIdx].classList.add('analogy-correct');
+                    if (selIdx !== correctIdx) {
+                        selected.classList.add('analogy-wrong');
+                    } else {
+                        correctCount2++;
+                    }
+                    checkBtn.disabled = true;
+                    checkBtn.textContent = selIdx === correctIdx ? 'Correct!' : 'Showing answer';
+                    explEl.style.display = 'block';
+
+                    answeredCount++;
+                    if (answeredCount === items.length) {
+                        var allCorrect = correctCount2 === items.length;
+                        persistExerciseResult(interleaved[currentIdx], allCorrect);
+                        addNextButton();
+                    }
+                } else {
+                    selected.classList.add('analogy-wrong');
+                    selected.classList.remove('analogy-selected');
+                    checkBtn.disabled = true;
+                    checkBtn.textContent = att === 2 ? 'Last Try' : 'Try Again';
+                }
+            };
+            qDiv.appendChild(checkBtn);
+
+            var explEl = document.createElement('div');
+            explEl.className = 'analogy-explanation';
+            explEl.style.display = 'none';
+            explEl.innerHTML = item.explanation || '';
+            renderMath(explEl);
+            qDiv.appendChild(explEl);
+
+            itemsDiv.appendChild(qDiv);
+        });
+    }
 
     function addNextButton() {
         var card = document.getElementById('exerciseCard');
@@ -497,6 +957,11 @@ window.__lxpToggleTheme = function() {
     renderExercise();
 })();
 </script>
+
+{% include '_help_modal.html' %}
+
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/contrib/auto-render.min.js"></script>
 
 </body>
 </html>

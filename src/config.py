@@ -41,7 +41,8 @@ class Config:
     Fields:
         input_sources: List of input documents to process.
         extracted_dir: Directory for intermediate extraction output (JSON + images).
-        output_dir: Directory for final HTML course output.
+            Defaults to output_dir / "json".
+        output_dir: Root output directory. Contains json/ and html/ subdirectories.
         llm_api_key: API key for the LLM provider (OpenAI or OpenRouter).
         llm_base_url: Base URL for the LLM API endpoint.
             "https://api.openai.com/v1" for OpenAI,
@@ -58,6 +59,12 @@ class Config:
         embed_images: If True, images are base64-encoded inline in HTML output.
             If False, images are referenced as relative file paths (requires serving
             from the output directory).
+        vision_enabled: If True, extracted images are sent to the LLM as vision
+            content during transformation (Stage 2). Requires a vision-capable model.
+            If False, the LLM receives only text metadata about images.
+        max_concurrent_llm: Maximum number of parallel LLM calls. Controls
+            thread pool size for deep reading, section transformation, and
+            chapter processing. Set to 1 for sequential execution.
     """
 
     input_sources: list[InputSource]
@@ -70,12 +77,19 @@ class Config:
     llm_temperature: float
     llm_max_tokens: int
     embed_images: bool
+    vision_enabled: bool
     document_type: str
+    max_concurrent_llm: int
 
     @property
     def pdf_path(self) -> Path:
         """Backward-compatible access to the first input PDF path."""
         return self.input_sources[0].path
+
+    @property
+    def html_dir(self) -> Path:
+        """Directory for rendered HTML output (output_dir / 'html')."""
+        return self.output_dir / "html"
 
 
 class ConfigError(Exception):
@@ -114,11 +128,9 @@ def load_config(
 
     sources = _resolve_input_sources(pdf_path, pdf_paths, input_dir)
 
-    slug = _slugify_pdf_name(sources[0].path)
-    if len(sources) > 1:
-        slug = "multi-doc-course"
-    resolved_extracted = extracted_dir or _PROJECT_ROOT / "extracted" / slug
+    slug = _slugify_multi_source(sources)
     resolved_output = output_dir or _PROJECT_ROOT / "output" / slug
+    resolved_extracted = extracted_dir or resolved_output / "json"
 
     llm_model = os.getenv("LLM_MODEL", default_model)
     llm_model_light = os.getenv("LLM_MODEL_LIGHT", llm_model)
@@ -132,8 +144,14 @@ def load_config(
     # Image embedding — default True for fully self-contained HTML output
     embed_images = os.getenv("EMBED_IMAGES", "true").lower() in ("true", "1", "yes")
 
+    # Vision — send extracted images to the LLM as vision content during Stage 2
+    vision_enabled = os.getenv("VISION_ENABLED", "true").lower() in ("true", "1", "yes")
+
     # Document type override — "auto" means detect from content at runtime
     document_type = os.getenv("DOCUMENT_TYPE", "auto").lower()
+
+    # Concurrency — max parallel LLM calls (deep reading, section transformation)
+    max_concurrent_llm = int(os.getenv("MAX_CONCURRENT_LLM", "4"))
 
     config = Config(
         input_sources=sources,
@@ -146,7 +164,9 @@ def load_config(
         llm_temperature=llm_temperature,
         llm_max_tokens=llm_max_tokens,
         embed_images=embed_images,
+        vision_enabled=vision_enabled,
         document_type=document_type,
+        max_concurrent_llm=max_concurrent_llm,
     )
 
     source_names = ", ".join(s.path.name for s in sources)
@@ -180,11 +200,9 @@ def load_render_config(
 
     sources = _resolve_input_sources(pdf_path, pdf_paths, input_dir)
 
-    slug = _slugify_pdf_name(sources[0].path)
-    if len(sources) > 1:
-        slug = "multi-doc-course"
-    resolved_extracted = extracted_dir or _PROJECT_ROOT / "extracted" / slug
+    slug = _slugify_multi_source(sources)
     resolved_output = output_dir or _PROJECT_ROOT / "output" / slug
+    resolved_extracted = extracted_dir or resolved_output / "json"
 
     training_json = resolved_extracted / "training_modules.json"
     if not training_json.exists():
@@ -195,18 +213,35 @@ def load_render_config(
 
     embed_images = os.getenv("EMBED_IMAGES", "true").lower() in ("true", "1", "yes")
 
+    # Optionally load LLM credentials for render-time features (mermaid fixing).
+    # If no API key is found, mermaid auto-fixing is silently disabled.
+    llm_api_key = llm_base_url = llm_model = llm_model_light = ""
+    llm_temperature = 0.3
+    llm_max_tokens = 4096
+    try:
+        api_key, base_url, default_model = resolve_llm_provider()
+        llm_api_key = api_key
+        llm_base_url = base_url
+        llm_model = os.getenv("LLM_MODEL", default_model)
+        llm_model_light = os.getenv("LLM_MODEL_LIGHT", llm_model)
+        logger.info("LLM credentials found — mermaid auto-fixing enabled")
+    except ConfigError:
+        logger.info("No LLM credentials — mermaid auto-fixing disabled")
+
     config = Config(
         input_sources=sources,
         extracted_dir=resolved_extracted,
         output_dir=resolved_output,
-        llm_api_key="",
-        llm_base_url="",
-        llm_model="",
-        llm_model_light="",
-        llm_temperature=0.0,
-        llm_max_tokens=0,
+        llm_api_key=llm_api_key,
+        llm_base_url=llm_base_url,
+        llm_model=llm_model,
+        llm_model_light=llm_model_light,
+        llm_temperature=llm_temperature,
+        llm_max_tokens=llm_max_tokens,
         embed_images=embed_images,
+        vision_enabled=False,
         document_type="auto",
+        max_concurrent_llm=1,
     )
 
     logger.info("Render-only config loaded: extracted=%s, output=%s", resolved_extracted, resolved_output)
@@ -288,6 +323,24 @@ def _slugify_pdf_name(pdf_path: Path) -> str:
     stem = pdf_path.stem.lower()
     slug = re.sub(r"[^a-z0-9]+", "-", stem).strip("-")
     return slug or "unknown"
+
+
+def _slugify_multi_source(sources: list[InputSource]) -> str:
+    """Build a slug from one or more input sources.
+
+    Single source: uses the PDF filename slug (e.g. "quant-finance-with-python").
+    Multiple sources: joins slugs with "+" and truncates to keep filesystem paths
+    reasonable (max 80 chars).
+
+    Examples:
+        [quant-finance.pdf] → "quant-finance"
+        [frm-handbook.pdf, garp-quant.pdf] → "frm-handbook+garp-quant"
+    """
+    slugs = [_slugify_pdf_name(s.path) for s in sources]
+    combined = "+".join(slugs)
+    if len(combined) > 80:
+        combined = combined[:80].rsplit("+", 1)[0]
+    return combined or "unknown"
 
 
 def _find_pdf_in_project_root() -> Path:

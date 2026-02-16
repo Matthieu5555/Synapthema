@@ -12,6 +12,7 @@ Public entry point: consolidate_concepts().
 
 from __future__ import annotations
 
+import importlib.util
 import logging
 from collections import Counter, defaultdict
 from typing import Any
@@ -22,6 +23,7 @@ from src.transformation.analysis_types import (
     ConceptEntry,
     ConceptGraph,
     PrerequisiteLink,
+    PrerequisiteRelationship,
     ResolvedConcept,
 )
 
@@ -35,12 +37,8 @@ KEY_TERM_OVERLAP_THRESHOLD = 0.5
 # 0.75 is conservative — avoids false positives while catching semantic equivalences.
 EMBEDDING_SIMILARITY_THRESHOLD = 0.75
 
-# Lazy-loaded flag: True if sentence-transformers is available.
-try:
-    from sentence_transformers import SentenceTransformer
-    _HAS_EMBEDDINGS = True
-except ImportError:
-    _HAS_EMBEDDINGS = False
+# Feature detection: True if sentence-transformers is installed.
+_HAS_EMBEDDINGS = importlib.util.find_spec("sentence_transformers") is not None
 
 
 # ── Public API ───────────────────────────────────────────────────────────────
@@ -154,7 +152,7 @@ def _compute_embeddings(
     if not concepts:
         return {}
 
-    from sentence_transformers import SentenceTransformer
+    from sentence_transformers import SentenceTransformer  # pyright: ignore[reportMissingImports] -- optional dependency
 
     model = SentenceTransformer("all-MiniLM-L6-v2")
 
@@ -304,7 +302,7 @@ def _build_edges(
 
     Deduplicates via dict keyed on (source, target) — first relationship wins.
     """
-    unique: dict[tuple[str, str], str] = {}
+    unique: dict[tuple[str, str], PrerequisiteRelationship] = {}
     for link in prereqs:
         source = canonical_map.get(link.source_concept.lower())
         target = canonical_map.get(link.target_concept.lower())

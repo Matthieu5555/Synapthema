@@ -7,7 +7,7 @@
     <style>
 {{ css|safe }}
     </style>
-    {% if graph_data or mindmap_data %}
+    {% if graph_data %}
     <script src="https://cdn.jsdelivr.net/npm/vis-network@9/standalone/umd/vis-network.min.js"></script>
     {% endif %}
     <script>
@@ -28,6 +28,7 @@
     </div>
     <div class="course-header-right">
         <button class="theme-toggle" onclick="__lxpToggleTheme()" title="Toggle theme">&#9788;</button>
+        <button class="help-btn" onclick="openHelp()" title="How this course works"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg></button>
     </div>
 </nav>
 
@@ -85,13 +86,32 @@
 
     {% if mindmap_data %}
     <section class="concept-graph-section mindmap-section">
-        <h2>Concept Mind Map</h2>
-        <p class="graph-subtitle">Prerequisite hierarchy: foundational concepts at top, advanced topics flow downward.</p>
-        <div id="mindmap-graph" class="concept-graph-container mindmap-container"></div>
-        <div class="concept-graph-legend" id="mindmapLegend"></div>
+        <h2>Chapters &amp; Concepts</h2>
+        <p class="graph-subtitle">Click a chapter to expand its concepts, then click the chapter link to start learning.</p>
+        <div class="mm-controls">
+            <button class="mm-ctrl-btn" id="mmExpandAll">Expand all</button>
+            <button class="mm-ctrl-btn" id="mmCollapseAll">Collapse all</button>
+        </div>
+        <div id="mindmap-tree" class="mindmap-tree"></div>
     </section>
-    {% endif %}
 
+    <details class="chapter-list-fallback">
+        <summary class="chapter-list-toggle">All chapters (plain list)</summary>
+        <ul class="chapter-list">
+            {% for chapter in chapters %}
+            <li>
+                <a class="chapter-link" href="{{ chapter.filename }}" data-chapter="{{ chapter.number }}">
+                    <span class="chapter-number">{{ chapter.number }}</span>
+                    <div class="chapter-info">
+                        <div class="chapter-name">{{ chapter.title }}</div>
+                        <div class="chapter-meta">{{ chapter.section_count }} sections &middot; {{ chapter.element_count }} interactive elements</div>
+                    </div>
+                </a>
+            </li>
+            {% endfor %}
+        </ul>
+    </details>
+    {% else %}
     <ul class="chapter-list">
         {% for chapter in chapters %}
         <li>
@@ -105,6 +125,7 @@
         </li>
         {% endfor %}
     </ul>
+    {% endif %}
 
     <div class="index-review-section" id="reviewSection" style="display:none;">
         <h2>Review &amp; Practice</h2>
@@ -113,14 +134,14 @@
                 <span class="review-link-icon">&#128218;</span>
                 <div class="review-link-info">
                     <div class="review-link-title">Spaced Review</div>
-                    <div class="review-link-meta" id="reviewMeta">FSRS-based flashcard review</div>
+                    <div class="review-link-meta" id="reviewMeta">Review items when your memory needs it most</div>
                 </div>
             </a>
             <a class="review-link-card" href="mixed_review.html">
                 <span class="review-link-icon">&#127922;</span>
                 <div class="review-link-info">
                     <div class="review-link-title">Mixed Practice</div>
-                    <div class="review-link-meta" id="mixedMeta">Interleaved exercises across chapters</div>
+                    <div class="review-link-meta" id="mixedMeta">Diverse exercises mixed across topics for deeper learning</div>
                 </div>
             </a>
         </div>
@@ -308,9 +329,10 @@ window.__lxpToggleTheme = function() {
             completedCount++;
             link.classList.add('chapter-completed');
             meta.innerHTML += ' &middot; <span class="chapter-progress-complete">&#10003; Complete</span>';
-        } else if (ch.lastVisited && ch.currentSlide > 0) {
-            var pct = Math.round((ch.currentSlide + 1) / ch.totalSlides * 100);
-            meta.innerHTML += ' &middot; <span class="chapter-progress-partial">' + pct + '% (' + (ch.currentSlide + 1) + '/' + ch.totalSlides + ')</span>';
+        } else if (ch.lastVisited && (ch.highestSlide > 0 || ch.currentSlide > 0)) {
+            var furthest = Math.max(ch.highestSlide || 0, ch.currentSlide || 0);
+            var pct = Math.round((furthest + 1) / ch.totalSlides * 100);
+            meta.innerHTML += ' &middot; <span class="chapter-progress-partial">' + pct + '% (' + (furthest + 1) + '/' + ch.totalSlides + ')</span>';
 
             // Add resume badge
             var badge = document.createElement('span');
@@ -409,31 +431,46 @@ window.__lxpToggleTheme = function() {
     try { exercises = JSON.parse(localStorage.getItem(exercisesKey) || '[]'); } catch(e) {}
 
     var cardKeys = Object.keys(flashcards);
+
+    // Count due FSRS items across both flashcards and exercises
+    var now = Date.now();
+    var dueCount = 0;
+    var newCount = 0;
+    cardKeys.forEach(function(key) {
+        var c = flashcards[key];
+        if (c.reps === 0) newCount++;
+        else if (!c.nextReview || c.nextReview <= now) dueCount++;
+    });
+    // Also count exercises with FSRS fields
+    exercises.forEach(function(ex) {
+        if (ex.reps === undefined) return; // no FSRS fields yet
+        if (ex.reps === 0) newCount++;
+        else if (!ex.nextReview || ex.nextReview <= now) dueCount++;
+    });
+
+    var totalReviewItems = cardKeys.length + exercises.filter(function(ex) { return ex.reps !== undefined; }).length;
+
     if (cardKeys.length > 0 || exercises.length > 0) {
         document.getElementById('reviewSection').style.display = 'block';
 
-        // Count due FSRS cards
-        var now = Date.now();
-        var dueCount = 0;
-        var newCount = 0;
-        cardKeys.forEach(function(key) {
-            var c = flashcards[key];
-            if (c.reps === 0) newCount++;
-            else if (!c.nextReview || c.nextReview <= now) dueCount++;
-        });
         var reviewMeta = document.getElementById('reviewMeta');
-        if (dueCount > 0 || newCount > 0) {
+        if (totalReviewItems === 0) {
+            reviewMeta.textContent = 'Visit chapters to build your review deck';
+        } else if (dueCount > 0 || newCount > 0) {
             var parts = [];
             if (dueCount > 0) parts.push(dueCount + ' due');
             if (newCount > 0) parts.push(newCount + ' new');
-            reviewMeta.textContent = parts.join(', ') + ' — ' + cardKeys.length + ' cards total';
+            reviewMeta.textContent = parts.join(', ') + ' — ' + totalReviewItems + ' items total';
         } else {
-            reviewMeta.textContent = 'All caught up! ' + cardKeys.length + ' cards total';
+            reviewMeta.textContent = 'All caught up! ' + totalReviewItems + ' items total';
         }
 
         var mixedMeta = document.getElementById('mixedMeta');
         if (exercises.length > 0) {
-            mixedMeta.textContent = exercises.length + ' exercises from completed chapters';
+            var types = {};
+            exercises.forEach(function(ex) { types[ex.type] = true; });
+            var typeCount = Object.keys(types).length;
+            mixedMeta.textContent = exercises.length + ' exercises (' + typeCount + ' types) across chapters';
         }
     }
 })();
@@ -574,118 +611,135 @@ window.__lxpToggleTheme = function() {
 {% endif %}
 
 {% if mindmap_data %}
-// ── Concept Mind Map (hierarchical) ─────────────────────────────────────
+// ── Concept Mind Map (collapsible tree) ─────────────────────────────────
 (function() {
-    var mmData = {{ mindmap_data | tojson }};
-    if (!mmData || !mmData.nodes || mmData.nodes.length === 0) return;
+    var treeData = {{ mindmap_data | tojson }};
+    if (!treeData || !treeData.roots || !treeData.roots.length) return;
 
-    var container = document.getElementById('mindmap-graph');
+    var container = document.getElementById('mindmap-tree');
     if (!container) return;
 
-    var nodes = new vis.DataSet(mmData.nodes);
-    var edges = new vis.DataSet(mmData.edges);
+    function renderNode(node, depth) {
+        var hasChildren = node.children && node.children.length > 0;
+        var isChapter = !!node.is_chapter;
+        var el = document.createElement('div');
+        el.className = 'mm-node' + (isChapter ? ' mm-chapter' : '') + (depth === 0 ? ' mm-root' : '');
 
-    var isDark = document.documentElement.getAttribute('data-theme') !== 'light';
-    var textColor = isDark ? '#e2e8f0' : '#1e293b';
-    var edgeColor = isDark ? 'rgba(148,163,184,0.35)' : 'rgba(100,116,139,0.3)';
+        // ── Header row ──
+        var header = document.createElement('div');
+        header.className = 'mm-header' + (isChapter ? ' mm-chapter-header' : '');
+        header.style.borderLeftColor = node.color;
 
-    var options = {
-        layout: {
-            hierarchical: {
-                direction: 'UD',
-                sortMethod: 'directed',
-                levelSeparation: 130,
-                nodeSpacing: 90,
-                treeSpacing: 180,
-                shakeTowards: 'roots',
-                blockShifting: true,
-                edgeMinimization: true
-            }
-        },
-        physics: false,
-        interaction: {
-            hover: true,
-            tooltipDelay: 150,
-            zoomView: true,
-            dragView: true,
-            dragNodes: false
-        },
-        nodes: {
-            shape: 'dot',
-            font: { size: 10, color: textColor, face: 'system-ui, -apple-system, sans-serif', strokeWidth: 3, strokeColor: isDark ? '#0f172a' : '#ffffff' },
-            borderWidth: 0,
-            shadow: { enabled: true, size: 4, x: 0, y: 2, color: 'rgba(0,0,0,0.12)' }
-        },
-        edges: {
-            width: 1.2,
-            smooth: { type: 'cubicBezier', forceDirection: 'vertical', roundness: 0.4 },
-            color: { color: edgeColor, highlight: isDark ? '#818cf8' : '#6366f1', opacity: 0.7 },
-            arrows: { to: { scaleFactor: 0.4 } }
+        if (isChapter) {
+            // Chapter node: colored number + title
+            var chNum = document.createElement('span');
+            chNum.className = 'mm-chapter-num';
+            chNum.style.backgroundColor = node.color;
+            chNum.textContent = node.chapter;
+            header.appendChild(chNum);
+        } else if (hasChildren) {
+            var toggle = document.createElement('span');
+            toggle.className = 'mm-toggle';
+            toggle.textContent = '\u25B8';
+            header.appendChild(toggle);
+        } else {
+            var bullet = document.createElement('span');
+            bullet.className = 'mm-bullet';
+            bullet.style.color = node.color;
+            bullet.textContent = '\u2022';
+            header.appendChild(bullet);
         }
-    };
 
-    var network = new vis.Network(container, { nodes: nodes, edges: edges }, options);
+        var label = document.createElement(isChapter ? 'a' : 'span');
+        label.className = 'mm-label';
+        label.textContent = node.name;
+        if (isChapter) {
+            label.href = 'chapter_' + String(node.chapter).padStart(2, '0') + '.html';
+            label.addEventListener('click', function(e) { e.stopPropagation(); });
+        }
+        header.appendChild(label);
 
-    // Fit to content after initial render
-    network.once('afterDrawing', function() {
-        network.fit({ animation: { duration: 400, easingFunction: 'easeOutQuad' } });
-    });
+        if (hasChildren) {
+            var count = document.createElement('span');
+            count.className = 'mm-count';
+            count.textContent = node.children.length;
+            header.appendChild(count);
 
-    // Build chapter color legend
-    var legendEl = document.getElementById('mindmapLegend');
-    if (legendEl) {
-        var seen = {};
-        mmData.nodes.forEach(function(n) {
-            if (!seen[n.group]) { seen[n.group] = n.color; }
-        });
-        Object.keys(seen).sort(function(a,b){ return a-b; }).forEach(function(ch) {
-            var chLink = document.querySelector('.chapter-link[data-chapter="' + ch + '"]');
-            var chName = chLink ? chLink.querySelector('.chapter-name').textContent : 'Ch ' + ch;
-            var item = document.createElement('span');
-            item.className = 'concept-graph-legend-item';
-            item.innerHTML = '<span class="concept-graph-legend-dot" style="background:' + seen[ch] + '"></span>' + ch;
-            item.title = chName;
-            legendEl.appendChild(item);
-        });
-    }
-
-    // Click node — navigate to chapter
-    var activePopup = null;
-    function removePopup() {
-        if (activePopup && activePopup.parentNode) activePopup.parentNode.removeChild(activePopup);
-        activePopup = null;
-    }
-    document.addEventListener('click', function(e) {
-        if (activePopup && !activePopup.contains(e.target)) removePopup();
-    });
-
-    network.on('click', function(params) {
-        removePopup();
-        if (params.nodes.length > 0) {
-            var nodeId = params.nodes[0];
-            var node = mmData.nodes.find(function(n) { return n.id === nodeId; });
-            if (node && node.group) {
-                var conceptName = node.id;
-                var chapterNum = String(node.group).padStart(2, '0');
-                var canvasPos = params.pointer.DOM;
-
-                var popup = document.createElement('div');
-                popup.className = 'concept-popup';
-                popup.style.left = canvasPos.x + 'px';
-                popup.style.top = canvasPos.y + 'px';
-                popup.innerHTML = '<div class="concept-popup-title">' + conceptName + '</div>'
-                    + '<a href="chapter_' + chapterNum + '.html" class="concept-popup-action">Go to Chapter</a>'
-                    + '<a href="review.html?concept=' + encodeURIComponent(conceptName) + '" class="concept-popup-action">Review this Concept</a>';
-                container.style.position = 'relative';
-                container.appendChild(popup);
-                activePopup = popup;
-                params.event.stopPropagation();
+            // Toggle for chapter nodes too
+            if (isChapter) {
+                var toggle = document.createElement('span');
+                toggle.className = 'mm-toggle';
+                toggle.textContent = '\u25B8';
+                header.appendChild(toggle);
             }
         }
+
+        if (!isChapter) {
+            var badge = document.createElement('a');
+            badge.className = 'mm-chapter-badge';
+            badge.style.backgroundColor = node.color;
+            badge.textContent = 'Ch ' + node.chapter;
+            badge.href = 'chapter_' + String(node.chapter).padStart(2, '0') + '.html';
+            badge.title = 'Go to chapter ' + node.chapter;
+            badge.addEventListener('click', function(e) { e.stopPropagation(); });
+            header.appendChild(badge);
+        }
+
+        el.appendChild(header);
+
+        // ── Definition (shown when expanded, skip for chapter nodes) ──
+        if (node.definition && !isChapter) {
+            var def = document.createElement('div');
+            def.className = 'mm-definition';
+            def.textContent = node.definition;
+            el.appendChild(def);
+        }
+
+        // ── Children container ──
+        if (hasChildren) {
+            var childrenEl = document.createElement('div');
+            childrenEl.className = 'mm-children';
+            node.children.forEach(function(child) {
+                childrenEl.appendChild(renderNode(child, depth + 1));
+            });
+            el.appendChild(childrenEl);
+
+            header.addEventListener('click', function() {
+                el.classList.toggle('mm-expanded');
+                toggle.textContent = el.classList.contains('mm-expanded') ? '\u25BE' : '\u25B8';
+            });
+            header.style.cursor = 'pointer';
+        }
+
+        return el;
+    }
+
+    treeData.roots.forEach(function(root) {
+        container.appendChild(renderNode(root, 0));
+    });
+
+    // Expand / Collapse all
+    document.getElementById('mmExpandAll').addEventListener('click', function() {
+        container.querySelectorAll('.mm-node').forEach(function(n) {
+            if (n.querySelector('.mm-children')) {
+                n.classList.add('mm-expanded');
+                var t = n.querySelector(':scope > .mm-header > .mm-toggle');
+                if (t) t.textContent = '\u25BE';
+            }
+        });
+    });
+    document.getElementById('mmCollapseAll').addEventListener('click', function() {
+        container.querySelectorAll('.mm-node').forEach(function(n) {
+            n.classList.remove('mm-expanded');
+            var t = n.querySelector(':scope > .mm-header > .mm-toggle');
+            if (t) t.textContent = '\u25B8';
+        });
     });
 })();
 {% endif %}
 </script>
+
+{% include '_help_modal.html' %}
 
 </body>
 </html>

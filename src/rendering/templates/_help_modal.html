@@ -1,0 +1,195 @@
+<!-- Help Modal, shared across all pages -->
+<div id="helpModal" class="help-overlay" style="display:none;" onclick="if(event.target===this)closeHelp()">
+    <div class="help-modal">
+        <div class="help-modal-header">
+            <h2>How This Course Works</h2>
+            <button class="settings-close-btn" onclick="closeHelp()">&times;</button>
+        </div>
+        <div class="help-modal-body">
+
+            <p class="help-intro">
+                This is an interactive learning experience. Here is how we recommend
+                you use it. Every quiz, flashcard, and diagram traces back to a specific
+                page in the source material. Your progress is saved automatically in
+                your browser, so no account is needed.
+            </p>
+
+            <details class="help-section">
+                <summary class="help-section-title">Navigating a Chapter</summary>
+                <div class="help-section-content">
+                    <p>
+                        Each chapter is a sequence of cards you step through one at a time.
+                        Use the <strong>arrow buttons</strong> at the bottom of each card, or
+                        press the <strong>left/right arrow keys</strong> on your keyboard.
+                        The <strong>sidebar</strong> on the left shows every section in the
+                        chapter; click any section to jump directly to it.
+                    </p>
+                    <p>
+                        Your position is remembered. If you leave and come back, you'll
+                        pick up right where you stopped.
+                    </p>
+                </div>
+            </details>
+
+            <details class="help-section">
+                <summary class="help-section-title">What the Elements Are</summary>
+                <div class="help-section-content">
+                    <p>
+                        The course follows a deliberate rhythm within each section:
+                        <strong>motivate, teach, practice, reinforce, assess.</strong>
+                    </p>
+                    <dl class="help-definitions">
+                        <dt>Section Intro</dt>
+                        <dd>A short motivational framing that tells you what you're about to learn and why it matters.</dd>
+                        <dt>Slides &amp; Diagrams</dt>
+                        <dd>The core teaching. Narrative explanations, worked examples, and Mermaid diagrams that visualise processes and relationships.</dd>
+                        <dt>Quiz / Matching / Fill-in-the-Blank</dt>
+                        <dd>Active practice that tests whether you can <em>apply</em> what the slides just taught. Wrong answers include explanations so you learn from mistakes.</dd>
+                        <dt>Ordering / Categorization</dt>
+                        <dd>Higher-order exercises that ask you to sequence steps or sort items into categories. Three attempts with progressive hints.</dd>
+                        <dt>Spot the Error</dt>
+                        <dd>Statements containing deliberate mistakes for you to identify and correct — great for developing critical evaluation skills.</dd>
+                        <dt>Analogy</dt>
+                        <dd>Exercises that ask you to complete analogies ("A is to B as C is to …"). Strengthens transfer by connecting new concepts to familiar ones.</dd>
+                        <dt>Concept Map</dt>
+                        <dd>A visual exercise asking you to connect ideas. It helps you see how individual facts fit into a bigger picture.</dd>
+                        <dt>Flashcard</dt>
+                        <dd>Delayed reinforcement: these appear <em>after</em> the practice exercises to help lock concepts into long-term memory. Click to flip.</dd>
+                        <dt>Interactive Essay</dt>
+                        <dd>A written reflection where you explain a concept in your own words. Check your understanding against a rubric, or (if you configure an API key) get live feedback from an AI tutor.</dd>
+                    </dl>
+                </div>
+            </details>
+
+            <details class="help-section">
+                <summary class="help-section-title">Your Progress</summary>
+                <div class="help-section-content">
+                    <p>
+                        Every answer you submit is tracked automatically: your scores,
+                        the number of attempts, and the concepts involved. This data lives
+                        entirely in your browser's local storage. Nothing is sent to a server.
+                    </p>
+                    <p>
+                        On the <strong>home page</strong> you'll see a mastery dashboard once
+                        you've answered a few questions. It shows which concepts you've
+                        mastered, which ones you're progressing on, and which ones might
+                        need another look. Each chapter also shows a progress bar based on
+                        your section scores.
+                    </p>
+                </div>
+            </details>
+
+            <details class="help-section">
+                <summary class="help-section-title">Spaced Review</summary>
+                <div class="help-section-content">
+                    <p>
+                        Spaced review schedules items at increasing intervals, so you
+                        revisit material just as you're about to forget it. This is one of
+                        the most robust findings in learning science: spaced practice
+                        roughly doubles long-term retention compared to massed study
+                        (Cepeda et al., 2006).
+                    </p>
+                    <p>
+                        The algorithm behind the scheduling is
+                        <strong>FSRS</strong> (Free Spaced Repetition Scheduler), which
+                        adapts to your personal performance. Items you find hard come back
+                        sooner; easy ones are spaced further apart. Flashcards and exercises
+                        are both included in the review queue.
+                    </p>
+                    <p>
+                        After each item, you rate it (<em>Again, Hard, Good, Easy</em>)
+                        and the schedule adjusts. Items linked to concepts you're
+                        struggling with are prioritised automatically.
+                    </p>
+                </div>
+            </details>
+
+            <details class="help-section">
+                <summary class="help-section-title">Mixed Practice</summary>
+                <div class="help-section-content">
+                    <p>
+                        <strong>Interleaved practice</strong> — mixing different exercise
+                        types and topics in unpredictable order — outperforms blocked
+                        practice by a meaningful margin (Brunmair &amp; Richter, 2019).
+                        It feels harder in the moment, but the added difficulty of
+                        switching contexts forces deeper processing and better
+                        discrimination between concepts.
+                    </p>
+                    <p>
+                        Mixed Practice draws from all exercise types across every chapter
+                        you've worked on: quizzes, fill-in-the-blank, matching, ordering,
+                        categorization, error detection, and analogy. Sessions are
+                        capped at 30 exercises, sorted by Bloom's taxonomy level and
+                        interleaved across chapters.
+                    </p>
+                    <p>
+                        <strong>Why both?</strong> Spaced Review optimises <em>when</em>
+                        you study (scheduling at optimal intervals). Mixed Practice
+                        optimises <em>how</em> you study (diverse retrieval across
+                        topics). Together they produce the strongest long-term retention.
+                    </p>
+                </div>
+            </details>
+
+            <details class="help-section">
+                <summary class="help-section-title">Confidence &amp; the Learner Model</summary>
+                <div class="help-section-content">
+                    <p>
+                        Some exercises ask you to rate your confidence before revealing the
+                        answer. This isn't just motivational — it detects
+                        <strong>hypercorrection</strong>: when you're highly confident but
+                        wrong, subsequent correction is especially effective and long-lasting
+                        (Butterfield &amp; Metcalfe, 2001).
+                    </p>
+                    <p>
+                        The learner model tracks your accuracy per concept and identifies
+                        areas where you're struggling, progressing, or have achieved
+                        mastery. This drives the concept dashboard on the home page and
+                        influences which items appear first in review sessions.
+                    </p>
+                </div>
+            </details>
+
+            <details class="help-section">
+                <summary class="help-section-title">AI Tutor (Optional)</summary>
+                <div class="help-section-content">
+                    <p>
+                        Interactive essays can optionally connect to a live AI tutor that
+                        gives you personalised feedback on your writing. This requires an
+                        OpenAI-compatible API key, which you can configure in the
+                        <strong>AI Tutor Settings</strong> (the gear icon on chapter pages).
+                        Your key is stored in your browser only; it is never sent anywhere
+                        except directly to the API you configure.
+                    </p>
+                    <p>
+                        If you don't set up an API key, essays still work perfectly well:
+                        you simply use the built-in rubric checklist to self-assess instead
+                        of getting live feedback.
+                    </p>
+                </div>
+            </details>
+
+            <details class="help-section">
+                <summary class="help-section-title">Display</summary>
+                <div class="help-section-content">
+                    <p>
+                        Click the <strong>sun/moon icon</strong> in the top-right corner of
+                        any page to toggle between dark and light themes. Your preference
+                        is remembered across all pages of this course.
+                    </p>
+                </div>
+            </details>
+
+        </div>
+    </div>
+</div>
+<script>
+window.openHelp = function() {
+    var m = document.getElementById('helpModal');
+    if (m) m.style.display = 'flex';
+};
+window.closeHelp = function() {
+    var m = document.getElementById('helpModal');
+    if (m) m.style.display = 'none';
+};
+</script>

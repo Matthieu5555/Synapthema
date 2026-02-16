@@ -5,7 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ module_title }}</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.css">
-    <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"
+            onload="__mermaidLoaded()" onerror="__mermaidFailed()"></script>
+    <script>{{ graphlib_js|safe }}</script>
+    <script>var require=function(n){if(n==="@dagrejs/graphlib")return graphlib;throw new Error("Unknown module: "+n)};</script>
+    <script>{{ dagre_js|safe }}</script>
     <style>
 {{ css|safe }}
     </style>
@@ -17,12 +21,30 @@
             if (t) document.documentElement.setAttribute('data-theme', t);
         } catch(e) {}
     })();
-    mermaid.initialize({
-        startOnLoad: false,
-        theme: document.documentElement.getAttribute('data-theme') === 'light' ? 'default' : 'dark',
-        flowchart: { useMaxWidth: false },
-        sequence: { useMaxWidth: false }
-    });
+    var __mermaidReady = false;
+    var __mermaidQueue = [];
+    window.__mermaidLoaded = function() {
+        mermaid.initialize({
+            startOnLoad: false,
+            theme: document.documentElement.getAttribute('data-theme') === 'light' ? 'default' : 'dark',
+            flowchart: { useMaxWidth: false },
+            sequence: { useMaxWidth: false }
+        });
+        __mermaidReady = true;
+        __mermaidQueue.forEach(function(el) { renderMermaidSafe(el); });
+        __mermaidQueue = [];
+    };
+    window.__mermaidFailed = function() {
+        document.querySelectorAll('.mermaid:not([data-processed])').forEach(function(el) {
+            el.setAttribute('data-processed', 'true');
+            var fallback = document.createElement('div');
+            fallback.className = 'mermaid-error-fallback';
+            fallback.innerHTML = '<p class="mermaid-error-msg">Diagram could not be rendered (library failed to load)</p>' +
+                '<pre class="mermaid-error-code"><code></code></pre>';
+            fallback.querySelector('code').textContent = el.textContent;
+            el.replaceWith(fallback);
+        });
+    };
     </script>
 </head>
 <body>
@@ -33,7 +55,7 @@
         <span class="breadcrumb-sep">/</span>
         <span class="breadcrumb-current">Chapter {{ chapter_number }}: {{ module_title }}</span>
         {% if source_book_title %}
-        <span class="source-badge">Source: {{ source_book_title }}</span>
+        <span class="source-badge" title="{{ source_book_title }}">&#128214;</span>
         {% endif %}
     </div>
     <div class="course-header-right">
@@ -49,7 +71,8 @@
         <a href="{{ next_chapter.filename }}" class="chapter-nav-btn" title="Next: {{ next_chapter.title }}">Next &#8594;</a>
         {% endif %}
         <button class="theme-toggle" onclick="__lxpToggleTheme()" title="Toggle theme">&#9788;</button>
-        <button class="settings-btn" onclick="openSettings()" title="AI Tutor Settings">&#9881;</button>
+        <button class="settings-btn" onclick="openSettings()" title="AI Tutor Settings"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></button>
+        <button class="help-btn" onclick="openHelp()" title="How this course works"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg></button>
     </div>
 </nav>
 
@@ -104,7 +127,19 @@
 
             <div class="slide" data-index="{{ loop.index0 }}" data-element-id="{{ element.element_id }}" data-concepts='{{ element.concepts_tested | tojson }}' {% if loop.first %}style="display:block"{% endif %}>
 
-                {% if element.element_type == "slide" %}
+                {% if element.element_type == "section_intro" %}
+                <span class="element-badge intro-badge">Introduction</span>
+                <div class="section-intro-container">
+                    <h1>{{ element.section_intro.title }}</h1>
+                    <div class="section-intro-content">
+                        {{ element.section_intro.content_html|safe }}
+                    </div>
+                    {% if element.section_intro.source_pages %}
+                    <div class="source-attribution">{{ element.section_intro.source_pages }}</div>
+                    {% endif %}
+                </div>
+
+                {% elif element.element_type == "slide" %}
                 <span class="element-badge slide-badge">Slide</span>
                 {% if element.bloom_level %}<span class="bloom-badge bloom-{{ element.bloom_level }}">{{ element.bloom_level }}</span>{% endif %}
                 <h1>{{ element.slide.title }}</h1>
@@ -125,16 +160,16 @@
                     <div class="quiz-title">{{ element.quiz.title }}</div>
                     {% for q in element.quiz.questions %}
                     <div class="quiz-question" data-correct="{{ q.correct_index }}"
-                         data-hint-meta="{{ q.hint_metacognitive }}"
-                         data-hint-strategic="{{ q.hint_strategic }}"
+                         data-hint-meta="{{ q.hint_metacognitive|safe }}"
+                         data-hint-strategic="{{ q.hint_strategic|safe }}"
                          data-hint-eliminate="{{ q.hint_eliminate_index }}"
                          data-attempts="0">
-                        <div class="quiz-question-text">{{ loop.index }}. {{ q.question }}</div>
+                        <div class="quiz-question-text">{{ loop.index }}. {{ q.question|safe }}</div>
                         <ul class="quiz-options">
                             {% for option in q.options %}
                             <li class="quiz-option" data-option-index="{{ loop.index0 }}" onclick="selectOption(this)">
                                 <span class="quiz-option-marker">{{ ['A','B','C','D','E'][loop.index0] }}</span>
-                                <span>{{ option }}</span>
+                                <span>{{ option|safe }}</span>
                             </li>
                             {% endfor %}
                         </ul>
@@ -152,7 +187,7 @@
                             </div>
                             <button class="quiz-check-btn confidence-confirm-btn" onclick="confirmWithConfidence(this)" disabled>Confirm</button>
                         </div>
-                        <div class="quiz-explanation">{{ q.explanation }}</div>
+                        <div class="quiz-explanation">{{ q.explanation|safe }}</div>
                         <div class="quiz-hypercorrection" style="display:none;"></div>
                     </div>
                     {% endfor %}
@@ -165,11 +200,11 @@
                 <div class="flashcard-container">
                     <div class="flashcard" onclick="this.classList.toggle('flipped')">
                         <div class="flashcard-front">
-                            {{ element.flashcard.front }}
+                            {{ element.flashcard.front|safe }}
                             <div class="flashcard-hint">Click to reveal</div>
                         </div>
                         <div class="flashcard-back">
-                            {{ element.flashcard.back }}
+                            {{ element.flashcard.back|safe }}
                         </div>
                     </div>
                 </div>
@@ -180,7 +215,7 @@
                 {% if element.bloom_level %}<span class="bloom-badge bloom-{{ element.bloom_level }}">{{ element.bloom_level }}</span>{% endif %}
                 <div class="fitb-container" data-answers='{{ element.fill_in_the_blank.answers_json }}' data-hint-first-letter="{{ element.fill_in_the_blank.hint_first_letter|lower }}" data-attempts="0">
                     {% if element.fill_in_the_blank.hint %}
-                    <div class="fitb-hint" style="display:none;">Hint: {{ element.fill_in_the_blank.hint }}</div>
+                    <div class="fitb-hint" style="display:none;">Hint: {{ element.fill_in_the_blank.hint|safe }}</div>
                     {% endif %}
                     <div class="fitb-statement">{{ element.fill_in_the_blank.statement_html|safe }}</div>
                     <button class="quiz-check-btn" onclick="checkFillBlanks(this)">Check Answers</button>
@@ -190,16 +225,107 @@
                 {% elif element.element_type == "matching" %}
                 <span class="element-badge matching-badge">Matching</span>
                 {% if element.bloom_level %}<span class="bloom-badge bloom-{{ element.bloom_level }}">{{ element.bloom_level }}</span>{% endif %}
-                <div class="matching-container" data-correct='{{ element.matching.correct_json }}' data-pair-explanations='{{ element.matching.pair_explanations_json }}'>
+                <div class="matching-container" data-correct='{{ element.matching.correct_json }}' data-pair-explanations='{{ element.matching.pair_explanations_json|safe }}'>
                     <div class="matching-title">{{ element.matching.title }}</div>
                     <div class="matching-grid">
                         {% for item in element.matching.left_items %}
-                        <div class="matching-left-item" data-idx="{{ loop.index0 }}" onclick="selectMatchItem(this, 'left')">{{ item }}</div>
+                        <div class="matching-left-item" data-idx="{{ loop.index0 }}" onclick="selectMatchItem(this, 'left')">{{ item|safe }}</div>
                         <div class="matching-arrow">&#8594;</div>
-                        <div class="matching-right-item" data-idx="{{ loop.index0 }}" onclick="selectMatchItem(this, 'right')">{{ element.matching.shuffled_right[loop.index0] }}</div>
+                        <div class="matching-right-item" data-idx="{{ loop.index0 }}" onclick="selectMatchItem(this, 'right')">{{ element.matching.shuffled_right[loop.index0]|safe }}</div>
                         {% endfor %}
                     </div>
                     <div class="matching-explanations" style="display:none;"></div>
+                    <div class="matching-confidence" style="display:none;">
+                        <div class="confidence-prompt">How confident were you?</div>
+                        <div class="confidence-dots">
+                            <span class="confidence-dot" data-value="1" onclick="selectMatchConfidence(this)">1</span>
+                            <span class="confidence-dot" data-value="2" onclick="selectMatchConfidence(this)">2</span>
+                            <span class="confidence-dot" data-value="3" onclick="selectMatchConfidence(this)">3</span>
+                            <span class="confidence-dot" data-value="4" onclick="selectMatchConfidence(this)">4</span>
+                            <span class="confidence-dot" data-value="5" onclick="selectMatchConfidence(this)">5</span>
+                        </div>
+                        <button class="quiz-check-btn confidence-confirm-btn" onclick="confirmMatchConfidence(this)" disabled>Confirm</button>
+                    </div>
+                </div>
+
+                {% elif element.element_type == "ordering" %}
+                <span class="element-badge ordering-badge">Ordering</span>
+                {% if element.bloom_level %}<span class="bloom-badge bloom-{{ element.bloom_level }}">{{ element.bloom_level }}</span>{% endif %}
+                <div class="ordering-container" data-correct-order='{{ element.ordering.correct_order_json }}' data-attempts="0">
+                    <div class="ordering-title">{{ element.ordering.title }}</div>
+                    <p class="ordering-instruction">{{ element.ordering.instruction|safe }}</p>
+                    <ol class="ordering-list">
+                        {% for item in element.ordering.shuffled_items %}
+                        <li class="ordering-item" data-idx="{{ loop.index0 }}">
+                            <span class="ordering-handle">&#9776;</span>
+                            <span class="ordering-text">{{ item|safe }}</span>
+                            <span class="ordering-arrows">
+                                <button class="ordering-arrow-btn" onclick="moveOrderingItem(this, -1)" title="Move up">&#9650;</button>
+                                <button class="ordering-arrow-btn" onclick="moveOrderingItem(this, 1)" title="Move down">&#9660;</button>
+                            </span>
+                        </li>
+                        {% endfor %}
+                    </ol>
+                    {% if element.ordering.hint %}
+                    <div class="ordering-hint" style="display:none;">Hint: {{ element.ordering.hint|safe }}</div>
+                    {% endif %}
+                    <div class="ordering-explanation" style="display:none;">{{ element.ordering.explanation|safe }}</div>
+                    <button class="quiz-check-btn" onclick="checkOrdering(this)">Check Order</button>
+                    <button class="add-review-btn" onclick="addToReview(this)" title="Add to spaced review">+ Review</button>
+                </div>
+
+                {% elif element.element_type == "categorization" %}
+                <span class="element-badge categorization-badge">Categorize</span>
+                {% if element.bloom_level %}<span class="bloom-badge bloom-{{ element.bloom_level }}">{{ element.bloom_level }}</span>{% endif %}
+                <div class="categorization-container" data-items='{{ element.categorization.items_json }}' data-attempts="0">
+                    <div class="categorization-title">{{ element.categorization.title }}</div>
+                    <p class="categorization-instruction">{{ element.categorization.instruction|safe }}</p>
+                    <div class="categorization-categories">
+                        {% for name in element.categorization.category_names %}
+                        <div class="categorization-bucket" data-cat-idx="{{ loop.index0 }}">
+                            <div class="categorization-bucket-title">{{ name|safe }}</div>
+                            <div class="categorization-bucket-items"></div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    <div class="categorization-pool"></div>
+                    {% if element.categorization.hint %}
+                    <div class="categorization-hint" style="display:none;">Hint: {{ element.categorization.hint|safe }}</div>
+                    {% endif %}
+                    <div class="categorization-explanation" style="display:none;">{{ element.categorization.explanation|safe }}</div>
+                    <button class="quiz-check-btn" onclick="checkCategorization(this)">Check Categories</button>
+                    <button class="add-review-btn" onclick="addToReview(this)" title="Add to spaced review">+ Review</button>
+                </div>
+
+                {% elif element.element_type == "error_detection" %}
+                <span class="element-badge error-detect-badge">Spot the Error</span>
+                {% if element.bloom_level %}<span class="bloom-badge bloom-{{ element.bloom_level }}">{{ element.bloom_level }}</span>{% endif %}
+                <div class="error-detection-container">
+                    <div class="error-detection-title">{{ element.error_detection.title }}</div>
+                    <p class="error-detection-instruction">{{ element.error_detection.instruction|safe }}</p>
+                    {% if element.error_detection.context %}
+                    <p class="error-detection-context">{{ element.error_detection.context|safe }}</p>
+                    {% endif %}
+                    {% for item in element.error_detection.error_items %}
+                    <div class="error-item" data-idx="{{ loop.index0 }}">
+                        <div class="error-statement">{{ loop.index }}. {{ item.statement|safe }}</div>
+                        <button class="quiz-check-btn error-reveal-btn" onclick="revealError(this)">Reveal Error</button>
+                        <div class="error-feedback" style="display:none;">
+                            <div class="error-explanation"><strong>Error:</strong> {{ item.error_explanation|safe }}</div>
+                            <div class="error-corrected"><strong>Corrected:</strong> {{ item.corrected_statement|safe }}</div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                    <button class="add-review-btn" onclick="addToReview(this)" title="Add to spaced review">+ Review</button>
+                </div>
+
+                {% elif element.element_type == "analogy" %}
+                <span class="element-badge analogy-badge">Analogy</span>
+                {% if element.bloom_level %}<span class="bloom-badge bloom-{{ element.bloom_level }}">{{ element.bloom_level }}</span>{% endif %}
+                <div class="analogy-container" data-items='{{ element.analogy.items_json }}' data-attempts="0">
+                    <div class="analogy-title">{{ element.analogy.title }}</div>
+                    <div class="analogy-items"></div>
+                    <button class="add-review-btn" onclick="addToReview(this)" title="Add to spaced review">+ Review</button>
                 </div>
 
                 {% elif element.element_type == "mermaid" %}
@@ -207,10 +333,10 @@
                 {% if element.bloom_level %}<span class="bloom-badge bloom-{{ element.bloom_level }}">{{ element.bloom_level }}</span>{% endif %}
                 <h2>{{ element.mermaid.title }}</h2>
                 <div class="mermaid-container">
-                    <pre class="mermaid">{{ element.mermaid.diagram_code }}</pre>
+                    <pre class="mermaid">{{ element.mermaid.diagram_code|safe }}</pre>
                 </div>
                 {% if element.mermaid.caption %}
-                <p class="diagram-caption">{{ element.mermaid.caption }}</p>
+                <p class="diagram-caption">{{ element.mermaid.caption|safe }}</p>
                 {% endif %}
 
                 {% elif element.element_type == "concept_map" %}
@@ -228,20 +354,22 @@
                     </div>
                 </div>
 
-                {% elif element.element_type == "self_explain" %}
+                {% elif element.element_type == "interactive_essay" %}
+                {% if element.interactive_essay.is_static %}
+                {# ── Static mode: single-prompt self-explanation ── #}
                 <span class="element-badge explain-badge">Explain</span>
                 {% if element.bloom_level %}<span class="bloom-badge bloom-{{ element.bloom_level }}">{{ element.bloom_level }}</span>{% endif %}
-                <div class="self-explain-container" data-key-points='{{ element.self_explain.key_points_json }}' data-min-words="{{ element.self_explain.minimum_words }}">
+                <div class="self-explain-container" data-key-points='{{ element.interactive_essay.prompts[0].key_points_json }}' data-min-words="{{ element.interactive_essay.prompts[0].minimum_words }}">
                     <div class="explain-prompt">
                         <h2>Explain in Your Own Words</h2>
-                        <p>{{ element.self_explain.prompt }}</p>
+                        <div class="explain-prompt-text">{{ element.interactive_essay.prompts[0].prompt|safe }}</div>
                     </div>
                     <textarea class="explain-textarea"
-                              placeholder="Type your explanation here (minimum {{ element.self_explain.minimum_words }} words)..."
+                              placeholder="Type your explanation here (minimum {{ element.interactive_essay.prompts[0].minimum_words }} words)..."
                               rows="8"
                               oninput="updateWordCount(this)"></textarea>
                     <div class="explain-word-count">
-                        <span class="word-count">0</span> / {{ element.self_explain.minimum_words }} words minimum
+                        <span class="word-count">0</span> / {{ element.interactive_essay.prompts[0].minimum_words }} words minimum
                     </div>
                     <button class="explain-submit-btn" onclick="submitExplanation(this)" disabled>
                         Submit My Explanation
@@ -255,15 +383,15 @@
                         </div>
                         <button class="show-model-btn" onclick="showModelResponse(this)">See Model Response</button>
                         <div class="model-response" style="display:none;">
-                            {{ element.self_explain.example_response|safe }}
+                            {{ element.interactive_essay.prompts[0].example_response|safe }}
                         </div>
                     </div>
-                    {% if element.self_explain.source_pages %}
-                    <div class="source-attribution">{{ element.self_explain.source_pages }}</div>
+                    {% if element.interactive_essay.prompts[0].source_pages %}
+                    <div class="source-attribution">{{ element.interactive_essay.prompts[0].source_pages }}</div>
                     {% endif %}
                 </div>
-
-                {% elif element.element_type == "interactive_essay" %}
+                {% else %}
+                {# ── Dynamic mode: multi-prompt essay with optional tutor ── #}
                 <span class="element-badge essay-badge">Interactive Essay</span>
                 {% if element.bloom_level %}<span class="bloom-badge bloom-{{ element.bloom_level }}">{{ element.bloom_level }}</span>{% endif %}
                 <div class="essay-container"
@@ -284,12 +412,15 @@
                     <div class="essay-prompt" data-prompt-index="{{ loop.index0 }}"
                          data-key-points='{{ prompt.key_points_json }}' data-min-words="{{ prompt.minimum_words }}">
                         <h3>Question {{ loop.index }}</h3>
-                        <p>{{ prompt.prompt }}</p>
+                        <div class="essay-prompt-text">{{ prompt.prompt|safe }}</div>
                         <textarea class="explain-textarea" rows="6"
                                   placeholder="Minimum {{ prompt.minimum_words }} words..."
                                   oninput="updateWordCount(this)"></textarea>
                         <div class="explain-word-count">
                             <span class="word-count">0</span> / {{ prompt.minimum_words }} words minimum
+                        </div>
+                        <div class="model-response" style="display:none;">
+                            {{ prompt.example_response|safe }}
                         </div>
                     </div>
                     {% endfor %}
@@ -315,6 +446,7 @@
                         <div class="tutor-verdict" style="display:none;"></div>
                     </div>
                 </div>
+                {% endif %}
 
                 {% endif %}
             </div>
@@ -363,6 +495,21 @@ window.__lxpToggleTheme = function() {
     try { localStorage.setItem('lxp_{{ course_slug }}_theme', next); } catch(e) {}
     var btn = document.querySelector('.theme-toggle');
     if (btn) btn.textContent = next === 'dark' ? '\u2606' : '\u263D';
+    // Re-render concept maps so SVG colors update with new theme
+    document.querySelectorAll('.concept-map-container[data-rendered]').forEach(function(container) {
+        var savedInputs = {};
+        container.querySelectorAll('.cmap-edge-input').forEach(function(input) {
+            savedInputs[input.dataset.edgeIndex] = input.value;
+        });
+        container.removeAttribute('data-rendered');
+        renderConceptMap(container);
+        container.setAttribute('data-rendered', 'true');
+        container.querySelectorAll('.cmap-edge-input').forEach(function(input) {
+            if (savedInputs[input.dataset.edgeIndex]) {
+                input.value = savedInputs[input.dataset.edgeIndex];
+            }
+        });
+    });
 };
 // Set initial icon
 (function() {
@@ -439,6 +586,41 @@ window.__lxpToggleTheme = function() {
         });
     }
 
+    // ── Progressive letter-reveal hint for blank inputs ─────────────────
+    window.revealNextLetters = function(input) {
+        var answer = input.dataset.answer || input.dataset.correctLabel || '';
+        if (!answer) return;
+        var level = parseInt(input.dataset.hintLevel || '0') + 1;
+        input.dataset.hintLevel = level;
+
+        var words = answer.split(/\s+/);
+        var placeholder = words.map(function(word) {
+            var chars = [];
+            for (var i = 0; i < word.length; i++) {
+                if (level === 1) {
+                    chars.push('_');
+                } else if (i < level - 1) {
+                    chars.push(word[i]);
+                } else {
+                    chars.push('_');
+                }
+            }
+            return chars.join(' ');
+        }).join('   ');
+
+        input.placeholder = placeholder;
+
+        var btn = input.nextElementSibling;
+        if (!btn || !btn.classList.contains('hint-letter-btn')) {
+            btn = input.parentElement && input.parentElement.querySelector('.hint-letter-btn');
+        }
+        var maxLetters = Math.max.apply(null, words.map(function(w) { return w.length; }));
+        if (btn && level > maxLetters) {
+            btn.disabled = true;
+            btn.style.opacity = '0.3';
+        }
+    };
+
     // ── Progress persistence ──────────────────────────────────────────────
     function loadProgress() {
         try {
@@ -458,6 +640,7 @@ window.__lxpToggleTheme = function() {
         if (!chapters[CHAPTER_NUM]) {
             chapters[CHAPTER_NUM] = {
                 currentSlide: 0,
+                highestSlide: 0,
                 totalSlides: total,
                 completedSections: [],
                 completed: false,
@@ -466,6 +649,7 @@ window.__lxpToggleTheme = function() {
         }
         var ch = chapters[CHAPTER_NUM];
         ch.currentSlide = slideIndex;
+        if (slideIndex > (ch.highestSlide || 0)) ch.highestSlide = slideIndex;
         ch.totalSlides = total;
         ch.lastVisited = new Date().toISOString();
 
@@ -490,6 +674,32 @@ window.__lxpToggleTheme = function() {
 
         chapters[CHAPTER_NUM] = ch;
         saveProgress(chapters);
+    }
+
+    // ── Safe Mermaid rendering ───────────────────────────────────────────
+    function renderMermaidSafe(el) {
+        if (!__mermaidReady) {
+            __mermaidQueue.push(el);
+            return;
+        }
+        var raw = el.textContent;
+        el.setAttribute('data-processed', 'true');
+        try {
+            mermaid.run({ nodes: [el] }).catch(function() {
+                showMermaidFallback(el, raw);
+            });
+        } catch(e) {
+            showMermaidFallback(el, raw);
+        }
+    }
+
+    function showMermaidFallback(el, raw) {
+        var fallback = document.createElement('div');
+        fallback.className = 'mermaid-error-fallback';
+        fallback.innerHTML = '<p class="mermaid-error-msg">Diagram could not be rendered</p>' +
+            '<pre class="mermaid-error-code"><code></code></pre>';
+        fallback.querySelector('code').textContent = raw;
+        el.replaceWith(fallback);
     }
 
     // ── Slide navigation ──────────────────────────────────────────────────
@@ -520,10 +730,7 @@ window.__lxpToggleTheme = function() {
 
         // Re-render Mermaid diagrams when their slide becomes visible
         var currentSlide = slides[index];
-        var mermaidElements = currentSlide.querySelectorAll('.mermaid:not([data-processed])');
-        if (mermaidElements.length > 0) {
-            mermaid.run({ nodes: mermaidElements });
-        }
+        currentSlide.querySelectorAll('.mermaid:not([data-processed])').forEach(renderMermaidSafe);
 
         // Render concept maps on first visit
         var cmapContainers = currentSlide.querySelectorAll('.concept-map-container:not([data-rendered])');
@@ -711,8 +918,9 @@ window.__lxpToggleTheme = function() {
             var hintMeta = question.dataset.hintMeta;
             if (hintMeta) {
                 var hintEl = question.querySelector('.hint-metacognitive');
-                hintEl.textContent = hintMeta;
+                hintEl.innerHTML = hintMeta;
                 hintEl.style.display = 'block';
+                renderMath(hintEl);
             }
             selected.classList.remove('selected');
             selected.classList.add('attempted-wrong');
@@ -722,8 +930,9 @@ window.__lxpToggleTheme = function() {
             var hintStrategic = question.dataset.hintStrategic;
             if (hintStrategic) {
                 var stratEl = question.querySelector('.hint-strategic');
-                stratEl.textContent = hintStrategic;
+                stratEl.innerHTML = hintStrategic;
                 stratEl.style.display = 'block';
+                renderMath(stratEl);
             }
             var eliminateIdx = parseInt(question.dataset.hintEliminate);
             if (eliminateIdx >= 0) {
@@ -836,12 +1045,13 @@ window.__lxpToggleTheme = function() {
             recordScore(slideIdx, allCorrect, attempts, 0, '');
         } else if (attempts === 1) {
             var hintEl = container.querySelector('.fitb-hint');
-            if (hintEl) hintEl.style.display = 'block';
+            if (hintEl) { hintEl.style.display = 'block'; renderMath(hintEl); }
             btn.textContent = 'Try Again';
-        } else if (attempts === 2 && container.dataset.hintFirstLetter === 'true') {
-            inputs.forEach(function(input, i) {
-                if (!input.classList.contains('correct')) {
-                    input.placeholder = answers[i].charAt(0) + '...';
+        } else if (attempts === 2) {
+            // Auto-reveal word structure for unanswered blanks
+            inputs.forEach(function(input) {
+                if (!input.classList.contains('correct') && !input.dataset.hintLevel) {
+                    revealNextLetters(input);
                 }
             });
             btn.textContent = 'Last Try';
@@ -859,13 +1069,23 @@ window.__lxpToggleTheme = function() {
 
         var svgNS = 'http://www.w3.org/2000/svg';
 
+        // ── Resolve CSS variables to actual colors (SVG markers can't use var()) ──
+        var cs = getComputedStyle(document.documentElement);
+        var colorAccent = cs.getPropertyValue('--accent').trim();
+        var colorBorder = cs.getPropertyValue('--border').trim();
+        var colorSurface = cs.getPropertyValue('--surface').trim();
+        var colorText = cs.getPropertyValue('--text').trim();
+        var colorTextMuted = cs.getPropertyValue('--text-muted').trim();
+        var colorBg = cs.getPropertyValue('--bg').trim();
+
         // ── Text measurement ──
+        var FONT_FAMILY = 'system-ui,-apple-system,BlinkMacSystemFont,sans-serif';
         var _c = document.createElement('canvas');
         var _x = _c.getContext('2d');
-        _x.font = '13px system-ui,-apple-system,sans-serif';
+        _x.font = '14px ' + FONT_FAMILY;
 
-        var PAD_X = 18, PAD_Y = 10, NODE_MIN_H = 36, NODE_MIN_W = 80, NODE_MAX_W = 200;
-        var LAYER_GAP = 120, NODE_GAP = 28, MARGIN = 50, LINE_H = 16;
+        var PAD_X = 20, PAD_Y = 14, NODE_MIN_H = 44, NODE_MIN_W = 90, NODE_MAX_W = 240;
+        var LAYER_GAP = 130, NODE_GAP = 32, MARGIN = 50, LINE_H = 20;
 
         function wrapLabel(label) {
             var maxW = NODE_MAX_W - PAD_X * 2;
@@ -889,92 +1109,181 @@ window.__lxpToggleTheme = function() {
             lines.forEach(function(l) { var w = _x.measureText(l).width; if (w > maxLW) maxLW = w; });
             nm[n.id] = {
                 id: n.id, label: n.label, lines: lines,
-                w: Math.max(NODE_MIN_W, Math.min(NODE_MAX_W, Math.ceil(maxLW) + PAD_X * 2)),
-                h: Math.max(NODE_MIN_H, lines.length * LINE_H + PAD_Y * 2),
+                w: Math.max(NODE_MIN_W, Math.min(NODE_MAX_W, Math.ceil(maxLW * 1.15) + PAD_X * 2)),
+                h: Math.max(NODE_MIN_H, lines.length * LINE_H + PAD_Y * 3),
                 x: 0, y: 0, layer: -1
             };
         });
 
-        // ── Adjacency lists ──
-        var childOf = {}, parentOf = {};
-        nodes.forEach(function(n) { childOf[n.id] = []; parentOf[n.id] = []; });
-        edges.forEach(function(e) { childOf[e.source].push(e.target); parentOf[e.target].push(e.source); });
+        // ── Layout via dagre (with fallback) ──
+        if (typeof dagre === 'undefined') {
+            // Fallback: two-column layout with straight-line edges
+            console.warn('dagre not available — using fallback layout');
+            var fbNodeMap = {};
+            var fbSources = {}, fbTargets = {};
+            edges.forEach(function(e) { fbSources[e.source] = true; fbTargets[e.target] = true; });
 
-        // ── Layer assignment (longest-path from roots) ──
-        var roots = nodes.filter(function(n) { return parentOf[n.id].length === 0; });
-        if (!roots.length) roots = [nodes[0]];
-        roots.forEach(function(r) { nm[r.id].layer = 0; });
-        var changed = true, safe = 0;
-        while (changed && ++safe < 200) {
-            changed = false;
-            edges.forEach(function(e) {
-                var sl = nm[e.source].layer;
-                if (sl >= 0 && sl + 1 > nm[e.target].layer) { nm[e.target].layer = sl + 1; changed = true; }
+            // Separate into source-only (left) and target-only / shared (right)
+            var leftIds = [], rightIds = [];
+            nodes.forEach(function(n) {
+                if (fbSources[n.id] && !fbTargets[n.id]) leftIds.push(n.id);
+                else rightIds.push(n.id);
             });
-        }
-        nodes.forEach(function(n) { if (nm[n.id].layer < 0) nm[n.id].layer = 0; });
+            if (!leftIds.length) { leftIds = [nodes[0].id]; rightIds = nodes.slice(1).map(function(n) { return n.id; }); }
 
-        // ── Group by layer ──
-        var layerMap = {}, maxLayer = 0;
-        nodes.forEach(function(n) {
-            var l = nm[n.id].layer;
-            if (!layerMap[l]) layerMap[l] = [];
-            layerMap[l].push(nm[n.id]);
-            if (l > maxLayer) maxLayer = l;
-        });
-
-        // ── Barycenter ordering (minimize edge crossings) ──
-        for (var pass = 0; pass < 8; pass++) {
-            for (var l = 1; l <= maxLayer; l++) {
-                var grp = layerMap[l];
-                grp.forEach(function(nd) {
-                    var pars = parentOf[nd.id];
-                    if (pars.length) {
-                        var prev = layerMap[l - 1] || [];
-                        var sum = 0, cnt = 0;
-                        pars.forEach(function(pid) {
-                            for (var k = 0; k < prev.length; k++) {
-                                if (prev[k].id === pid) { sum += k; cnt++; break; }
-                            }
-                        });
-                        nd._bc = cnt ? sum / cnt : 0;
-                    }
-                });
-                grp.sort(function(a, b) { return (a._bc || 0) - (b._bc || 0); });
-            }
-        }
-
-        // ── Position nodes (center each layer horizontally) ──
-        for (var l = 0; l <= maxLayer; l++) {
-            var grp = layerMap[l];
-            var totalW = 0;
-            grp.forEach(function(nd) { totalW += nd.w; });
-            totalW += Math.max(0, grp.length - 1) * NODE_GAP;
-            var xOff = -totalW / 2;
-            grp.forEach(function(nd) {
-                nd.x = xOff + nd.w / 2;
-                nd.y = l * LAYER_GAP;
-                xOff += nd.w + NODE_GAP;
+            var colGap = 300;
+            var lyL = MARGIN, lyR = MARGIN;
+            leftIds.forEach(function(id) {
+                var nd = nm[id]; nd.x = MARGIN + nd.w / 2; nd.y = lyL + nd.h / 2; lyL += nd.h + NODE_GAP;
             });
+            rightIds.forEach(function(id) {
+                var nd = nm[id]; nd.x = MARGIN + NODE_MAX_W + colGap + nd.w / 2; nd.y = lyR + nd.h / 2; lyR += nd.h + NODE_GAP;
+            });
+            var viewW = MARGIN * 2 + NODE_MAX_W * 2 + colGap;
+            var viewH = Math.max(lyL, lyR) + MARGIN;
+            svg.setAttribute('viewBox', '0 0 ' + viewW + ' ' + viewH);
+            // Size SVG so text stays readable (min 1:1 scale)
+            var containerInner = container.clientWidth - 64;
+            var svgW = Math.max(viewW, containerInner);
+            svg.setAttribute('width', svgW);
+            svg.setAttribute('height', viewH * (svgW / viewW));
+
+            // Arrow marker
+            var fbDefs = document.createElementNS(svgNS, 'defs');
+            var fbMarker = document.createElementNS(svgNS, 'marker');
+            fbMarker.setAttribute('id', 'cmap-arr-fb-' + container.id);
+            fbMarker.setAttribute('markerWidth', '10'); fbMarker.setAttribute('markerHeight', '8');
+            fbMarker.setAttribute('refX', '9'); fbMarker.setAttribute('refY', '4');
+            fbMarker.setAttribute('orient', 'auto'); fbMarker.setAttribute('markerUnits', 'userSpaceOnUse');
+            var fbArrP = document.createElementNS(svgNS, 'path');
+            fbArrP.setAttribute('d', 'M0,0 L10,4 L0,8 Z'); fbArrP.setAttribute('fill', colorAccent);
+            fbMarker.appendChild(fbArrP); fbDefs.appendChild(fbMarker); svg.appendChild(fbDefs);
+
+            // Draw edges as straight lines
+            edges.forEach(function(edge, idx) {
+                var src = nm[edge.source], tgt = nm[edge.target];
+                if (!src || !tgt) return;
+                var x1 = src.x + src.w / 2, y1 = src.y;
+                var x2 = tgt.x - tgt.w / 2, y2 = tgt.y;
+                // If same column, draw from bottom to top
+                if (Math.abs(src.x - tgt.x) < 50) { x1 = src.x; y1 = src.y + src.h / 2; x2 = tgt.x; y2 = tgt.y - tgt.h / 2; }
+                var path = document.createElementNS(svgNS, 'path');
+                path.setAttribute('d', 'M' + x1 + ',' + y1 + ' L' + x2 + ',' + y2);
+                path.setAttribute('fill', 'none'); path.setAttribute('stroke', colorBorder);
+                path.setAttribute('stroke-width', '1.5');
+                path.setAttribute('marker-end', 'url(#cmap-arr-fb-' + container.id + ')');
+                svg.appendChild(path);
+
+                // Edge label
+                var mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
+                if (blanks.indexOf(idx) !== -1) {
+                    var fo = document.createElementNS(svgNS, 'foreignObject');
+                    fo.setAttribute('x', mx - 85); fo.setAttribute('y', my - 15);
+                    fo.setAttribute('width', 170); fo.setAttribute('height', 30);
+                    var wr = document.createElement('div');
+                    wr.className = 'cmap-hint-wrapper';
+                    var inp = document.createElement('input');
+                    inp.type = 'text'; inp.className = 'cmap-edge-input';
+                    inp.dataset.edgeIndex = idx; inp.dataset.correctLabel = edge.label;
+                    inp.placeholder = '?';
+                    var hb = document.createElement('button');
+                    hb.className = 'hint-letter-btn';
+                    hb.textContent = '?';
+                    hb.title = 'Reveal a letter';
+                    hb.onclick = function() { revealNextLetters(inp); };
+                    wr.appendChild(inp); wr.appendChild(hb);
+                    fo.appendChild(wr); svg.appendChild(fo);
+                } else {
+                    var lw = _x.measureText(edge.label).width + 14;
+                    var bg = document.createElementNS(svgNS, 'rect');
+                    bg.setAttribute('x', mx - lw / 2); bg.setAttribute('y', my - 10);
+                    bg.setAttribute('width', lw); bg.setAttribute('height', 20);
+                    bg.setAttribute('rx', '4'); bg.setAttribute('fill', colorBg);
+                    bg.setAttribute('stroke', colorBorder); bg.setAttribute('stroke-width', '0.5');
+                    svg.appendChild(bg);
+                    var lt = document.createElementNS(svgNS, 'text');
+                    lt.setAttribute('x', mx); lt.setAttribute('y', my);
+                    lt.setAttribute('text-anchor', 'middle'); lt.setAttribute('dominant-baseline', 'central');
+                    lt.setAttribute('font-size', '12'); lt.setAttribute('font-family', FONT_FAMILY);
+                    lt.setAttribute('fill', colorTextMuted); lt.textContent = edge.label;
+                    svg.appendChild(lt);
+                }
+            });
+
+            // Draw nodes on top
+            nodes.forEach(function(node) {
+                var nd = nm[node.id];
+                var g = document.createElementNS(svgNS, 'g');
+                g.setAttribute('class', 'cmap-node-group');
+                var rect = document.createElementNS(svgNS, 'rect');
+                rect.setAttribute('x', nd.x - nd.w / 2); rect.setAttribute('y', nd.y - nd.h / 2);
+                rect.setAttribute('width', nd.w); rect.setAttribute('height', nd.h);
+                rect.setAttribute('rx', '10');
+                rect.setAttribute('fill', colorSurface); rect.setAttribute('stroke', colorAccent);
+                rect.setAttribute('stroke-width', '1.5');
+                g.appendChild(rect);
+                var textEl = document.createElementNS(svgNS, 'text');
+                textEl.setAttribute('text-anchor', 'middle');
+                textEl.setAttribute('font-size', '14'); textEl.setAttribute('font-weight', '500');
+                textEl.setAttribute('font-family', FONT_FAMILY);
+                textEl.setAttribute('fill', colorText);
+                if (nd.lines.length === 1) {
+                    textEl.setAttribute('x', nd.x); textEl.setAttribute('y', nd.y);
+                    textEl.setAttribute('dominant-baseline', 'central');
+                    textEl.textContent = nd.label;
+                } else {
+                    var startY = nd.y - ((nd.lines.length - 1) * LINE_H) / 2;
+                    nd.lines.forEach(function(line, li) {
+                        var ts = document.createElementNS(svgNS, 'tspan');
+                        ts.setAttribute('x', nd.x);
+                        ts.setAttribute('y', startY + li * LINE_H);
+                        ts.setAttribute('dominant-baseline', 'central');
+                        ts.textContent = line;
+                        textEl.appendChild(ts);
+                    });
+                }
+                g.appendChild(textEl); svg.appendChild(g);
+            });
+            return;
         }
 
-        // ── Compute bounding box & set viewBox ──
-        var minX = Infinity, maxX = -Infinity, maxH = 0;
+        var _dg = new dagre.graphlib.Graph();
+        _dg.setGraph({ rankdir: 'TB', nodesep: 40, ranksep: 100, marginx: MARGIN, marginy: MARGIN, edgesep: 20 });
+        _dg.setDefaultEdgeLabel(function() { return {}; });
+
         nodes.forEach(function(n) {
             var nd = nm[n.id];
-            var left = nd.x - nd.w / 2, right = nd.x + nd.w / 2;
-            if (left < minX) minX = left;
-            if (right > maxX) maxX = right;
-            if (nd.h > maxH) maxH = nd.h;
+            _dg.setNode(n.id, { width: nd.w, height: nd.h });
         });
-        var viewW = maxX - minX + MARGIN * 2;
-        var viewH = maxLayer * LAYER_GAP + maxH + MARGIN * 2;
-        var oX = -minX + MARGIN, oY = MARGIN + maxH / 2;
-        nodes.forEach(function(n) { nm[n.id].x += oX; nm[n.id].y += oY; });
 
-        svg.setAttribute('viewBox', '0 0 ' + Math.ceil(viewW) + ' ' + Math.ceil(viewH));
-        svg.removeAttribute('height');
-        svg.style.maxHeight = Math.min(Math.ceil(viewH), 550) + 'px';
+        edges.forEach(function(edge, idx) {
+            var labelW, labelH;
+            if (blanks.indexOf(idx) !== -1) {
+                labelW = 140; labelH = 30;
+            } else {
+                labelW = _x.measureText(edge.label).width + 14;
+                labelH = 20;
+            }
+            _dg.setEdge(edge.source, edge.target, { width: labelW, height: labelH, labelpos: 'c' });
+        });
+
+        dagre.layout(_dg);
+
+        nodes.forEach(function(n) {
+            var pos = _dg.node(n.id);
+            nm[n.id].x = pos.x;
+            nm[n.id].y = pos.y;
+        });
+
+        var graphInfo = _dg.graph();
+        var viewW = Math.ceil(graphInfo.width) || 400;
+        var viewH = Math.ceil(graphInfo.height) || 300;
+        svg.setAttribute('viewBox', '0 0 ' + viewW + ' ' + viewH);
+        // Size SVG so text stays readable (min 1:1 scale)
+        var containerInner = container.clientWidth - 64;
+        var svgW = Math.max(viewW, containerInner);
+        svg.setAttribute('width', svgW);
+        svg.setAttribute('height', viewH * (svgW / viewW));
 
         // ── Defs: arrow marker + drop shadow ──
         var defs = document.createElementNS(svgNS, 'defs');
@@ -982,13 +1291,12 @@ window.__lxpToggleTheme = function() {
 
         var marker = document.createElementNS(svgNS, 'marker');
         marker.setAttribute('id', 'cmap-arr-' + cid);
-        marker.setAttribute('markerWidth', '8'); marker.setAttribute('markerHeight', '6');
-        marker.setAttribute('refX', '7'); marker.setAttribute('refY', '3');
+        marker.setAttribute('markerWidth', '10'); marker.setAttribute('markerHeight', '8');
+        marker.setAttribute('refX', '9'); marker.setAttribute('refY', '4');
         marker.setAttribute('orient', 'auto'); marker.setAttribute('markerUnits', 'userSpaceOnUse');
         var arrP = document.createElementNS(svgNS, 'path');
-        arrP.setAttribute('d', 'M0,0.5 L7,3 L0,5.5');
-        arrP.setAttribute('fill', 'none'); arrP.setAttribute('stroke', 'var(--accent)');
-        arrP.setAttribute('stroke-width', '1.2'); arrP.setAttribute('stroke-linejoin', 'round');
+        arrP.setAttribute('d', 'M0,0 L10,4 L0,8 Z');
+        arrP.setAttribute('fill', colorAccent);
         marker.appendChild(arrP); defs.appendChild(marker);
 
         var flt = document.createElementNS(svgNS, 'filter');
@@ -1001,60 +1309,65 @@ window.__lxpToggleTheme = function() {
         flt.appendChild(fds); defs.appendChild(flt);
         svg.appendChild(defs);
 
-        // ── Draw edges (cubic bezier curves) ──
+        // ── Draw edges using dagre's computed paths ──
         edges.forEach(function(edge, idx) {
-            var src = nm[edge.source], tgt = nm[edge.target];
-            if (!src || !tgt) return;
+            var edgeData = _dg.edge(edge.source, edge.target);
+            if (!edgeData) return;
+            var points = edgeData.points;
 
-            var sx = src.x, sy = src.y + src.h / 2;   // bottom center of source
-            var tx = tgt.x, ty = tgt.y - tgt.h / 2;   // top center of target
-            var d;
-            if (Math.abs(sy - ty) < 5) {
-                // Same layer: arc above
-                var arcY = Math.min(sy, ty) - 50;
-                d = 'M' + sx + ',' + sy + ' Q' + ((sx + tx) / 2) + ',' + arcY + ' ' + tx + ',' + ty;
-            } else {
-                // Normal: smooth cubic bezier flowing downward
-                var gap = ty - sy;
-                d = 'M' + sx + ',' + sy + ' C' + sx + ',' + (sy + gap * 0.4) +
-                    ' ' + tx + ',' + (ty - gap * 0.4) + ' ' + tx + ',' + ty;
+            // Build polyline through dagre's computed waypoints
+            var d = 'M' + points[0].x + ',' + points[0].y;
+            for (var pi = 1; pi < points.length; pi++) {
+                d += ' L' + points[pi].x + ',' + points[pi].y;
             }
 
             var path = document.createElementNS(svgNS, 'path');
             path.setAttribute('d', d);
             path.setAttribute('fill', 'none');
-            path.setAttribute('stroke', 'var(--border)');
+            path.setAttribute('stroke', colorBorder);
             path.setAttribute('stroke-width', '1.5');
             path.setAttribute('marker-end', 'url(#cmap-arr-' + cid + ')');
             svg.appendChild(path);
 
-            // Label at edge midpoint
-            var lx = (sx + tx) / 2, ly = (sy + ty) / 2;
+            // Label at dagre's computed position (accounts for label dimensions)
+            var lx = edgeData.x, ly = edgeData.y;
 
             if (blanks.indexOf(idx) !== -1) {
-                var foW = 140, foH = 30;
+                var foW = 170, foH = 30;
                 var fo = document.createElementNS(svgNS, 'foreignObject');
                 fo.setAttribute('x', lx - foW / 2); fo.setAttribute('y', ly - foH / 2);
                 fo.setAttribute('width', foW); fo.setAttribute('height', foH);
+                var wrapper = document.createElement('div');
+                wrapper.className = 'cmap-hint-wrapper';
                 var input = document.createElement('input');
                 input.type = 'text'; input.className = 'cmap-edge-input';
                 input.dataset.edgeIndex = idx; input.dataset.correctLabel = edge.label;
                 input.placeholder = '?';
-                fo.appendChild(input); svg.appendChild(fo);
+                var hintBtn = document.createElement('button');
+                hintBtn.className = 'hint-letter-btn';
+                hintBtn.textContent = '?';
+                hintBtn.title = 'Reveal a letter';
+                hintBtn.onclick = function() { revealNextLetters(input); };
+                wrapper.appendChild(input); wrapper.appendChild(hintBtn);
+                fo.appendChild(wrapper); svg.appendChild(fo);
             } else {
                 var labelW = _x.measureText(edge.label).width + 14;
                 var labelH = 20;
                 var bg = document.createElementNS(svgNS, 'rect');
                 bg.setAttribute('x', lx - labelW / 2); bg.setAttribute('y', ly - labelH / 2);
                 bg.setAttribute('width', labelW); bg.setAttribute('height', labelH);
-                bg.setAttribute('rx', '4'); bg.setAttribute('class', 'cmap-label-bg');
+                bg.setAttribute('rx', '4');
+                bg.setAttribute('fill', colorBg); bg.setAttribute('stroke', colorBorder);
+                bg.setAttribute('stroke-width', '0.5'); bg.setAttribute('opacity', '0.92');
                 svg.appendChild(bg);
 
                 var text = document.createElementNS(svgNS, 'text');
                 text.setAttribute('x', lx); text.setAttribute('y', ly);
-                text.setAttribute('class', 'cmap-edge-label');
                 text.setAttribute('text-anchor', 'middle');
                 text.setAttribute('dominant-baseline', 'central');
+                text.setAttribute('font-size', '12'); text.setAttribute('font-weight', '500');
+                text.setAttribute('font-family', FONT_FAMILY);
+                text.setAttribute('fill', colorTextMuted);
                 text.textContent = edge.label;
                 svg.appendChild(text);
             }
@@ -1069,13 +1382,17 @@ window.__lxpToggleTheme = function() {
             var rect = document.createElementNS(svgNS, 'rect');
             rect.setAttribute('x', nd.x - nd.w / 2); rect.setAttribute('y', nd.y - nd.h / 2);
             rect.setAttribute('width', nd.w); rect.setAttribute('height', nd.h);
-            rect.setAttribute('rx', '10'); rect.setAttribute('class', 'cmap-node');
+            rect.setAttribute('rx', '10');
+            rect.setAttribute('fill', colorSurface); rect.setAttribute('stroke', colorAccent);
+            rect.setAttribute('stroke-width', '1.5');
             rect.setAttribute('filter', 'url(#cmap-sh-' + cid + ')');
             g.appendChild(rect);
 
             var textEl = document.createElementNS(svgNS, 'text');
-            textEl.setAttribute('class', 'cmap-node-text');
             textEl.setAttribute('text-anchor', 'middle');
+            textEl.setAttribute('font-size', '14'); textEl.setAttribute('font-weight', '500');
+            textEl.setAttribute('font-family', FONT_FAMILY);
+            textEl.setAttribute('fill', colorText); textEl.setAttribute('pointer-events', 'none');
             if (nd.lines.length === 1) {
                 textEl.setAttribute('x', nd.x); textEl.setAttribute('y', nd.y);
                 textEl.setAttribute('dominant-baseline', 'central');
@@ -1100,6 +1417,9 @@ window.__lxpToggleTheme = function() {
         var container = document.getElementById('cmap-' + slideIndex);
         if (!container) return;
         var inputs = container.querySelectorAll('.cmap-edge-input');
+        var attempts = parseInt(container.dataset.cmapAttempts || '0') + 1;
+        container.dataset.cmapAttempts = attempts;
+
         var allCorrect = true;
         inputs.forEach(function(input) {
             var userAnswer = input.value.trim().toLowerCase();
@@ -1107,22 +1427,47 @@ window.__lxpToggleTheme = function() {
             if (userAnswer === correct) {
                 input.style.borderColor = 'var(--success)';
                 input.style.color = 'var(--success)';
+                input.classList.add('cmap-correct');
             } else {
                 input.style.borderColor = 'var(--error)';
                 input.style.color = 'var(--error)';
+                input.classList.remove('cmap-correct');
                 allCorrect = false;
             }
         });
+
         var btn = container.querySelector('.quiz-check-btn');
-        if (btn) {
-            btn.disabled = true;
-            btn.textContent = allCorrect ? 'All Correct!' : 'Try Again';
-            if (!allCorrect) {
-                setTimeout(function() { btn.disabled = false; btn.textContent = 'Check Answers'; }, 1500);
+        if (allCorrect || attempts >= 3) {
+            // Final state: reveal answers if wrong, disable
+            if (btn) {
+                btn.disabled = true;
+                btn.textContent = allCorrect ? 'All Correct!' : 'Showing answers';
             }
+            if (!allCorrect) {
+                inputs.forEach(function(input) {
+                    if (!input.classList.contains('cmap-correct')) {
+                        input.value = input.dataset.correctLabel;
+                        input.style.borderColor = 'var(--warning)';
+                        input.style.color = 'var(--warning)';
+                        input.classList.add('cmap-revealed');
+                    }
+                });
+            }
+            var slideIdx = parseInt(container.closest('.slide').dataset.index);
+            recordScore(slideIdx, allCorrect, attempts, 0, '');
+        } else if (attempts === 1) {
+            if (btn) btn.textContent = 'Try Again';
+        } else if (attempts === 2) {
+            // Second wrong attempt: auto-reveal word structure for unanswered blanks
+            inputs.forEach(function(input) {
+                if (!input.classList.contains('cmap-correct') && !input.dataset.hintLevel) {
+                    revealNextLetters(input);
+                }
+                input.style.borderColor = '';
+                input.style.color = '';
+            });
+            if (btn) btn.textContent = 'Last Try';
         }
-        var slideIdx = parseInt(container.closest('.slide').dataset.index);
-        recordScore(slideIdx, allCorrect, 1, 0, '');
     };
 
     // ── Matching interaction ──────────────────────────────────────────────
@@ -1169,9 +1514,12 @@ window.__lxpToggleTheme = function() {
                             }
                         } catch(e) {}
                     }
-                    var slideIdx = parseInt(container.closest('.slide').dataset.index);
-                    var wrongAttempts = parseInt(container.dataset.wrongAttempts || '0');
-                    recordScore(slideIdx, true, wrongAttempts + 1, 0, '');
+                    // Show confidence prompt before recording score
+                    var confidenceEl = container.querySelector('.matching-confidence');
+                    if (confidenceEl) {
+                        container.dataset.matchWrongAttempts = container.dataset.wrongAttempts || '0';
+                        confidenceEl.style.display = 'block';
+                    }
                 }
             } else {
                 container.dataset.wrongAttempts = (parseInt(container.dataset.wrongAttempts || '0') + 1).toString();
@@ -1193,6 +1541,314 @@ window.__lxpToggleTheme = function() {
             matchState.right = null;
         }
     };
+
+    // ── Matching confidence ─────────────────────────────────────────────
+    window.selectMatchConfidence = function(dot) {
+        var container = dot.closest('.confidence-dots');
+        container.querySelectorAll('.confidence-dot').forEach(function(d) {
+            d.classList.remove('selected');
+        });
+        dot.classList.add('selected');
+        var confirmBtn = dot.closest('.matching-confidence').querySelector('.confidence-confirm-btn');
+        confirmBtn.disabled = false;
+    };
+
+    window.confirmMatchConfidence = function(btn) {
+        var confidenceEl = btn.closest('.matching-confidence');
+        var container = confidenceEl.closest('.matching-container');
+        var selectedDot = confidenceEl.querySelector('.confidence-dot.selected');
+        var confidence = selectedDot ? parseInt(selectedDot.dataset.value) : 0;
+        confidenceEl.style.display = 'none';
+
+        var slideIdx = parseInt(container.closest('.slide').dataset.index);
+        var wrongAttempts = parseInt(container.dataset.matchWrongAttempts || '0');
+        var bloomBadge = container.closest('.slide').querySelector('.bloom-badge');
+        var bloom = bloomBadge ? bloomBadge.textContent.trim() : '';
+        recordScore(slideIdx, true, wrongAttempts + 1, confidence, bloom);
+    };
+
+    // ── Ordering interaction ─────────────────────────────────────────────
+    window.moveOrderingItem = function(btn, direction) {
+        var item = btn.closest('.ordering-item');
+        var list = item.closest('.ordering-list');
+        var items = Array.from(list.children);
+        var idx = items.indexOf(item);
+        var newIdx = idx + direction;
+        if (newIdx < 0 || newIdx >= items.length) return;
+        if (direction === -1) {
+            list.insertBefore(item, items[newIdx]);
+        } else {
+            list.insertBefore(item, items[newIdx].nextSibling);
+        }
+    };
+
+    window.checkOrdering = function(btn) {
+        var container = btn.closest('.ordering-container');
+        var correctOrder = JSON.parse(container.dataset.correctOrder);
+        var items = container.querySelectorAll('.ordering-item');
+        var attempts = parseInt(container.dataset.attempts || '0') + 1;
+        container.dataset.attempts = attempts;
+
+        var allCorrect = true;
+        items.forEach(function(item, i) {
+            if (correctOrder[i] === i) {
+                item.classList.add('ordering-correct');
+                item.classList.remove('ordering-wrong');
+            } else {
+                item.classList.remove('ordering-correct');
+                item.classList.add('ordering-wrong');
+                allCorrect = false;
+            }
+        });
+
+        if (allCorrect || attempts >= 3) {
+            btn.disabled = true;
+            btn.textContent = allCorrect ? 'Correct Order!' : 'Showing correct order';
+            if (!allCorrect) {
+                // Rearrange to correct order
+                var list = container.querySelector('.ordering-list');
+                var itemArr = Array.from(items);
+                var sorted = correctOrder.map(function(correctPos, i) {
+                    return { pos: correctPos, el: itemArr[i] };
+                });
+                // Build pairs: correctOrder[i] = the correct position for the item currently at slot i
+                // We need to sort items so that item at slot j ends up at correctOrder[j]
+                var slots = new Array(itemArr.length);
+                itemArr.forEach(function(el, i) { slots[correctOrder[i]] = el; });
+                slots.forEach(function(el) {
+                    el.classList.remove('ordering-wrong');
+                    el.classList.add('ordering-revealed');
+                    list.appendChild(el);
+                });
+            }
+            var explEl = container.querySelector('.ordering-explanation');
+            if (explEl) explEl.style.display = 'block';
+            container.querySelectorAll('.ordering-arrow-btn').forEach(function(b) { b.disabled = true; });
+            var slideIdx = parseInt(container.closest('.slide').dataset.index);
+            recordScore(slideIdx, allCorrect, attempts, 0, '');
+        } else if (attempts === 1) {
+            var hintEl = container.querySelector('.ordering-hint');
+            if (hintEl) { hintEl.style.display = 'block'; renderMath(hintEl); }
+            btn.textContent = 'Try Again';
+        } else if (attempts === 2) {
+            // Highlight items in correct position
+            items.forEach(function(item, i) {
+                if (correctOrder[i] === i) {
+                    item.classList.add('ordering-locked');
+                }
+            });
+            btn.textContent = 'Last Try';
+        }
+    };
+
+    // ── Categorization interaction ───────────────────────────────────────
+    (function() {
+        document.querySelectorAll('.categorization-container').forEach(function(container) {
+            var items = JSON.parse(container.dataset.items);
+            var pool = container.querySelector('.categorization-pool');
+            items.forEach(function(item, i) {
+                var el = document.createElement('div');
+                el.className = 'categorization-item';
+                el.innerHTML = item.text;
+                el.dataset.itemIdx = i;
+                el.dataset.correctCat = item.correct_cat;
+                el.onclick = function() {
+                    if (el.classList.contains('cat-placed')) return;
+                    el.classList.toggle('cat-selected');
+                };
+                pool.appendChild(el);
+            });
+
+            container.querySelectorAll('.categorization-bucket').forEach(function(bucket) {
+                bucket.onclick = function(e) {
+                    if (e.target.closest('.categorization-item')) return;
+                    var selected = pool.querySelector('.categorization-item.cat-selected');
+                    if (!selected) return;
+                    selected.classList.remove('cat-selected');
+                    selected.classList.add('cat-placed');
+                    bucket.querySelector('.categorization-bucket-items').appendChild(selected);
+                };
+            });
+        });
+    })();
+
+    window.checkCategorization = function(btn) {
+        var container = btn.closest('.categorization-container');
+        var attempts = parseInt(container.dataset.attempts || '0') + 1;
+        container.dataset.attempts = attempts;
+
+        var buckets = container.querySelectorAll('.categorization-bucket');
+        var allCorrect = true;
+        var totalItems = 0;
+        var correctCount = 0;
+        buckets.forEach(function(bucket) {
+            var catIdx = parseInt(bucket.dataset.catIdx);
+            bucket.querySelectorAll('.categorization-item').forEach(function(item) {
+                totalItems++;
+                if (parseInt(item.dataset.correctCat) === catIdx) {
+                    item.classList.add('cat-correct');
+                    item.classList.remove('cat-wrong');
+                    correctCount++;
+                } else {
+                    item.classList.add('cat-wrong');
+                    item.classList.remove('cat-correct');
+                    allCorrect = false;
+                }
+            });
+        });
+
+        // Also check if any items remain in the pool
+        var poolItems = container.querySelectorAll('.categorization-pool .categorization-item');
+        if (poolItems.length > 0) allCorrect = false;
+
+        if (allCorrect || attempts >= 3) {
+            btn.disabled = true;
+            btn.textContent = allCorrect ? 'All Correct!' : 'Showing answers';
+            if (!allCorrect) {
+                // Move wrong items to correct buckets
+                container.querySelectorAll('.categorization-item.cat-wrong').forEach(function(item) {
+                    var correctCat = parseInt(item.dataset.correctCat);
+                    var correctBucket = container.querySelector('.categorization-bucket[data-cat-idx="' + correctCat + '"]');
+                    item.classList.remove('cat-wrong');
+                    item.classList.add('cat-revealed');
+                    correctBucket.querySelector('.categorization-bucket-items').appendChild(item);
+                });
+                poolItems.forEach(function(item) {
+                    var correctCat = parseInt(item.dataset.correctCat);
+                    var correctBucket = container.querySelector('.categorization-bucket[data-cat-idx="' + correctCat + '"]');
+                    item.classList.add('cat-revealed');
+                    correctBucket.querySelector('.categorization-bucket-items').appendChild(item);
+                });
+            }
+            var explEl = container.querySelector('.categorization-explanation');
+            if (explEl) explEl.style.display = 'block';
+            var slideIdx = parseInt(container.closest('.slide').dataset.index);
+            recordScore(slideIdx, allCorrect, attempts, 0, '');
+        } else if (attempts === 1) {
+            var hintEl = container.querySelector('.categorization-hint');
+            if (hintEl) { hintEl.style.display = 'block'; renderMath(hintEl); }
+            btn.textContent = 'Try Again';
+        } else if (attempts === 2) {
+            btn.textContent = 'Last Try';
+        }
+    };
+
+    // ── Error detection interaction ──────────────────────────────────────
+    window.revealError = function(btn) {
+        var item = btn.closest('.error-item');
+        btn.style.display = 'none';
+        item.querySelector('.error-feedback').style.display = 'block';
+        item.querySelector('.error-statement').classList.add('error-shown');
+
+        // Check if all items revealed
+        var container = btn.closest('.error-detection-container');
+        var allRevealed = true;
+        container.querySelectorAll('.error-item').forEach(function(ei) {
+            if (ei.querySelector('.error-feedback').style.display === 'none') allRevealed = false;
+        });
+        if (allRevealed) {
+            var slideIdx = parseInt(container.closest('.slide').dataset.index);
+            recordScore(slideIdx, true, 1, 0, '');
+        }
+    };
+
+    // ── Analogy interaction ──────────────────────────────────────────────
+    (function() {
+        document.querySelectorAll('.analogy-container').forEach(function(container) {
+            var items = JSON.parse(container.dataset.items);
+            var itemsDiv = container.querySelector('.analogy-items');
+            items.forEach(function(item, idx) {
+                var qDiv = document.createElement('div');
+                qDiv.className = 'analogy-question';
+                qDiv.dataset.correct = item.correct_index;
+                qDiv.dataset.attempts = '0';
+
+                var stemEl = document.createElement('div');
+                stemEl.className = 'analogy-stem';
+                stemEl.innerHTML = item.stem;
+                qDiv.appendChild(stemEl);
+
+                var optList = document.createElement('ul');
+                optList.className = 'analogy-options';
+                item.options.forEach(function(opt, oi) {
+                    var li = document.createElement('li');
+                    li.className = 'analogy-option';
+                    li.dataset.optionIndex = oi;
+                    li.innerHTML = opt;
+                    li.onclick = function() {
+                        if (qDiv.classList.contains('analogy-answered')) return;
+                        optList.querySelectorAll('.analogy-option').forEach(function(o) {
+                            o.classList.remove('analogy-selected');
+                        });
+                        li.classList.add('analogy-selected');
+                        qDiv.querySelector('.analogy-check-btn').disabled = false;
+                    };
+                    optList.appendChild(li);
+                });
+                qDiv.appendChild(optList);
+
+                var checkBtn = document.createElement('button');
+                checkBtn.className = 'quiz-check-btn analogy-check-btn';
+                checkBtn.textContent = 'Check';
+                checkBtn.disabled = true;
+                checkBtn.onclick = function() {
+                    var selected = qDiv.querySelector('.analogy-option.analogy-selected');
+                    if (!selected) return;
+                    var selIdx = parseInt(selected.dataset.optionIndex);
+                    var correctIdx = parseInt(qDiv.dataset.correct);
+                    var attempts = parseInt(qDiv.dataset.attempts) + 1;
+                    qDiv.dataset.attempts = attempts;
+
+                    if (selIdx === correctIdx || attempts >= 3) {
+                        qDiv.classList.add('analogy-answered');
+                        var opts = qDiv.querySelectorAll('.analogy-option');
+                        opts[correctIdx].classList.add('analogy-correct');
+                        if (selIdx !== correctIdx) {
+                            selected.classList.add('analogy-wrong');
+                        }
+                        checkBtn.disabled = true;
+                        checkBtn.textContent = selIdx === correctIdx ? 'Correct!' : 'Showing answer';
+                        explEl.style.display = 'block';
+                    } else {
+                        selected.classList.add('analogy-wrong');
+                        selected.classList.remove('analogy-selected');
+                        checkBtn.disabled = true;
+                        checkBtn.textContent = attempts === 2 ? 'Last Try' : 'Try Again';
+                    }
+                };
+                qDiv.appendChild(checkBtn);
+
+                var explEl = document.createElement('div');
+                explEl.className = 'analogy-explanation';
+                explEl.style.display = 'none';
+                explEl.innerHTML = item.explanation;
+                qDiv.appendChild(explEl);
+
+                itemsDiv.appendChild(qDiv);
+            });
+
+            // Record score when all analogy questions answered
+            var observer = new MutationObserver(function() {
+                var questions = container.querySelectorAll('.analogy-question');
+                var allDone = true;
+                var totalAttempts = 0;
+                var allCorrect = true;
+                questions.forEach(function(q) {
+                    if (!q.classList.contains('analogy-answered')) { allDone = false; return; }
+                    totalAttempts += parseInt(q.dataset.attempts);
+                    var sel = q.querySelector('.analogy-option.analogy-selected, .analogy-option.analogy-wrong');
+                    var correct = q.querySelector('.analogy-option.analogy-correct');
+                    if (sel && !sel.classList.contains('analogy-correct')) allCorrect = false;
+                });
+                if (allDone) {
+                    observer.disconnect();
+                    var slideIdx = parseInt(container.closest('.slide').dataset.index);
+                    recordScore(slideIdx, allCorrect, Math.ceil(totalAttempts / questions.length), 0, '');
+                }
+            });
+            observer.observe(itemsDiv, { attributes: true, subtree: true, attributeFilter: ['class'] });
+        });
+    })();
 
     // ── Nav bar badges ──────────────────────────────────────────────────
     function updateReviewNavBadge() {
@@ -1317,8 +1973,8 @@ window.__lxpToggleTheme = function() {
                         flashcards[key] = {
                             difficulty: 0, stability: 0, lastReview: null, nextReview: null,
                             reps: 0, lapses: 0,
-                            front: front.childNodes[0] ? front.childNodes[0].textContent.trim() : '',
-                            back: back.textContent.trim(),
+                            front: front.childNodes[0] ? front.childNodes[0].innerHTML || front.childNodes[0].textContent.trim() : '',
+                            back: back.innerHTML,
                             chapterNum: parseInt(CHAPTER_NUM), sectionTitle: sectionTitle,
                             concepts: concepts
                         };
@@ -1332,14 +1988,18 @@ window.__lxpToggleTheme = function() {
                     var opts = [];
                     q.querySelectorAll('.quiz-option').forEach(function(o) {
                         var spans = o.querySelectorAll('span');
-                        opts.push(spans.length > 1 ? spans[1].textContent : o.textContent);
+                        opts.push(spans.length > 1 ? spans[1].innerHTML : o.innerHTML);
                     });
                     exercises.push({
                         type: 'quiz', chapter: parseInt(CHAPTER_NUM),
                         section: sectionTitle, bloom: bloom, concepts: concepts,
-                        data: { question: q.querySelector('.quiz-question-text').textContent,
+                        reps: 0, difficulty: 0, stability: 0, lastReview: null, nextReview: null, lapses: 0,
+                        data: { question: q.querySelector('.quiz-question-text').innerHTML,
                             options: opts, correct: parseInt(q.dataset.correct),
-                            explanation: q.querySelector('.quiz-explanation').textContent }
+                            explanation: q.querySelector('.quiz-explanation').innerHTML,
+                            hint_metacognitive: q.dataset.hintMeta || '',
+                            hint_strategic: q.dataset.hintStrategic || '',
+                            hint_eliminate_index: parseInt(q.dataset.hintEliminate) }
                     });
                 });
             }
@@ -1349,23 +2009,26 @@ window.__lxpToggleTheme = function() {
                 exercises.push({
                     type: 'fitb', chapter: parseInt(CHAPTER_NUM),
                     section: sectionTitle, bloom: bloom, concepts: concepts,
+                    reps: 0, difficulty: 0, stability: 0, lastReview: null, nextReview: null, lapses: 0,
                     data: { answers: JSON.parse(fitbEl.dataset.answers || '[]'),
-                        hint: fitbEl.querySelector('.fitb-hint') ? fitbEl.querySelector('.fitb-hint').textContent : '' }
+                        hint: fitbEl.querySelector('.fitb-hint') ? fitbEl.querySelector('.fitb-hint').innerHTML : '',
+                        statement_html: fitbEl.querySelector('.fitb-statement') ? fitbEl.querySelector('.fitb-statement').innerHTML : '' }
                 });
             }
 
-            // Gap 3: Cache matching exercises for mixed review
+            // Cache matching exercises for mixed review
             var matchEl = slideEl.querySelector('.matching-container');
             if (matchEl) {
-                var elementId = slideEl.getAttribute('data-element-id');
                 exercises.push({
                     type: 'matching', chapter: parseInt(CHAPTER_NUM),
                     section: sectionTitle, bloom: bloom, concepts: concepts,
+                    reps: 0, difficulty: 0, stability: 0, lastReview: null, nextReview: null, lapses: 0,
                     data: {
                         pairs: JSON.parse(matchEl.dataset.correct || '{}'),
-                        title: matchEl.querySelector('.matching-title') ? matchEl.querySelector('.matching-title').textContent.trim() : '',
-                        leftItems: Array.prototype.map.call(matchEl.querySelectorAll('.matching-left-item'), function(el) { return el.textContent.trim(); }),
-                        rightItems: Array.prototype.map.call(matchEl.querySelectorAll('.matching-right-item'), function(el) { return el.textContent.trim(); })
+                        title: matchEl.querySelector('.matching-title') ? matchEl.querySelector('.matching-title').innerHTML : '',
+                        leftItems: Array.prototype.map.call(matchEl.querySelectorAll('.matching-left-item'), function(el) { return el.innerHTML; }),
+                        rightItems: Array.prototype.map.call(matchEl.querySelectorAll('.matching-right-item'), function(el) { return el.innerHTML; }),
+                        pairExplanations: matchEl.dataset.pairExplanations || '[]'
                     }
                 });
             }
@@ -1377,9 +2040,91 @@ window.__lxpToggleTheme = function() {
                 exercises.push({
                     type: 'self_explain', chapter: parseInt(CHAPTER_NUM),
                     section: sectionTitle, bloom: bloom, concepts: concepts,
+                    reps: 0, difficulty: 0, stability: 0, lastReview: null, nextReview: null, lapses: 0,
                     data: {
-                        prompt: sePrompt ? sePrompt.textContent.trim() : '',
-                        rubric: JSON.parse(seEl.getAttribute('data-key-points') || '[]')
+                        prompt: sePrompt ? sePrompt.innerHTML : '',
+                        rubric: JSON.parse(seEl.getAttribute('data-key-points') || '[]'),
+                        example_response: seEl.querySelector('.model-response') ? seEl.querySelector('.model-response').innerHTML : ''
+                    }
+                });
+            }
+
+            // Cache ordering exercises
+            var orderEl = slideEl.querySelector('.ordering-container');
+            if (orderEl) {
+                var orderItems = Array.prototype.map.call(
+                    orderEl.querySelectorAll('.ordering-item .ordering-text'),
+                    function(el) { return el.innerHTML; }
+                );
+                exercises.push({
+                    type: 'ordering', chapter: parseInt(CHAPTER_NUM),
+                    section: sectionTitle, bloom: bloom, concepts: concepts,
+                    reps: 0, difficulty: 0, stability: 0, lastReview: null, nextReview: null, lapses: 0,
+                    data: {
+                        title: orderEl.querySelector('.ordering-title') ? orderEl.querySelector('.ordering-title').innerHTML : '',
+                        instruction: orderEl.querySelector('.ordering-instruction') ? orderEl.querySelector('.ordering-instruction').innerHTML : '',
+                        correctOrder: JSON.parse(orderEl.dataset.correctOrder || '[]'),
+                        items: orderItems,
+                        explanation: orderEl.querySelector('.ordering-explanation') ? orderEl.querySelector('.ordering-explanation').innerHTML : '',
+                        hint: orderEl.querySelector('.ordering-hint') ? orderEl.querySelector('.ordering-hint').innerHTML : ''
+                    }
+                });
+            }
+
+            // Cache categorization exercises
+            var catEl = slideEl.querySelector('.categorization-container');
+            if (catEl) {
+                exercises.push({
+                    type: 'categorization', chapter: parseInt(CHAPTER_NUM),
+                    section: sectionTitle, bloom: bloom, concepts: concepts,
+                    reps: 0, difficulty: 0, stability: 0, lastReview: null, nextReview: null, lapses: 0,
+                    data: {
+                        title: catEl.querySelector('.categorization-title') ? catEl.querySelector('.categorization-title').innerHTML : '',
+                        instruction: catEl.querySelector('.categorization-instruction') ? catEl.querySelector('.categorization-instruction').innerHTML : '',
+                        items: JSON.parse(catEl.dataset.items || '[]'),
+                        categoryNames: Array.prototype.map.call(catEl.querySelectorAll('.categorization-bucket-title'), function(el) { return el.innerHTML; }),
+                        explanation: catEl.querySelector('.categorization-explanation') ? catEl.querySelector('.categorization-explanation').innerHTML : '',
+                        hint: catEl.querySelector('.categorization-hint') ? catEl.querySelector('.categorization-hint').innerHTML : ''
+                    }
+                });
+            }
+
+            // Cache error detection exercises
+            var errEl = slideEl.querySelector('.error-detection-container');
+            if (errEl) {
+                var errItems = Array.prototype.map.call(
+                    errEl.querySelectorAll('.error-item'),
+                    function(item) {
+                        return {
+                            statement: item.querySelector('.error-statement') ? item.querySelector('.error-statement').innerHTML : '',
+                            explanation: item.querySelector('.error-explanation') ? item.querySelector('.error-explanation').innerHTML : '',
+                            corrected: item.querySelector('.error-corrected') ? item.querySelector('.error-corrected').innerHTML : ''
+                        };
+                    }
+                );
+                exercises.push({
+                    type: 'error_detection', chapter: parseInt(CHAPTER_NUM),
+                    section: sectionTitle, bloom: bloom, concepts: concepts,
+                    reps: 0, difficulty: 0, stability: 0, lastReview: null, nextReview: null, lapses: 0,
+                    data: {
+                        title: errEl.querySelector('.error-detection-title') ? errEl.querySelector('.error-detection-title').innerHTML : '',
+                        instruction: errEl.querySelector('.error-detection-instruction') ? errEl.querySelector('.error-detection-instruction').innerHTML : '',
+                        context: errEl.querySelector('.error-detection-context') ? errEl.querySelector('.error-detection-context').innerHTML : '',
+                        items: errItems
+                    }
+                });
+            }
+
+            // Cache analogy exercises
+            var analogyEl = slideEl.querySelector('.analogy-container');
+            if (analogyEl) {
+                exercises.push({
+                    type: 'analogy', chapter: parseInt(CHAPTER_NUM),
+                    section: sectionTitle, bloom: bloom, concepts: concepts,
+                    reps: 0, difficulty: 0, stability: 0, lastReview: null, nextReview: null, lapses: 0,
+                    data: {
+                        title: analogyEl.querySelector('.analogy-title') ? analogyEl.querySelector('.analogy-title').textContent.trim() : '',
+                        items: JSON.parse(analogyEl.dataset.items || '[]')
                     }
                 });
             }
@@ -1443,11 +2188,14 @@ window.__lxpToggleTheme = function() {
             cb.setAttribute('data-index', i);
             cb.onchange = function() { updateRubricScore(container); };
             label.appendChild(cb);
-            label.appendChild(document.createTextNode(' ' + point));
+            var pointSpan = document.createElement('span');
+            pointSpan.innerHTML = ' ' + point;
+            label.appendChild(pointSpan);
             li.appendChild(label);
             list.appendChild(li);
         });
         rubricDiv.appendChild(list);
+        renderMath(list);
 
         var scoreDiv = document.createElement('div');
         scoreDiv.className = 'rubric-score';
@@ -1534,19 +2282,24 @@ window.__lxpToggleTheme = function() {
                 cb.setAttribute('data-index', i);
                 cb.onchange = function() { updateEssayScore(essayEl); };
                 label.appendChild(cb);
-                label.appendChild(document.createTextNode(' ' + point));
+                var pointSpan = document.createElement('span');
+                pointSpan.innerHTML = ' ' + point;
+                label.appendChild(pointSpan);
                 li.appendChild(label);
                 list.appendChild(li);
             });
             section.appendChild(list);
+            renderMath(list);
 
             var exampleBtn = document.createElement('button');
             exampleBtn.className = 'show-model-btn';
             exampleBtn.textContent = 'Show Example Response';
             exampleBtn.onclick = function() {
                 var ex = p.querySelector('.model-response');
-                if (!ex) {
-                    // Model responses are rendered in the essay-results for each prompt
+                if (ex) {
+                    ex.style.display = 'block';
+                    renderMath(ex);
+                } else {
                     var exDiv = section.querySelector('.prompt-model-response');
                     if (exDiv) exDiv.style.display = 'block';
                 }
@@ -1837,6 +2590,8 @@ window.__lxpToggleTheme = function() {
         </div>
     </div>
 </div>
+
+{% include '_help_modal.html' %}
 
 </body>
 </html>

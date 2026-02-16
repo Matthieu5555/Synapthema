@@ -6,13 +6,13 @@ stage: the LLM acts as a pedagogical analyst, not a content creator.
 
 Public entry points:
 - analyze_chapter(): Single chapter analysis.
-- analyze_book(): Sequential analysis of all chapters in a book.
+- analyze_book(): Parallel analysis of all chapters in a book.
 """
 
 from __future__ import annotations
 
 import logging
-from itertools import accumulate
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import TYPE_CHECKING
 
 from src.extraction.types import Book, Chapter
@@ -130,38 +130,46 @@ def analyze_chapter(
 def analyze_book(
     book: Book,
     client: LLMClient,
+    max_workers: int = 4,
 ) -> list[ChapterAnalysis]:
-    """Analyze all chapters of a book sequentially.
+    """Analyze all chapters of a book in parallel.
 
-    Each chapter receives the concept names from prior chapters so the
-    LLM can detect cross-chapter prerequisites. Uses accumulate to
-    thread cumulative concept state through the fold.
+    Chapters are analyzed concurrently using a thread pool. Cross-chapter
+    prerequisite detection is handled downstream by the concept consolidator
+    (Stage 1.3) rather than by threading prior concepts through sequential
+    analysis — this trades a minor reduction in within-analysis prerequisite
+    annotations for a significant speedup (N sequential calls → N/max_workers
+    batches).
 
     Args:
         book: A Book from Stage 1 extraction.
         client: LLM client with complete_structured().
+        max_workers: Maximum parallel LLM calls. Set to 1 for sequential.
 
     Returns:
         List of ChapterAnalysis, one per chapter, in order.
     """
     total = len(book.chapters)
 
-    def fold(
-        state: tuple[list[str], ChapterAnalysis | None],
-        chapter: Chapter,
-    ) -> tuple[list[str], ChapterAnalysis | None]:
-        cumulative_concepts, _ = state
+    def _analyze_one(chapter: Chapter) -> ChapterAnalysis:
         logger.info(
             "Deep reading chapter %d/%d: '%s'",
             chapter.chapter_number, total, chapter.title,
         )
         signals = _compute_signals(chapter)
-        analysis = analyze_chapter(chapter, client, signals, cumulative_concepts)
-        new_concepts = cumulative_concepts + [c.name for c in analysis.concepts]
-        return (new_concepts, analysis)
+        return analyze_chapter(chapter, client, signals, prior_chapter_concepts=None)
 
-    states = accumulate(book.chapters, fold, initial=([], None))
-    analyses = [analysis for _, analysis in states if analysis is not None]
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        future_to_idx = {
+            pool.submit(_analyze_one, ch): i
+            for i, ch in enumerate(book.chapters)
+        }
+        results: list[ChapterAnalysis | None] = [None] * total
+        for future in as_completed(future_to_idx):
+            idx = future_to_idx[future]
+            results[idx] = future.result()
+
+    analyses = [a for a in results if a is not None]
 
     logger.info(
         "Deep reading complete: %d chapters, %d total concepts",

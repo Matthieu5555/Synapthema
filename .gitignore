@@ -19,6 +19,10 @@ input/
 *.pdf
 *.PDF
 
+# Node.js (mermaid validator)
+node_modules/
+package-lock.json
+
 # IDE / tooling
 .mypy_cache/
 .ruff_cache/
@@ -27,3 +31,10 @@ input/
 
 # Claude Code
 .claude/
+
+# Personal notes / roadmap (not for firm delivery)
+PERSONAL*
+
+# Development artifacts (agent handoff docs, task tracking)
+CHANGES_AND_ISSUES.md
+tasks/

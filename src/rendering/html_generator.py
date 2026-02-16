@@ -4,9 +4,10 @@ Single public entry point: render_course(). Takes a sequence of TrainingModules
 from Stage 2 and produces self-contained HTML files — one per chapter plus
 an index page. All CSS and JS are inlined for zero-dependency output.
 
-Supports all 5 element types: slides, quizzes, flashcards, fill-in-the-blank,
-and matching exercises. Includes KaTeX for math rendering and Bloom's Taxonomy
-badges.
+Supports all 13 element types: section intros, slides, mermaid diagrams, quizzes,
+flashcards, fill-in-the-blank, matching, ordering, categorization, error detection,
+analogy, concept maps, and interactive essays. Includes KaTeX for math rendering,
+Bloom's Taxonomy badges, markdown rendering, and currency/LaTeX-aware fill-in-the-blank.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ import json
 import logging
 import random
 import re
+from collections import defaultdict
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -26,16 +28,19 @@ from functools import reduce
 
 from src.transformation.analysis_types import ChapterAnalysis, ConceptGraph
 from src.transformation.types import (
+    AnalogyElement,
+    CategorizationElement,
     ConceptMapElement,
+    ErrorDetectionElement,
     FillInBlankElement,
     FlashcardElement,
     InteractiveEssayElement,
     MatchingElement,
     MermaidElement,
+    OrderingElement,
     QuizElement,
-    SelfExplainElement,
+    SectionIntroElement,
     SlideElement,
-    TrainingElement,
     TrainingModule,
     TrainingSection,
 )
@@ -44,13 +49,6 @@ logger = logging.getLogger(__name__)
 
 # Directory containing the Jinja2 HTML/CSS templates.
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
-
-# Bloom's Taxonomy sort order for difficulty progression within sections.
-_BLOOM_SORT_ORDER: dict[str, int] = {
-    "remember": 1, "understand": 2, "apply": 3,
-    "analyze": 4, "evaluate": 5, "create": 6,
-}
-
 
 def render_course(
     modules: Sequence[TrainingModule],
@@ -62,7 +60,8 @@ def render_course(
     course_title: str | None = None,
     course_summary: str | None = None,
     learner_journey: str | None = None,
-    source_book_titles: dict[int, str] | None = None,
+    source_book_titles: Sequence[str] | None = None,
+    chapter_to_module: dict[int, int] | None = None,
 ) -> Path:
     """Render training modules as a self-contained interactive HTML course.
 
@@ -98,9 +97,13 @@ def render_course(
     )
 
     css = (_TEMPLATES_DIR / "styles.css").read_text(encoding="utf-8")
+    graphlib_js = (_TEMPLATES_DIR / "graphlib.min.js").read_text(encoding="utf-8")
+    dagre_js = (_TEMPLATES_DIR / "dagre.min.js").read_text(encoding="utf-8")
 
     course_title = course_title or _derive_course_title(modules)
-    course_slug = output_dir.name  # Already a slug from config.py
+    # Derive slug from dir name. If output_dir is "html" (nested under the
+    # course root), use the parent directory name instead.
+    course_slug = output_dir.parent.name if output_dir.name == "html" else output_dir.name
 
     # Load course_meta.json override (takes priority over blueprint values)
     meta_override = _load_course_meta(output_dir)
@@ -117,19 +120,22 @@ def render_course(
             analyses_by_chapter[analysis.chapter_number] = analysis
 
     # Determine multi-doc status for source book attribution
-    is_multi_doc = bool(source_book_titles and len(set(source_book_titles.values())) > 1)
+    is_multi_doc = bool(source_book_titles and len(set(source_book_titles)) > 1)
 
-    # First pass: build chapter metadata for cross-navigation
+    # First pass: build chapter metadata for cross-navigation.
+    # Use sequential 1-based module index for file naming and identity —
+    # source chapter_number is metadata, not identity (multiple modules
+    # can share the same source chapter number in multi-book courses).
     chapter_info: list[dict] = [
         {
-            "number": m.chapter_number,
+            "number": i + 1,
             "title": m.title,
-            "filename": f"chapter_{m.chapter_number:02d}.html",
+            "filename": f"chapter_{i + 1:02d}.html",
             "element_count": len(m.all_elements),
             "section_count": len(m.sections),
-            "source_book_title": source_book_titles.get(m.chapter_number, "") if source_book_titles else "",
+            "source_book_title": source_book_titles[i] if source_book_titles and i < len(source_book_titles) else "",
         }
-        for m in modules
+        for i, m in enumerate(modules)
     ]
 
     # Second pass: render chapters with full navigation context
@@ -142,6 +148,8 @@ def render_course(
             module=module,
             env=env,
             css=css,
+            graphlib_js=graphlib_js,
+            dagre_js=dagre_js,
             output_path=html_path,
             extracted_dir=extracted_dir,
             embed_images=embed_images,
@@ -153,11 +161,12 @@ def render_course(
             chapter_analysis=analyses_by_chapter.get(module.chapter_number),
             concept_graph=concept_graph,
             source_book_title=chapter_info[i]["source_book_title"] if is_multi_doc else "",
+            module_number=i + 1,
         )
 
         logger.info(
             "Rendered chapter %d: %s (%d elements, %d sections)",
-            module.chapter_number,
+            i + 1,
             chapter_info[i]["filename"],
             len(module.all_elements),
             len(module.sections),
@@ -167,8 +176,8 @@ def render_course(
     graph_data = None
     mindmap_data = None
     if concept_graph and concept_graph.concepts:
-        graph_data = _prepare_graph_data(concept_graph, modules)
-        mindmap_data = _prepare_mindmap_data(concept_graph, modules)
+        graph_data = _prepare_graph_data(concept_graph, modules, chapter_to_module)
+        mindmap_data = _prepare_mindmap_data(concept_graph, modules, chapter_to_module)
 
     subtitle = f"Interactive Training Course \u2014 {len(modules)} Chapters"
     if meta_override and "subtitle" in meta_override:
@@ -212,6 +221,8 @@ def _render_chapter(
     module: TrainingModule,
     env: Environment,
     css: str,
+    graphlib_js: str,
+    dagre_js: str,
     output_path: Path,
     extracted_dir: Path | None,
     embed_images: bool,
@@ -223,25 +234,33 @@ def _render_chapter(
     chapter_analysis: ChapterAnalysis | None = None,
     concept_graph: ConceptGraph | None = None,
     source_book_title: str = "",
+    module_number: int | None = None,
 ) -> None:
     """Render a single chapter's training module to an HTML file."""
     template = env.get_template("base.html")
+
+    # Use sequential module number for identity; fall back to source
+    # chapter_number for backwards compatibility with direct callers.
+    effective_number = module_number if module_number is not None else module.chapter_number
 
     # Build section-grouped data for the sidebar and content via fold
     sections_data, flat_elements = _build_sections_data(
         module, extracted_dir, embed_images,
         chapter_analysis=chapter_analysis,
         concept_graph=concept_graph,
+        module_number=effective_number,
     )
 
     html = template.render(
         module_title=module.title,
         css=css,
+        graphlib_js=graphlib_js,
+        dagre_js=dagre_js,
         elements=flat_elements,
         sections=sections_data,
         course_title=course_title,
         course_slug=course_slug,
-        chapter_number=module.chapter_number,
+        chapter_number=effective_number,
         chapter_count=chapter_count,
         prev_chapter=prev_chapter,
         next_chapter=next_chapter,
@@ -257,6 +276,7 @@ def _build_sections_data(
     embed_images: bool,
     chapter_analysis: ChapterAnalysis | None = None,
     concept_graph: ConceptGraph | None = None,
+    module_number: int | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """Build section metadata and flat element list via fold.
 
@@ -265,6 +285,10 @@ def _build_sections_data(
     deterministic element_id (for FSRS tracking) and concepts_tested
     (for the learner model).
     """
+    # Use sequential module number for element IDs; fall back to source
+    # chapter_number for backwards compatibility.
+    effective_number = module_number if module_number is not None else module.chapter_number
+
     # Build section title → concept names mapping from deep reading analysis
     section_concepts: dict[str, list[str]] = {}
     if chapter_analysis:
@@ -279,7 +303,10 @@ def _build_sections_data(
         section: TrainingSection,
     ) -> tuple[list[dict], list[dict], int, int]:
         sections_so_far, flat_so_far, offset, section_index = state
-        concepts = section_concepts.get(section.title, [])
+        # Use source_section_title for concept lookup (handles split units
+        # where title differs from the original extraction section title).
+        lookup_title = getattr(section, "source_section_title", "") or section.title
+        concepts = section_concepts.get(lookup_title, [])
         reinf_targets = section.reinforcement_targets if hasattr(section, "reinforcement_targets") else None
         prepared_elements = []
         for i, e in enumerate(section.elements):
@@ -287,27 +314,25 @@ def _build_sections_data(
             element_dict = {
                 **prepared,
                 "element_id": _element_id(
-                    module.chapter_number, section_index, i,
+                    effective_number, section_index, i,
                 ),
                 "concepts_tested": _tag_element_concepts(prepared, concepts, reinf_targets),
             }
             prepared_elements.append(element_dict)
-        section_elements = sorted(
-            prepared_elements,
-            key=lambda e: _BLOOM_SORT_ORDER.get(e.get("bloom_level", "apply"), 3),
-        )
+        # Element ordering is owned by content_designer (SectionResponse validator).
+        # The renderer trusts upstream ordering and does not re-sort.
         section_data = {
             "title": section.title,
             "source_pages": section.source_pages,
-            "element_count": len(section_elements),
+            "element_count": len(prepared_elements),
             "start_index": offset,
             "verification_notes": section.verification_notes,
             "learning_objectives": section.learning_objectives if hasattr(section, "learning_objectives") else [],
         }
         return (
             sections_so_far + [section_data],
-            flat_so_far + section_elements,
-            offset + len(section_elements),
+            flat_so_far + prepared_elements,
+            offset + len(prepared_elements),
             section_index + 1,
         )
 
@@ -317,125 +342,265 @@ def _build_sections_data(
     return sections_data, flat_elements
 
 
+def _fix_unicode_escapes(text: str) -> str:
+    r"""Decode literal \uXXXX sequences to actual Unicode characters.
+
+    LLM responses sometimes contain raw escape sequences (e.g. ``\\u0394``)
+    that survive JSON round-tripping as literal backslash-u text rather than
+    the intended Unicode character (Δ).  Mermaid 11+ rejects these as syntax
+    errors.
+    """
+    return re.sub(
+        r"\\u([0-9a-fA-F]{4})",
+        lambda m: chr(int(m.group(1), 16)),
+        text,
+    )
+
+
+def _prep_section_intro(elem: SectionIntroElement, _ed: Path | None, _ei: bool) -> dict:
+    si = elem.section_intro
+    return {"section_intro": {
+        "title": si.title,
+        "content_html": _markdown_to_html(si.content),
+        "source_pages": si.source_pages,
+    }}
+
+
+def _prep_slide(elem: SlideElement, extracted_dir: Path | None, embed_images: bool) -> dict:
+    s = elem.slide
+    image_data = None
+    if s.image_path and extracted_dir and embed_images:
+        image_data = _encode_image_base64(extracted_dir / Path(s.image_path))
+    return {"slide": {
+        "title": s.title,
+        "content_html": _markdown_to_html(s.content),
+        "speaker_notes": s.speaker_notes,
+        "image_data": image_data,
+        "source_pages": s.source_pages,
+    }}
+
+
+def _prep_quiz(elem: QuizElement, _ed: Path | None, _ei: bool) -> dict:
+    q = elem.quiz
+    return {"quiz": {
+        "title": q.title,
+        "questions": [
+            {
+                "question": _markdown_to_html_inline(qq.question),
+                "options": [_markdown_to_html_inline(opt) for opt in qq.options],
+                "correct_index": qq.correct_index,
+                "explanation": _markdown_to_html(qq.explanation),
+                "hint_metacognitive": _markdown_to_html_inline(qq.hint_metacognitive) if qq.hint_metacognitive else "",
+                "hint_strategic": _markdown_to_html_inline(qq.hint_strategic) if qq.hint_strategic else "",
+                "hint_eliminate_index": qq.hint_eliminate_index,
+            }
+            for qq in q.questions
+        ],
+    }}
+
+
+def _prep_flashcard(elem: FlashcardElement, _ed: Path | None, _ei: bool) -> dict:
+    f = elem.flashcard
+    return {"flashcard": {
+        "front": _markdown_to_html(f.front),
+        "back": _markdown_to_html(f.back),
+    }}
+
+
+def _prep_fill_in_blank(elem: FillInBlankElement, _ed: Path | None, _ei: bool) -> dict:
+    fitb = elem.fill_in_the_blank
+    interactive_indices = _fitb_interactive_answer_indices(fitb.statement)
+    interactive_answers = [
+        fitb.answers[i] for i in interactive_indices if i < len(fitb.answers)
+    ]
+    return {"fill_in_the_blank": {
+        "statement_html": _render_fitb_statement(fitb.statement, fitb.answers),
+        "answers_json": json.dumps(interactive_answers),
+        "hint": _markdown_to_html_inline(fitb.hint) if fitb.hint else "",
+        "hint_first_letter": fitb.hint_first_letter,
+    }}
+
+
+def _prep_matching(elem: MatchingElement, _ed: Path | None, _ei: bool) -> dict:
+    m = elem.matching
+    left = list(m.left_items)
+    right = list(m.right_items)
+    rng = random.Random(m.title)
+    shuffled_indices = list(range(len(right)))
+    rng.shuffle(shuffled_indices)
+    shuffled_right = [right[i] for i in shuffled_indices]
+    correct_map = {orig: shuffled_indices.index(orig) for orig in range(len(left))}
+    return {"matching": {
+        "title": m.title,
+        "left_items": [_markdown_to_html_inline(item) for item in left],
+        "shuffled_right": [_markdown_to_html_inline(item) for item in shuffled_right],
+        "correct_json": json.dumps(correct_map),
+        "pair_explanations_json": json.dumps([_markdown_to_html_inline(e) if e else "" for e in m.pair_explanations]),
+    }}
+
+
+def _prep_ordering(elem: OrderingElement, _ed: Path | None, _ei: bool) -> dict:
+    o = elem.ordering
+    correct_order = list(o.items)
+    rng = random.Random(o.title)
+    shuffled = list(range(len(correct_order)))
+    rng.shuffle(shuffled)
+    return {"ordering": {
+        "title": o.title,
+        "instruction": _markdown_to_html_inline(o.instruction) if o.instruction else "",
+        "shuffled_items": [_markdown_to_html_inline(correct_order[i]) for i in shuffled],
+        "correct_order_json": json.dumps([shuffled.index(i) for i in range(len(correct_order))]),
+        "explanation": _markdown_to_html(o.explanation),
+        "hint": _markdown_to_html_inline(o.hint) if o.hint else "",
+    }}
+
+
+def _prep_categorization(elem: CategorizationElement, _ed: Path | None, _ei: bool) -> dict:
+    cat = elem.categorization
+    all_items = []
+    for cat_idx, bucket in enumerate(cat.categories):
+        for item in bucket.items:
+            all_items.append({"text": _markdown_to_html_inline(item), "correct_cat": cat_idx})
+    rng = random.Random(cat.title)
+    rng.shuffle(all_items)
+    return {"categorization": {
+        "title": cat.title,
+        "instruction": _markdown_to_html_inline(cat.instruction) if cat.instruction else "",
+        "category_names": [_markdown_to_html_inline(b.name) if b.name else "" for b in cat.categories],
+        "items_json": json.dumps(all_items),
+        "explanation": _markdown_to_html(cat.explanation),
+        "hint": _markdown_to_html_inline(cat.hint) if cat.hint else "",
+    }}
+
+
+def _prep_error_detection(elem: ErrorDetectionElement, _ed: Path | None, _ei: bool) -> dict:
+    ed = elem.error_detection
+    return {"error_detection": {
+        "title": ed.title,
+        "instruction": _markdown_to_html_inline(ed.instruction) if ed.instruction else "",
+        "error_items": [
+            {
+                "statement": _markdown_to_html_inline(item.statement),
+                "error_explanation": _markdown_to_html(item.error_explanation),
+                "corrected_statement": _markdown_to_html_inline(item.corrected_statement),
+            }
+            for item in ed.items
+        ],
+        "context": _markdown_to_html_inline(ed.context) if ed.context else "",
+    }}
+
+
+def _prep_analogy(elem: AnalogyElement, _ed: Path | None, _ei: bool) -> dict:
+    a = elem.analogy
+    prepared_items = []
+    for item in a.items:
+        options = [item.answer] + list(item.distractors)
+        rng = random.Random(item.stem)
+        rng.shuffle(options)
+        correct_idx = options.index(item.answer)
+        prepared_items.append({
+            "stem": _markdown_to_html_inline(item.stem),
+            "options": [_markdown_to_html_inline(opt) for opt in options],
+            "correct_index": correct_idx,
+            "explanation": _markdown_to_html(item.explanation),
+        })
+    return {"analogy": {
+        "title": a.title,
+        "items_json": json.dumps(prepared_items),
+    }}
+
+
+def _prep_mermaid(elem: MermaidElement, _ed: Path | None, _ei: bool) -> dict:
+    d = elem.mermaid
+    return {"mermaid": {
+        "title": d.title,
+        "diagram_code": _fix_unicode_escapes(d.diagram_code),
+        "caption": _markdown_to_html_inline(d.caption) if d.caption else "",
+        "diagram_type": d.diagram_type,
+    }}
+
+
+def _prep_concept_map(elem: ConceptMapElement, _ed: Path | None, _ei: bool) -> dict:
+    cmap = elem.concept_map
+    return {"concept_map": {
+        "title": cmap.title,
+        "nodes_json": json.dumps([n.model_dump() for n in cmap.nodes]),
+        "edges_json": json.dumps([e.model_dump() for e in cmap.edges]),
+        "blank_indices_json": json.dumps(cmap.blank_edge_indices),
+    }}
+
+
+def _prep_interactive_essay(elem: InteractiveEssayElement, _ed: Path | None, _ei: bool) -> dict:
+    ie = elem.interactive_essay
+    is_static = len(ie.prompts) == 1 and not ie.tutor_system_prompt
+    return {"interactive_essay": {
+        "title": ie.title,
+        "concepts_tested": ie.concepts_tested,
+        "prompts": [
+            {
+                "prompt": _markdown_to_html_inline(p.prompt),
+                "key_points_json": json.dumps([_markdown_to_html_inline(kp) if kp else "" for kp in p.key_points]),
+                "example_response": _markdown_to_html(p.example_response),
+                "minimum_words": p.minimum_words,
+                "source_pages": getattr(p, "source_pages", ""),
+            }
+            for p in ie.prompts
+        ],
+        "passing_threshold": ie.passing_threshold,
+        "tutor_system_prompt_json": json.dumps(ie.tutor_system_prompt),
+        "is_static": is_static,
+    }}
+
+
+# Dispatch table: element_type → preparer function.
+_ELEMENT_PREPARERS: dict[str, callable] = {
+    "section_intro": _prep_section_intro,
+    "slide": _prep_slide,
+    "quiz": _prep_quiz,
+    "flashcard": _prep_flashcard,
+    "fill_in_the_blank": _prep_fill_in_blank,
+    "matching": _prep_matching,
+    "ordering": _prep_ordering,
+    "categorization": _prep_categorization,
+    "error_detection": _prep_error_detection,
+    "analogy": _prep_analogy,
+    "mermaid": _prep_mermaid,
+    "concept_map": _prep_concept_map,
+    "interactive_essay": _prep_interactive_essay,
+}
+
+
 def _prepare_element(
-    elem: SlideElement | QuizElement | FlashcardElement | FillInBlankElement
-    | MatchingElement | MermaidElement | ConceptMapElement
-    | SelfExplainElement | InteractiveEssayElement,
+    elem: SectionIntroElement | SlideElement | QuizElement | FlashcardElement
+    | FillInBlankElement | MatchingElement | OrderingElement | MermaidElement
+    | ConceptMapElement | CategorizationElement | ErrorDetectionElement
+    | AnalogyElement | InteractiveEssayElement,
     extracted_dir: Path | None,
     embed_images: bool,
 ) -> dict:
     """Convert a TrainingElement variant into a template-friendly dict.
 
-    Uses structural pattern matching to destructure each element type.
+    Dispatches to a type-specific preparer function via _ELEMENT_PREPARERS.
     """
     result: dict = {
         "element_type": elem.element_type,
         "bloom_level": elem.bloom_level,
     }
+    preparer = _ELEMENT_PREPARERS.get(elem.element_type)
+    if preparer:
+        result.update(preparer(elem, extracted_dir, embed_images))
+    return _fix_unicode_escapes_deep(result)  # type: ignore[return-value]
 
-    match elem:
-        case SlideElement(slide=s):
-            image_data = None
-            if s.image_path and extracted_dir and embed_images:
-                image_data = _encode_image_base64(extracted_dir / Path(s.image_path))
-            result["slide"] = {
-                "title": s.title,
-                "content_html": _markdown_to_html(s.content),
-                "speaker_notes": s.speaker_notes,
-                "image_data": image_data,
-                "source_pages": s.source_pages,
-            }
 
-        case QuizElement(quiz=q):
-            result["quiz"] = {
-                "title": q.title,
-                "questions": [
-                    {
-                        "question": qq.question,
-                        "options": list(qq.options),
-                        "correct_index": qq.correct_index,
-                        "explanation": qq.explanation,
-                        "hint_metacognitive": qq.hint_metacognitive,
-                        "hint_strategic": qq.hint_strategic,
-                        "hint_eliminate_index": qq.hint_eliminate_index,
-                    }
-                    for qq in q.questions
-                ],
-            }
-
-        case FlashcardElement(flashcard=f):
-            result["flashcard"] = {"front": f.front, "back": f.back}
-
-        case FillInBlankElement(fill_in_the_blank=fitb):
-            result["fill_in_the_blank"] = {
-                "statement_html": _render_fill_blanks(fitb.statement),
-                "answers_json": json.dumps(list(fitb.answers)),
-                "hint": fitb.hint,
-                "hint_first_letter": fitb.hint_first_letter,
-            }
-
-        case MatchingElement(matching=m):
-            left = list(m.left_items)
-            right = list(m.right_items)
-            rng = random.Random(m.title)
-            shuffled_indices = list(range(len(right)))
-            rng.shuffle(shuffled_indices)
-            shuffled_right = [right[i] for i in shuffled_indices]
-            correct_map = {
-                orig: shuffled_indices.index(orig)
-                for orig in range(len(left))
-            }
-            result["matching"] = {
-                "title": m.title,
-                "left_items": left,
-                "shuffled_right": shuffled_right,
-                "correct_json": json.dumps(correct_map),
-                "pair_explanations_json": json.dumps(list(m.pair_explanations)),
-            }
-
-        case MermaidElement(mermaid=d):
-            result["mermaid"] = {
-                "title": d.title,
-                "diagram_code": d.diagram_code,
-                "caption": d.caption,
-                "diagram_type": d.diagram_type,
-            }
-
-        case ConceptMapElement(concept_map=cmap):
-            result["concept_map"] = {
-                "title": cmap.title,
-                "nodes_json": json.dumps([n.model_dump() for n in cmap.nodes]),
-                "edges_json": json.dumps([e.model_dump() for e in cmap.edges]),
-                "blank_indices_json": json.dumps(cmap.blank_edge_indices),
-            }
-
-        case SelfExplainElement(self_explain=se):
-            result["self_explain"] = {
-                "prompt": se.prompt,
-                "key_points_json": json.dumps(se.key_points),
-                "example_response": _markdown_to_html(se.example_response),
-                "minimum_words": se.minimum_words,
-                "source_pages": se.source_pages,
-            }
-
-        case InteractiveEssayElement(interactive_essay=ie):
-            result["interactive_essay"] = {
-                "title": ie.title,
-                "concepts_tested": ie.concepts_tested,
-                "prompts": [
-                    {
-                        "prompt": p.prompt,
-                        "key_points_json": json.dumps(p.key_points),
-                        "example_response": _markdown_to_html(p.example_response),
-                        "minimum_words": p.minimum_words,
-                    }
-                    for p in ie.prompts
-                ],
-                "passing_threshold": ie.passing_threshold,
-                "tutor_system_prompt_json": json.dumps(ie.tutor_system_prompt),
-            }
-
-    return result
+def _fix_unicode_escapes_deep(obj: object) -> object:
+    """Recursively decode literal \\uXXXX in all string values."""
+    if isinstance(obj, str):
+        return _fix_unicode_escapes(obj)
+    if isinstance(obj, list):
+        return [_fix_unicode_escapes_deep(item) for item in obj]
+    if isinstance(obj, dict):
+        return {k: _fix_unicode_escapes_deep(v) for k, v in obj.items()}
+    return obj
 
 
 # ── Internal: element-level concept tagging ───────────────────────────────────
@@ -463,8 +628,8 @@ def _tag_element_concepts(
 
     # Extract text content from the element for matching
     text_parts: list[str] = []
-    for key in ("slide", "quiz", "flashcard", "fill_in_the_blank", "matching",
-                "self_explain", "concept_map", "interactive_essay", "mermaid"):
+    for key in ("section_intro", "slide", "quiz", "flashcard", "fill_in_the_blank",
+                "matching", "concept_map", "interactive_essay", "mermaid"):
         sub = element.get(key)
         if sub:
             # Collect all string values recursively
@@ -538,7 +703,7 @@ def _render_index(
 # ── Internal: course metadata override ──────────────────────────────────────
 
 
-def _load_course_meta(output_dir: Path) -> dict | None:
+def _load_course_meta(output_dir: Path) -> dict[str, str] | None:
     """Load course_meta.json from output directory.  Returns None if missing."""
     meta_path = output_dir / "course_meta.json"
     if not meta_path.exists():
@@ -640,13 +805,23 @@ def _truncate_label(label: str, max_len: int = 28) -> str:
 def _prepare_graph_data(
     concept_graph: ConceptGraph,
     modules: Sequence[TrainingModule],
+    chapter_to_module: dict[int, int] | None = None,
 ) -> dict:
     """Convert ConceptGraph to vis-network compatible JSON.
 
     Selects the most cross-referenced concepts (up to _MAX_GRAPH_NODES),
     truncates long labels, and uses a curated color palette.
+
+    When *chapter_to_module* is provided (multi-doc mode), concept chapter
+    numbers are remapped to sequential module indices so colors and groups
+    align with the rendered modules.
     """
     chapter_colors = _generate_chapter_colors(len(modules))
+
+    def _remap(ch: int) -> int:
+        if chapter_to_module is not None:
+            return chapter_to_module.get(ch, 0)
+        return ch
 
     # Rank concepts by how many chapters reference them (most connected first)
     ranked = sorted(
@@ -662,8 +837,8 @@ def _prepare_graph_data(
             "id": c.canonical_name,
             "label": _truncate_label(c.canonical_name),
             "title": f"<b>{c.canonical_name}</b><br>{c.definition}" if c.definition else c.canonical_name,
-            "group": c.first_introduced_chapter,
-            "color": chapter_colors.get(c.first_introduced_chapter, "#999"),
+            "group": _remap(c.first_introduced_chapter),
+            "color": chapter_colors.get(_remap(c.first_introduced_chapter), "#999"),
             "size": 8 + 4 * len(c.mentioned_in_chapters),
         }
         for c in top_concepts
@@ -682,8 +857,8 @@ def _prepare_graph_data(
     return {"nodes": nodes, "edges": edges}
 
 
-# Maximum nodes in the hierarchical mind map.
-_MAX_MINDMAP_NODES = 60
+# Maximum concepts shown per chapter in the mind-map tree.
+_MAX_CONCEPTS_PER_CHAPTER = 8
 
 # Edge types that imply a hierarchical (parent → child) relationship.
 _HIERARCHICAL_EDGE_TYPES = {"builds_on", "requires"}
@@ -692,80 +867,128 @@ _HIERARCHICAL_EDGE_TYPES = {"builds_on", "requires"}
 def _prepare_mindmap_data(
     concept_graph: ConceptGraph,
     modules: Sequence[TrainingModule],
+    chapter_to_module: dict[int, int] | None = None,
 ) -> dict:
-    """Build a top-down hierarchical mind map from the concept graph.
+    """Build a chapter-grouped collapsible tree from the concept graph.
 
-    Foundation concepts sit at the top; concepts that build on them flow
-    downward.  Only ``builds_on`` and ``requires`` edges are used (they
-    imply a prerequisite hierarchy).  The vis-network hierarchical layout
-    renders the result as a tree.
+    First level: chapters (one node per module).  Second level: the most
+    important concepts introduced in that chapter.  Third+ levels: concepts
+    that ``builds_on`` / ``requires`` a parent concept (prerequisite
+    nesting).  The result is rendered as a collapsible tree on the index
+    page — similar to a NotebookLM mind map.
 
-    Edge direction for display: prerequisite (target) → dependent (source),
-    so foundations appear at the root and advanced concepts at the leaves.
+    When *chapter_to_module* is provided (multi-doc mode), concept chapter
+    numbers are remapped to sequential module indices.  Concepts from
+    source chapters that don't map to any module are excluded.
     """
+    if not concept_graph.concepts:
+        return {}
+
     chapter_colors = _generate_chapter_colors(len(modules))
-
-    # Only keep hierarchical edges
-    hier_edges = [
-        e for e in concept_graph.edges
-        if e.relationship in _HIERARCHICAL_EDGE_TYPES
-    ]
-    if not hier_edges:
-        return {}
-
-    # Concepts that participate in at least one hierarchical edge
-    connected: set[str] = set()
-    for e in hier_edges:
-        connected.add(e.source)
-        connected.add(e.target)
-
-    # Rank connected concepts by cross-chapter importance
     concept_lookup = {c.canonical_name: c for c in concept_graph.concepts}
-    connected_concepts = [
-        concept_lookup[name]
-        for name in connected
-        if name in concept_lookup
-    ]
-    connected_concepts.sort(
-        key=lambda c: len(c.mentioned_in_chapters), reverse=True
-    )
-    top_concepts = connected_concepts[:_MAX_MINDMAP_NODES]
-    top_ids = {c.canonical_name for c in top_concepts}
 
-    # Build nodes
-    nodes = [
-        {
-            "id": c.canonical_name,
-            "label": _truncate_label(c.canonical_name, max_len=24),
-            "title": (
-                f"<b>{c.canonical_name}</b><br>{c.definition}"
-                if c.definition
-                else c.canonical_name
-            ),
-            "group": c.first_introduced_chapter,
-            "color": chapter_colors.get(c.first_introduced_chapter, "#999"),
-            "size": 6 + 3 * len(c.mentioned_in_chapters),
+    def _remap(ch: int) -> int:
+        if chapter_to_module is not None:
+            return chapter_to_module.get(ch, 0)
+        return ch
+
+    # Build prerequisite adjacency among ALL concepts (not just top N).
+    # children_of[prerequisite] = [dependent, ...].
+    children_of: dict[str, list[str]] = defaultdict(list)
+    parent_of: dict[str, list[str]] = defaultdict(list)
+    for e in concept_graph.edges:
+        if e.relationship in _HIERARCHICAL_EDGE_TYPES:
+            children_of[e.target].append(e.source)
+            parent_of[e.source].append(e.target)
+
+    # Group concepts by their remapped chapter (module index).
+    # In multi-doc mode, concepts from unmapped chapters (remap → 0) are excluded.
+    by_chapter: dict[int, list] = defaultdict(list)
+    for c in concept_graph.concepts:
+        mapped = _remap(c.first_introduced_chapter)
+        if mapped == 0:
+            continue
+        by_chapter[mapped].append(c)
+
+    # Sort each chapter's concepts by importance (cross-chapter mentions).
+    for ch_concepts in by_chapter.values():
+        ch_concepts.sort(
+            key=lambda c: len(c.mentioned_in_chapters), reverse=True
+        )
+
+    # Track which concepts have been placed in the tree (DAG → tree).
+    assigned: set[str] = set()
+
+    def _build_concept_subtree(
+        name: str, depth: int = 0,
+    ) -> dict | None:
+        if name in assigned or depth > 4:
+            return None
+        c = concept_lookup.get(name)
+        if not c:
+            return None
+        assigned.add(name)
+
+        kids: list[dict] = []
+        for child_name in children_of.get(name, []):
+            if child_name not in assigned:
+                subtree = _build_concept_subtree(child_name, depth + 1)
+                if subtree:
+                    kids.append(subtree)
+        kids.sort(
+            key=lambda k: k.get("importance", 0), reverse=True
+        )
+
+        mod_idx = _remap(c.first_introduced_chapter)
+        return {
+            "name": c.canonical_name,
+            "definition": c.definition or "",
+            "chapter": mod_idx,
+            "color": chapter_colors.get(mod_idx, "#999"),
+            "importance": len(c.mentioned_in_chapters),
+            "children": kids,
         }
-        for c in top_concepts
-    ]
 
-    # Edges: reverse direction so prerequisites point DOWN to dependents.
-    # In the data, source depends on target (target is prerequisite).
-    # For UD layout, from=prerequisite (top) → to=dependent (bottom).
-    edges = [
-        {
-            "from": e.target,
-            "to": e.source,
-            "arrows": "to",
-        }
-        for e in hier_edges
-        if e.source in top_ids and e.target in top_ids
-    ]
+    # Build the tree: one root per module that has concepts.
+    roots: list[dict] = []
+    # Use sequential module index for titles (works for both single- and multi-doc).
+    if chapter_to_module is not None:
+        module_titles = {i + 1: m.title for i, m in enumerate(modules)}
+    else:
+        module_titles = {m.chapter_number: m.title for m in modules}
 
-    if not edges:
+    for ch_num in sorted(by_chapter.keys()):
+        ch_concepts = by_chapter[ch_num]
+        color = chapter_colors.get(ch_num, "#999")
+        title = module_titles.get(ch_num, f"Chapter {ch_num}")
+
+        # Pick the top concepts for this chapter (roots within the chapter).
+        # Prefer concepts not yet assigned as children of another concept.
+        concept_nodes: list[dict] = []
+        for c in ch_concepts[:_MAX_CONCEPTS_PER_CHAPTER]:
+            if c.canonical_name in assigned:
+                continue
+            subtree = _build_concept_subtree(c.canonical_name)
+            if subtree:
+                concept_nodes.append(subtree)
+
+        if not concept_nodes:
+            continue
+
+        roots.append({
+            "name": title,
+            "definition": "",
+            "chapter": ch_num,
+            "color": color,
+            "importance": 999,
+            "children": concept_nodes,
+            "is_chapter": True,
+        })
+
+    if not roots:
         return {}
 
-    return {"nodes": nodes, "edges": edges}
+    return {"roots": roots}
 
 
 # ── Internal: helpers ────────────────────────────────────────────────────────
@@ -783,6 +1006,168 @@ def _render_fill_blanks(statement: str) -> str:
     return re.sub(r"_{3,}", replacer, statement)
 
 
+# Currency pattern: $ immediately followed by a digit (e.g. $90, $1,000, $3.14).
+# Only the $ is matched (lookahead); the digits stay in the text.
+# The negative lookahead (?![a-zA-Z_\\$]) after the digits ensures that
+# math expressions like $3v$, $3\begin{...}$, or $0$ are NOT treated as currency.
+# NOTE: Use [$] instead of \$ — Python 3.13+ treats \$ as end-of-string anchor.
+_CURRENCY_RE = re.compile(r"[$](?=\d[\d,]*\.?\d*(?![a-zA-Z_\\$]))")
+
+# LaTeX block patterns (display then inline).
+# NOTE: Use [$] instead of \$ — Python 3.13+ treats \$ as end-of-string anchor.
+_LATEX_DISPLAY_RE = re.compile(r"[$][$].+?[$][$]", re.DOTALL)
+_LATEX_INLINE_RE = re.compile(r"[$](?![$]).+?[$]")
+
+# LaTeX \(...\) and \[...\] delimiter patterns.
+# The LLM is told to use $...$ but sometimes produces these instead.
+# Must be protected from markdown just like $ delimiters.
+_LATEX_PAREN_RE = re.compile(r"\\\(.+?\\\)")
+_LATEX_BRACKET_RE = re.compile(r"\\\[.+?\\\]", re.DOTALL)
+
+# ── Doubled-math deduplication ────────────────────────────────────────────────
+# LLMs sometimes emit each math expression twice: once rendered as plain text
+# and once in LaTeX delimiters, producing e.g. "p=0.12$p=0.12$" or
+# "$f_X(x)$f_X(x)" in the raw output.  These patterns detect and fix that.
+
+# Pattern 1: plain-text duplicate immediately after a closing $ delimiter.
+# Matches $<math>$<same-math-as-plain-text> and keeps only the delimited form.
+# E.g. "$p=0.12$p=0.12" → "$p=0.12$"
+_MATH_ECHO_AFTER_RE = re.compile(
+    r"([$][$]?)(.+?)\1"   # group(1)=delim, group(2)=math content
+    r"(?=\2)",             # lookahead: the same content repeated immediately
+)
+
+# Pattern 2: plain-text duplicate immediately before an opening $ delimiter.
+# Matches <plain-text>$<same-text>$ and keeps only the delimited form.
+# E.g. "p=0.12$p=0.12$" → "$p=0.12$"
+
+
+def _deduplicate_math(text: str) -> str:
+    """Remove LLM-generated doubled math expressions.
+
+    LLMs sometimes write a math expression twice: once as plain text and
+    once inside $ delimiters, back-to-back.  This produces rendered output
+    like ``p=0.12p=0.12`` (the plain text + the KaTeX-rendered version).
+
+    Strategy: find each $...$ or $$...$$ span and check whether the plain
+    text immediately before or after it duplicates the math content (after
+    stripping LaTeX commands).  If so, remove the plain-text duplicate.
+    """
+    if "$" not in text:
+        return text
+
+    # Collect all math spans with their positions
+    spans: list[tuple[int, int, str]] = []  # (start, end, inner_content)
+    for pattern in (_LATEX_DISPLAY_RE, _LATEX_INLINE_RE):
+        for m in pattern.finditer(text):
+            spans.append((m.start(), m.end(), m.group(0)))
+    if not spans:
+        return text
+
+    # Sort by position (display math first at same position due to greedier match)
+    spans.sort(key=lambda s: s[0])
+
+    # For each math span, derive a plain-text version by stripping LaTeX commands
+    result = text
+    for start, end, full_match in reversed(spans):  # reverse to preserve indices
+        # Strip $ delimiters to get inner content
+        if full_match.startswith("$$"):
+            inner = full_match[2:-2]
+        else:
+            inner = full_match[1:-1]
+
+        # Build a plain-text version: strip common LaTeX commands
+        plain = _latex_to_plain(inner)
+        if len(plain) < 2:
+            continue
+
+        # Check for duplicate immediately AFTER the math span
+        after = result[end:]
+        if after.startswith(plain):
+            result = result[:end] + result[end + len(plain):]
+        # Check for duplicate immediately BEFORE the math span
+        elif start >= len(plain) and result[start - len(plain):start] == plain:
+            result = result[:start - len(plain)] + result[start:]
+
+    return result
+
+
+def _latex_to_plain(latex: str) -> str:
+    """Convert LaTeX math to approximate plain-text for dedup matching.
+
+    Strips common LaTeX commands (\\frac, \\text, \\cdot, etc.) and
+    formatting characters ({, }, ^, _) to produce a plain-text version
+    that can be compared against the LLM's plain-text echo.
+    """
+    s = latex
+    # Remove common LaTeX commands (keep their arguments)
+    s = re.sub(r"\\(?:frac|text|mathrm|mathbf|mathit|operatorname|sqrt|hat|bar|vec|dot|tilde)\s*", "", s)
+    # Remove remaining backslash commands (\cdot, \times, \leq, etc.)
+    s = re.sub(r"\\[a-zA-Z]+", "", s)
+    # Remove braces, caret, underscore
+    s = re.sub(r"[{}^_]", "", s)
+    # Collapse whitespace
+    s = re.sub(r"\s+", "", s)
+    return s
+
+# Escape unescaped % in LaTeX math — % is a comment character in LaTeX/KaTeX.
+_UNESCAPED_PERCENT_RE = re.compile(r"(?<!\\)%")
+
+
+def _escape_latex_percent(math_str: str) -> str:
+    """Escape unescaped ``%`` inside a LaTeX math span.
+
+    In LaTeX, ``%`` starts a comment that eats the rest of the line.
+    KaTeX inherits this behavior, so ``$\\text{Up by 2%}$`` breaks
+    rendering.  Escaping to ``\\%`` fixes it.
+    """
+    return _UNESCAPED_PERCENT_RE.sub(r"\\%", math_str)
+
+
+# Dangerous HTML patterns stripped after markdown conversion.
+_SCRIPT_RE = re.compile(r"<script[^>]*>.*?</script>", re.DOTALL | re.IGNORECASE)
+_STYLE_RE = re.compile(r"<style[^>]*>.*?</style>", re.DOTALL | re.IGNORECASE)
+_EVENT_HANDLER_RE = re.compile(r"""\s+on\w+\s*=\s*(?:"[^"]*"|'[^']*')""", re.IGNORECASE)
+
+
+def _protect_currency(text: str) -> tuple[str, list[str]]:
+    """Replace currency $DIGITS patterns with sentinels before LaTeX detection."""
+    currency_spans: list[str] = []
+
+    def _save(match: re.Match) -> str:
+        idx = len(currency_spans)
+        currency_spans.append(match.group(0))
+        return f"\x00CURR{idx}\x00"
+
+    return _CURRENCY_RE.sub(_save, text), currency_spans
+
+
+def _restore_currency(html: str, currency_spans: list[str]) -> str:
+    """Restore currency sentinels after markdown conversion.
+
+    Uses the HTML entity ``&#36;`` instead of a literal ``$`` so that
+    KaTeX auto-render does not treat currency amounts (e.g. $100) as
+    LaTeX math delimiters on the client side.
+    """
+    for idx, original in enumerate(currency_spans):
+        safe = original.replace("$", "&#36;")
+        html = html.replace(f"\x00CURR{idx}\x00", safe)
+    return html
+
+
+def _sanitize_html(html: str) -> str:
+    """Strip dangerous HTML from markdown output (defense in depth).
+
+    Removes <script>, <style> tags and on* event handler attributes.
+    Content is LLM-generated (low risk), but since we render with |safe
+    in templates we add this safety layer.
+    """
+    html = _SCRIPT_RE.sub("", html)
+    html = _STYLE_RE.sub("", html)
+    html = _EVENT_HANDLER_RE.sub("", html)
+    return html
+
+
 def _markdown_to_html(text: str) -> str:
     """Convert markdown to HTML, preserving LaTeX math delimiters for KaTeX.
 
@@ -790,25 +1175,169 @@ def _markdown_to_html(text: str) -> str:
     inline code, fenced code blocks, lists, and paragraphs. LaTeX math
     ($...$, $$...$$) is protected from markdown interpretation and restored
     after conversion so KaTeX can render it client-side.
+
+    Currency dollar signs ($90, $1,000) are protected from being treated
+    as LaTeX delimiters.  Dangerous HTML (script tags, event handlers) is
+    stripped from the output.
     """
+    # Fix LLM doubled-math before any other processing.
+    text = _deduplicate_math(text)
+
+    # Protect currency $ from being treated as LaTeX delimiters.
+    text, currency_spans = _protect_currency(text)
+
     # Protect LaTeX math blocks from markdown interpretation.
     # Display math ($$...$$) must be matched before inline ($...$).
+    # Also protect \(...\) and \[...\] delimiters (LLM sometimes uses these
+    # despite being told to use $ delimiters).
     math_spans: list[str] = []
 
     def _save_math(match: re.Match) -> str:
         idx = len(math_spans)
-        math_spans.append(match.group(0))
+        math_spans.append(_escape_latex_percent(match.group(0)))
         return f"\x00MATH{idx}\x00"
 
-    protected = re.sub(r"\$\$.+?\$\$", _save_math, text, flags=re.DOTALL)
-    protected = re.sub(r"\$(?!\$).+?\$", _save_math, protected)
+    protected = _LATEX_DISPLAY_RE.sub(_save_math, text)
+    protected = _LATEX_BRACKET_RE.sub(_save_math, protected)
+    protected = _LATEX_INLINE_RE.sub(_save_math, protected)
+    protected = _LATEX_PAREN_RE.sub(_save_math, protected)
 
     html = md.markdown(protected, extensions=["fenced_code"])
 
     for idx, original in enumerate(math_spans):
         html = html.replace(f"\x00MATH{idx}\x00", original)
 
+    html = _restore_currency(html, currency_spans)
+    return _sanitize_html(html)
+
+
+def _markdown_to_html_inline(text: str) -> str:
+    """Convert markdown to HTML without the outer ``<p>`` wrapper.
+
+    Use for inline contexts where content appears inside existing block
+    elements (quiz questions, option labels, prompts inside ``<p>``).
+    Single-paragraph content loses the wrapper; multi-paragraph keeps it.
+    """
+    html = _markdown_to_html(text)
+    stripped = html.strip()
+    if stripped.startswith("<p>") and stripped.endswith("</p>"):
+        inner = stripped[3:-4]
+        if "<p>" not in inner:
+            return inner
     return html
+
+
+def _render_fitb_statement(statement: str, answers: list[str] | None = None) -> str:
+    """Process a FITB statement with LaTeX-aware blank handling and markdown.
+
+    Blanks (``_{3,}``) inside LaTeX blocks are replaced with KaTeX-renderable
+    ``\\underline{\\hspace{3em}}`` markers since ``<input>`` HTML cannot
+    appear inside KaTeX math.  Blanks outside LaTeX become interactive
+    ``<input>`` elements with per-blank hint buttons.  The whole statement
+    then receives markdown conversion with LaTeX and currency protection.
+
+    Args:
+        statement: The FITB statement with ``_____`` marking each blank.
+        answers: Optional list of correct answers (one per blank, in order).
+            When provided, each ``<input>`` gets a ``data-answer`` attribute
+            and a hint button for progressive letter reveal.
+    """
+    # Step 1: protect currency
+    text, currency_spans = _protect_currency(statement)
+
+    # Step 2: replace blanks inside LaTeX with KaTeX markers
+    def _replace_blanks_in_latex(match: re.Match) -> str:
+        return re.sub(r"_{3,}", r"\\underline{\\hspace{3em}}", match.group(0))
+
+    text = _LATEX_DISPLAY_RE.sub(_replace_blanks_in_latex, text)
+    text = _LATEX_INLINE_RE.sub(_replace_blanks_in_latex, text)
+
+    # Step 3: replace remaining blanks (outside LaTeX) with <input> elements
+    # Also compute which original blank indices map to interactive inputs
+    interactive_indices = _fitb_interactive_answer_indices(statement)
+    blank_counter = [0]
+
+    def _input_replacer(match: re.Match) -> str:
+        idx = blank_counter[0]
+        blank_counter[0] += 1
+        # Map interactive blank index to the original answer index
+        answer_attr = ""
+        if answers and idx < len(interactive_indices):
+            orig_idx = interactive_indices[idx]
+            if orig_idx < len(answers):
+                escaped = answers[orig_idx].replace('"', "&quot;")
+                answer_attr = f' data-answer="{escaped}"'
+        hint_btn = (
+            '<button class="hint-letter-btn fitb-hint-letter-btn" '
+            'onclick="revealNextLetters(this.previousElementSibling)" '
+            'title="Reveal a letter">?</button>'
+        )
+        return (
+            f'<input type="text" class="fitb-blank" '
+            f'data-blank-index="{idx}" placeholder="..."{answer_attr}>'
+            f'{hint_btn}'
+        )
+
+    text = re.sub(r"_{3,}", _input_replacer, text)
+
+    # Step 4: protect LaTeX from markdown
+    math_spans: list[str] = []
+
+    def _save_math(match: re.Match) -> str:
+        idx = len(math_spans)
+        math_spans.append(_escape_latex_percent(match.group(0)))
+        return f"\x00MATH{idx}\x00"
+
+    protected = _LATEX_DISPLAY_RE.sub(_save_math, text)
+    protected = _LATEX_INLINE_RE.sub(_save_math, protected)
+
+    # Also protect <input> tags from markdown
+    input_spans: list[str] = []
+
+    def _save_input(match: re.Match) -> str:
+        idx = len(input_spans)
+        input_spans.append(match.group(0))
+        return f"\x00INPUT{idx}\x00"
+
+    protected = re.sub(r"<input[^>]+>(?:<button[^>]+>[^<]*</button>)?", _save_input, protected)
+
+    # Step 5: markdown conversion
+    html = md.markdown(protected, extensions=["fenced_code"])
+
+    # Step 6: restore everything
+    for idx, original in enumerate(input_spans):
+        html = html.replace(f"\x00INPUT{idx}\x00", original)
+    for idx, original in enumerate(math_spans):
+        html = html.replace(f"\x00MATH{idx}\x00", original)
+    html = _restore_currency(html, currency_spans)
+    return _sanitize_html(html)
+
+
+def _fitb_interactive_answer_indices(statement: str) -> list[int]:
+    """Return original blank indices that become interactive ``<input>`` fields.
+
+    Blanks inside LaTeX become visual-only markers; blanks outside become
+    interactive inputs.  Returns 0-based indices into the original answer
+    list for the blanks that will be interactive.
+    """
+    text, _ = _protect_currency(statement)
+
+    # Build LaTeX region spans
+    latex_ranges: list[tuple[int, int]] = []
+    for m in _LATEX_DISPLAY_RE.finditer(text):
+        latex_ranges.append((m.start(), m.end()))
+    for m in _LATEX_INLINE_RE.finditer(text):
+        if not any(s <= m.start() < e for s, e in latex_ranges):
+            latex_ranges.append((m.start(), m.end()))
+
+    def _is_in_latex(pos: int) -> bool:
+        return any(s <= pos < e for s, e in latex_ranges)
+
+    return [
+        i
+        for i, m in enumerate(re.finditer(r"_{3,}", text))
+        if not _is_in_latex(m.start())
+    ]
 
 
 def _encode_image_base64(image_path: Path) -> str | None:

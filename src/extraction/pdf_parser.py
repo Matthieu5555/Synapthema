@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 
 from src.extraction.structure_detector import (
     TocEntry,
+    detect_subsections_with_llm,
     detect_toc_with_llm,
     extract_toc_entries,
     identify_chapters,
@@ -94,6 +95,7 @@ def extract_book(pdf_path: Path, output_dir: Path, llm_client: LLMClient | None 
             doc=doc,
             all_images=all_images,
             all_tables=all_tables,
+            llm_client=llm_client,
         )
         for idx, (chapter_entry, children, start, end) in enumerate(chapter_groups)
     )
@@ -123,7 +125,7 @@ def extract_book(pdf_path: Path, output_dir: Path, llm_client: LLMClient | None 
 
 def _extract_metadata(doc: fitz.Document) -> tuple[str, str]:
     """Pull title and author from PDF metadata, with fallbacks."""
-    metadata = doc.metadata or {}
+    metadata: dict[str, str] = doc.metadata or {}  # pyright: ignore[reportAssignmentType] -- PyMuPDF untyped
     title = metadata.get("title", "").strip()
     author = metadata.get("author", "").strip()
 
@@ -155,7 +157,7 @@ def _extract_text_for_page_range(
     pages_text: list[str] = []
     # Clamp to valid page range (0-indexed internally)
     for page_idx in range(max(0, start_page - 1), min(end_page, len(doc))):
-        page_text = doc[page_idx].get_text()
+        page_text: str = doc[page_idx].get_text()  # pyright: ignore[reportAssignmentType] -- PyMuPDF untyped
         if page_text.strip():
             pages_text.append(page_text)
 
@@ -349,32 +351,50 @@ def _build_chapter(
     doc: fitz.Document,
     all_images: dict[int, list[ImageRef]],
     all_tables: dict[int, list[Table]],
+    llm_client: LLMClient | None = None,
 ) -> Chapter:
     """Construct a Chapter dataclass from a TOC entry and its children.
 
     Builds Section objects for each child TOC entry, assigning text, images,
-    and tables based on page ranges.
+    and tables based on page ranges. When no child TOC entries exist and an
+    LLM client is available, uses the LLM to detect subsection structure.
     """
     if not child_toc_entries:
-        # Chapter with no sub-sections: treat entire chapter as one section
-        text = _extract_text_for_page_range(doc, start_page, end_page)
-        images = _collect_items_for_page_range(all_images, start_page, end_page)
-        tables = _collect_items_for_page_range(all_tables, start_page, end_page)
+        # Try LLM-based subsection detection when no TOC children exist
+        detected_entries: tuple[TocEntry, ...] = ()
+        if llm_client is not None:
+            detected_entries = detect_subsections_with_llm(
+                doc, start_page, end_page, chapter_entry.title, llm_client,
+            )
 
-        sections = (
-            Section(
-                title=chapter_entry.title,
-                level=chapter_entry.level,
-                start_page=start_page,
-                end_page=end_page,
-                text=text,
-                images=tuple(images),
-                tables=tuple(tables),
-            ),
-        )
+        if detected_entries:
+            logger.info(
+                "Chapter %d '%s': LLM detected %d subsections",
+                chapter_number, chapter_entry.title, len(detected_entries),
+            )
+            sections = _build_sections(
+                detected_entries, end_page, doc, all_images, all_tables
+            )
+        else:
+            # Genuine single-section chapter: treat entire chapter as one section
+            text = _extract_text_for_page_range(doc, start_page, end_page)
+            images = _collect_items_for_page_range(all_images, start_page, end_page)
+            tables = _collect_items_for_page_range(all_tables, start_page, end_page)
+
+            sections = (
+                Section(
+                    title=chapter_entry.title,
+                    level=chapter_entry.level,
+                    start_page=start_page,
+                    end_page=end_page,
+                    text=text,
+                    images=tuple(images),
+                    tables=tuple(tables),
+                ),
+            )
     else:
         sections = _build_sections(
-            child_toc_entries, start_page, end_page, doc, all_images, all_tables
+            child_toc_entries, end_page, doc, all_images, all_tables
         )
 
     return Chapter(
@@ -388,7 +408,6 @@ def _build_chapter(
 
 def _build_sections(
     toc_entries: tuple[TocEntry, ...],
-    chapter_start: int,
     chapter_end: int,
     doc: fitz.Document,
     all_images: dict[int, list[ImageRef]],

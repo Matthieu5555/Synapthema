@@ -4,7 +4,20 @@ import pytest
 from pydantic import TypeAdapter, ValidationError
 
 from src.transformation.types import (
+    CurriculumBlueprint,
     ELEMENT_BLOOM_MAP,
+    ELEMENT_ORDER,
+    ModuleBlueprint,
+    SectionBlueprint,
+    AnalogyElement,
+    AnalogyExercise,
+    AnalogyItem,
+    CategorizationElement,
+    CategorizationExercise,
+    CategoryBucket,
+    ErrorDetectionElement,
+    ErrorDetectionExercise,
+    ErrorItem,
     Flashcard,
     FlashcardElement,
     FillInBlankElement,
@@ -12,12 +25,15 @@ from src.transformation.types import (
     InteractiveEssayElement,
     MatchingElement,
     MatchingExercise,
+    OrderingElement,
+    OrderingExercise,
     QuizElement,
     QuizQuestion,
     ReinforcementTarget,
     ReinforcementTargetSet,
+    SectionIntro,
+    SectionIntroElement,
     SelfExplain,
-    SelfExplainElement,
     Slide,
     SlideElement,
     TrainingElement,
@@ -84,6 +100,72 @@ class TestTrainingElementValidation:
         })
         assert isinstance(elem, MatchingElement)
 
+    def test_valid_ordering(self) -> None:
+        elem = _ElementAdapter.validate_python({
+            "element_type": "ordering",
+            "bloom_level": "apply",
+            "ordering": {
+                "title": "Order the Steps",
+                "instruction": "Arrange in correct order",
+                "items": ["Step 1", "Step 2", "Step 3"],
+            },
+        })
+        assert isinstance(elem, OrderingElement)
+        assert len(elem.ordering.items) == 3
+
+    def test_valid_categorization(self) -> None:
+        elem = _ElementAdapter.validate_python({
+            "element_type": "categorization",
+            "bloom_level": "analyze",
+            "categorization": {
+                "title": "Classify",
+                "instruction": "Sort these items",
+                "categories": [
+                    {"name": "Type A", "items": ["a1", "a2"]},
+                    {"name": "Type B", "items": ["b1"]},
+                ],
+            },
+        })
+        assert isinstance(elem, CategorizationElement)
+        assert len(elem.categorization.categories) == 2
+
+    def test_valid_error_detection(self) -> None:
+        elem = _ElementAdapter.validate_python({
+            "element_type": "error_detection",
+            "bloom_level": "evaluate",
+            "error_detection": {
+                "title": "Spot the Error",
+                "instruction": "Find the mistake",
+                "items": [
+                    {
+                        "statement": "Water boils at 50C",
+                        "error_explanation": "Water boils at 100C at sea level",
+                        "corrected_statement": "Water boils at 100C",
+                    },
+                ],
+            },
+        })
+        assert isinstance(elem, ErrorDetectionElement)
+        assert len(elem.error_detection.items) == 1
+
+    def test_valid_analogy(self) -> None:
+        elem = _ElementAdapter.validate_python({
+            "element_type": "analogy",
+            "bloom_level": "analyze",
+            "analogy": {
+                "title": "Analogy Challenge",
+                "items": [
+                    {
+                        "stem": "A is to B as C is to ___",
+                        "answer": "D",
+                        "distractors": ["E", "F"],
+                    },
+                ],
+            },
+        })
+        assert isinstance(elem, AnalogyElement)
+        assert elem.analogy.items[0].answer == "D"
+
     def test_rejects_unknown_element_type(self) -> None:
         """An unrecognized element_type should fail."""
         with pytest.raises(ValidationError):
@@ -100,16 +182,17 @@ class TestTrainingElementValidation:
                 slide=None,  # type: ignore[arg-type]
             )
 
-    def test_valid_self_explain(self) -> None:
-        elem = SelfExplainElement(
-            bloom_level="evaluate",
-            self_explain=SelfExplain(
-                prompt="Explain diversification.",
-                key_points=["reduces risk", "uncorrelated assets"],
-                example_response="Diversification works by ...",
-            ),
-        )
-        assert elem.self_explain.minimum_words == 50
+    def test_valid_section_intro(self) -> None:
+        elem = _ElementAdapter.validate_python({
+            "element_type": "section_intro",
+            "bloom_level": "understand",
+            "section_intro": {
+                "title": "Welcome",
+                "content": "In this section you will learn about diversification.",
+            },
+        })
+        assert isinstance(elem, SectionIntroElement)
+        assert elem.section_intro.title == "Welcome"
 
     def test_valid_interactive_essay(self) -> None:
         elem = InteractiveEssayElement(
@@ -127,15 +210,6 @@ class TestTrainingElementValidation:
             ),
         )
         assert elem.interactive_essay.passing_threshold == 0.7
-
-    def test_rejects_self_explain_single_key_point(self) -> None:
-        """SelfExplain requires at least 2 key_points."""
-        with pytest.raises(ValidationError):
-            SelfExplain(
-                prompt="Explain.",
-                key_points=["only one"],
-                example_response="Example.",
-            )
 
     def test_rejects_interactive_essay_empty_prompts(self) -> None:
         """InteractiveEssay requires at least 1 prompt."""
@@ -220,7 +294,10 @@ class TestReinforcementTarget:
             assert target.angle == angle
 
     def test_all_assessment_types_accepted(self) -> None:
-        for elem_type in ("quiz", "flashcard", "fill_in_the_blank", "matching", "self_explain"):
+        for elem_type in (
+            "quiz", "flashcard", "fill_in_the_blank", "matching", "ordering",
+            "categorization", "error_detection", "analogy", "interactive_essay",
+        ):
             target = ReinforcementTarget(
                 concept_name="C",
                 target_insight="I",
@@ -236,8 +313,9 @@ class TestElementBloomMap:
 
     def test_all_element_types_mapped(self) -> None:
         expected = {
-            "flashcard", "slide", "mermaid", "quiz", "matching",
-            "fill_in_the_blank", "concept_map", "self_explain", "interactive_essay",
+            "section_intro", "flashcard", "slide", "mermaid", "quiz", "matching",
+            "ordering", "fill_in_the_blank", "categorization", "analogy",
+            "concept_map", "error_detection", "interactive_essay",
         }
         assert set(ELEMENT_BLOOM_MAP.keys()) == expected
 
@@ -247,12 +325,97 @@ class TestElementBloomMap:
             assert level in valid_levels, f"{elem_type} has invalid bloom level {level}"
 
     def test_specific_mappings(self) -> None:
+        assert ELEMENT_BLOOM_MAP["section_intro"] == "understand"
         assert ELEMENT_BLOOM_MAP["flashcard"] == "remember"
         assert ELEMENT_BLOOM_MAP["slide"] == "understand"
         assert ELEMENT_BLOOM_MAP["mermaid"] == "understand"
         assert ELEMENT_BLOOM_MAP["quiz"] == "apply"
         assert ELEMENT_BLOOM_MAP["matching"] == "apply"
-        assert ELEMENT_BLOOM_MAP["fill_in_the_blank"] == "apply"
-        assert ELEMENT_BLOOM_MAP["concept_map"] == "analyze"
-        assert ELEMENT_BLOOM_MAP["self_explain"] == "evaluate"
+        assert ELEMENT_BLOOM_MAP["ordering"] == "apply"
+        assert ELEMENT_BLOOM_MAP["fill_in_the_blank"] == "analyze"
+        assert ELEMENT_BLOOM_MAP["categorization"] == "analyze"
+        assert ELEMENT_BLOOM_MAP["analogy"] == "analyze"
+        assert ELEMENT_BLOOM_MAP["concept_map"] == "apply"
+        assert ELEMENT_BLOOM_MAP["error_detection"] == "evaluate"
         assert ELEMENT_BLOOM_MAP["interactive_essay"] == "evaluate"
+
+
+class TestElementOrder:
+    """Tests for the canonical ELEMENT_ORDER dict."""
+
+    def test_section_intro_is_first(self) -> None:
+        assert ELEMENT_ORDER["section_intro"] == 0
+
+    def test_slides_before_practice(self) -> None:
+        assert ELEMENT_ORDER["slide"] < ELEMENT_ORDER["quiz"]
+        assert ELEMENT_ORDER["mermaid"] < ELEMENT_ORDER["matching"]
+
+    def test_flashcard_after_practice(self) -> None:
+        assert ELEMENT_ORDER["flashcard"] > ELEMENT_ORDER["quiz"]
+        assert ELEMENT_ORDER["flashcard"] > ELEMENT_ORDER["fill_in_the_blank"]
+
+    def test_interactive_essay_is_last(self) -> None:
+        assert ELEMENT_ORDER["interactive_essay"] == max(ELEMENT_ORDER.values())
+
+    def test_all_bloom_map_keys_have_order(self) -> None:
+        for key in ELEMENT_BLOOM_MAP:
+            assert key in ELEMENT_ORDER, f"{key} missing from ELEMENT_ORDER"
+
+
+class TestSectionBlueprintFocusConcepts:
+    """Tests for the focus_concepts field on SectionBlueprint."""
+
+    def test_default_empty_list(self) -> None:
+        bp = SectionBlueprint(title="Test", source_section_title="Test")
+        assert bp.focus_concepts == []
+
+    def test_accepts_concept_names(self) -> None:
+        bp = SectionBlueprint(
+            title="Test",
+            source_section_title="Test",
+            focus_concepts=["basis", "span"],
+        )
+        assert bp.focus_concepts == ["basis", "span"]
+
+    def test_backward_compat_from_dict_without_field(self) -> None:
+        bp = SectionBlueprint.model_validate({
+            "title": "Test",
+            "source_section_title": "Test",
+        })
+        assert bp.focus_concepts == []
+
+    def test_roundtrip_serialization(self) -> None:
+        bp = SectionBlueprint(
+            title="Test",
+            source_section_title="Src",
+            focus_concepts=["concept_a", "concept_b"],
+        )
+        data = bp.model_dump()
+        restored = SectionBlueprint.model_validate(data)
+        assert restored.focus_concepts == ["concept_a", "concept_b"]
+
+    def test_blueprint_with_focus_concepts_in_module(self) -> None:
+        blueprint = CurriculumBlueprint(
+            course_title="Test Course",
+            modules=[
+                ModuleBlueprint(
+                    title="M1",
+                    source_chapter_number=1,
+                    sections=[
+                        SectionBlueprint(
+                            title="Unit A",
+                            source_section_title="Section 1",
+                            focus_concepts=["concept_x"],
+                        ),
+                        SectionBlueprint(
+                            title="Unit B",
+                            source_section_title="Section 1",
+                            focus_concepts=["concept_y"],
+                        ),
+                    ],
+                ),
+            ],
+        )
+        # Both sections share source_section_title but have different focus
+        assert blueprint.modules[0].sections[0].focus_concepts == ["concept_x"]
+        assert blueprint.modules[0].sections[1].focus_concepts == ["concept_y"]

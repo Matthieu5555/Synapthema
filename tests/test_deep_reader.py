@@ -224,8 +224,9 @@ class TestAnalyzeBook:
         assert len(results) == 2
         assert client.call_count == 2
 
-    def test_accumulates_concepts_across_chapters(self) -> None:
-        """Prior chapter concepts should be passed to subsequent chapters."""
+    def test_analyzes_chapters_in_parallel(self) -> None:
+        """All chapters are analyzed and returned in order."""
+        import threading
         from src.extraction.types import Book
 
         ch1 = _make_chapter()
@@ -245,9 +246,10 @@ class TestAnalyzeBook:
             chapters=(ch1, ch2),
         )
 
-        prompts: list[str] = []
+        lock = threading.Lock()
+        call_count = [0]
 
-        class CapturingClient:
+        class ThreadSafeClient:
             def complete(self, system_prompt: str, user_prompt: str) -> str:
                 return "mock"
 
@@ -257,13 +259,15 @@ class TestAnalyzeBook:
             def complete_structured(
                 self, system_prompt: str, user_prompt: str, response_model: type
             ):
-                prompts.append(user_prompt)
+                with lock:
+                    call_count[0] += 1
+                    n = call_count[0]
                 return ChapterAnalysis(
-                    chapter_number=1,
-                    chapter_title="X",
+                    chapter_number=n,
+                    chapter_title=f"Ch{n}",
                     concepts=[
                         ConceptEntry(
-                            name=f"Concept from ch{len(prompts)}",
+                            name=f"Concept from ch{n}",
                             definition="Def.",
                             concept_type="definition",
                             section_title="S",
@@ -276,11 +280,11 @@ class TestAnalyzeBook:
             ):
                 return self.complete_structured(system_prompt, user_prompt, response_model)
 
-        analyze_book(book, CapturingClient())
+        analyses = analyze_book(book, ThreadSafeClient())
 
-        # Second prompt should mention the concept from chapter 1
-        assert len(prompts) == 2
-        assert "Concept from ch1" in prompts[1]
+        # Both chapters analyzed, results returned in order
+        assert len(analyses) == 2
+        assert call_count[0] == 2
 
 
 class TestSmartTruncate:
@@ -302,3 +306,84 @@ class TestSmartTruncate:
         assert len(result) <= 100  # truncated + suffix
 
 
+class TestParallelDeepReading:
+    """Tests for parallel chapter analysis in analyze_book()."""
+
+    def test_sequential_with_max_workers_1(self) -> None:
+        """max_workers=1 runs chapters sequentially."""
+        import threading
+        from src.extraction.types import Book
+
+        ch1 = _make_chapter()
+        ch2 = Chapter(
+            chapter_number=2,
+            title="Chapter 2",
+            start_page=11,
+            end_page=20,
+            sections=(
+                Section(title="S1", level=2, start_page=11, end_page=20, text="B" * 300),
+            ),
+        )
+        book = Book(title="Test", author="A", total_pages=20, chapters=(ch1, ch2))
+
+        lock = threading.Lock()
+        call_count = [0]
+
+        class CountingClient:
+            def complete(self, system_prompt: str, user_prompt: str) -> str:
+                return "mock"
+
+            def complete_light(self, system_prompt: str, user_prompt: str) -> str:
+                return "mock"
+
+            def complete_structured(self, system_prompt: str, user_prompt: str, response_model: type):
+                with lock:
+                    call_count[0] += 1
+                return ChapterAnalysis(
+                    chapter_number=call_count[0],
+                    chapter_title="X",
+                    concepts=[],
+                )
+
+            def complete_structured_light(self, system_prompt: str, user_prompt: str, response_model: type):
+                return self.complete_structured(system_prompt, user_prompt, response_model)
+
+        analyses = analyze_book(book, CountingClient(), max_workers=1)
+
+        assert len(analyses) == 2
+        assert call_count[0] == 2
+
+    def test_handles_single_chapter(self) -> None:
+        """Single-chapter book works with parallel code path."""
+        import threading
+        from src.extraction.types import Book
+
+        book = Book(
+            title="Test", author="A", total_pages=10,
+            chapters=(_make_chapter(),),
+        )
+
+        lock = threading.Lock()
+        call_count = [0]
+
+        class CountingClient:
+            def complete(self, system_prompt: str, user_prompt: str) -> str:
+                return "mock"
+
+            def complete_light(self, system_prompt: str, user_prompt: str) -> str:
+                return "mock"
+
+            def complete_structured(self, system_prompt: str, user_prompt: str, response_model: type):
+                with lock:
+                    call_count[0] += 1
+                return ChapterAnalysis(
+                    chapter_number=1, chapter_title="X", concepts=[],
+                )
+
+            def complete_structured_light(self, system_prompt: str, user_prompt: str, response_model: type):
+                return self.complete_structured(system_prompt, user_prompt, response_model)
+
+        analyses = analyze_book(book, CountingClient(), max_workers=4)
+
+        assert len(analyses) == 1
+        assert call_count[0] == 1

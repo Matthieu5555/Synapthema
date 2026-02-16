@@ -31,4 +31,23 @@ learningxp = "src.pipeline:main"
 [dependency-groups]
 dev = [
     "pytest>=9.0.2",
+    "pyright>=1.1.390",
+    "pylint>=4.0.4",
+    "ruff>=0.15.1",
+    "radon>=6.0.1",
+    "xenon>=0.9.3",
+    "vulture>=2.14",
+    "eradicate>=3.0.1",
+    "darglint>=1.8.1",
+    "pydocstyle>=6.3.0",
 ]
+
+[tool.pyright]
+pythonVersion = "3.12"
+typeCheckingMode = "standard"
+reportMissingTypeStubs = false
+reportUnusedImport = false
+# Catch the class of bugs we hit (NameError from undefined variables)
+reportUndefinedVariable = "error"
+reportMissingParameterType = "error"
+reportReturnType = "error"

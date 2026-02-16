@@ -321,7 +321,9 @@ class TestInputSourceConfig:
             llm_temperature=0.3,
             llm_max_tokens=8192,
             embed_images=True,
+            vision_enabled=False,
             document_type="auto",
+            max_concurrent_llm=4,
         )
         assert config.pdf_path == Path("/tmp/a.pdf")
 

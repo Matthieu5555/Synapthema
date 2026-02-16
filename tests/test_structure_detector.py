@@ -1,5 +1,8 @@
 """Tests for the structure detector — TOC parsing and chapter identification."""
 
+import json
+from unittest.mock import MagicMock
+
 from src.extraction.structure_detector import (
     TocEntry,
     _collapse_spaced_letters,
@@ -7,8 +10,10 @@ from src.extraction.structure_detector import (
     _is_chapter_entry,
     _normalize_title,
     _page_range_fallback,
+    detect_subsections_with_llm,
     identify_chapters,
 )
+from src.transformation.llm_client import LLMError
 
 
 class TestNormalizeTitle:
@@ -179,3 +184,111 @@ class TestPageRangeFallback:
             current_end = result[i][3]
             next_start = result[i + 1][2]
             assert next_start == current_end + 1
+
+
+# ── LLM subsection detection ────────────────────────────────────────────────
+
+
+def _make_mock_doc(pages: dict[int, str]) -> MagicMock:
+    """Create a mock fitz.Document with given page texts (0-indexed keys)."""
+    doc = MagicMock()
+    doc.__len__ = lambda self: max(pages.keys()) + 1 if pages else 0
+
+    def getitem(self: object, idx: int) -> MagicMock:
+        page = MagicMock()
+        page.get_text.return_value = pages.get(idx, "")
+        return page
+
+    doc.__getitem__ = getitem
+    return doc
+
+
+class TestDetectSubsectionsWithLLM:
+    """Tests for the LLM-based subsection detection."""
+
+    def test_returns_entries_on_success(self) -> None:
+        doc = _make_mock_doc({0: "page 1 text", 1: "page 2 text"})
+        llm = MagicMock()
+        llm.complete_light.return_value = json.dumps([
+            {"level": 2, "title": "2.1 Random Variables", "page": 1},
+            {"level": 2, "title": "2.2 Distributions", "page": 2},
+            {"level": 3, "title": "2.2.1 Normal", "page": 2},
+        ])
+
+        result = detect_subsections_with_llm(doc, 1, 2, "Chapter 2", llm)
+
+        assert len(result) == 3
+        assert result[0].title == "2.1 Random Variables"
+        assert result[0].level == 2
+        assert result[0].page == 1
+        assert result[2].title == "2.2.1 Normal"
+        assert result[2].level == 3
+
+    def test_returns_empty_on_llm_failure(self) -> None:
+        doc = _make_mock_doc({0: "page 1 text"})
+        llm = MagicMock()
+        llm.complete_light.side_effect = LLMError("API error")
+
+        result = detect_subsections_with_llm(doc, 1, 1, "Chapter 1", llm)
+
+        assert result == ()
+
+    def test_returns_empty_when_fewer_than_2_entries(self) -> None:
+        doc = _make_mock_doc({0: "page 1 text"})
+        llm = MagicMock()
+        llm.complete_light.return_value = json.dumps([
+            {"level": 2, "title": "Only One Section", "page": 1},
+        ])
+
+        result = detect_subsections_with_llm(doc, 1, 1, "Chapter 1", llm)
+
+        assert result == ()
+
+    def test_returns_empty_on_invalid_json(self) -> None:
+        doc = _make_mock_doc({0: "page 1 text"})
+        llm = MagicMock()
+        llm.complete_light.return_value = "not valid json at all"
+
+        result = detect_subsections_with_llm(doc, 1, 1, "Chapter 1", llm)
+
+        assert result == ()
+
+    def test_clamps_pages_to_chapter_range(self) -> None:
+        doc = _make_mock_doc({0: "p1", 1: "p2", 2: "p3"})
+        llm = MagicMock()
+        llm.complete_light.return_value = json.dumps([
+            {"level": 2, "title": "Section A", "page": 1},
+            {"level": 2, "title": "Section B", "page": 2},
+            {"level": 2, "title": "Section C", "page": 99},  # above range
+        ])
+
+        result = detect_subsections_with_llm(doc, 1, 3, "Chapter", llm)
+
+        assert len(result) == 3
+        assert result[0].page == 1
+        assert result[1].page == 2
+        assert result[2].page == 3   # clamped down from 99
+
+    def test_sorts_by_page_and_level(self) -> None:
+        doc = _make_mock_doc({0: "p1", 1: "p2"})
+        llm = MagicMock()
+        llm.complete_light.return_value = json.dumps([
+            {"level": 2, "title": "Late Section", "page": 2},
+            {"level": 2, "title": "Early Section", "page": 1},
+            {"level": 3, "title": "Subsection of Early", "page": 1},
+        ])
+
+        result = detect_subsections_with_llm(doc, 1, 2, "Chapter", llm)
+
+        assert result[0].title == "Early Section"
+        assert result[1].title == "Subsection of Early"
+        assert result[2].title == "Late Section"
+
+    def test_returns_empty_for_empty_pages(self) -> None:
+        doc = _make_mock_doc({0: "", 1: ""})
+        llm = MagicMock()
+
+        result = detect_subsections_with_llm(doc, 1, 2, "Chapter", llm)
+
+        assert result == ()
+        llm.complete_light.assert_not_called()

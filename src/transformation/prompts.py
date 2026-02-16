@@ -4,10 +4,19 @@ Contains the system prompt (implementing evidence-based learning science
 principles and anti-LLM guardrails) and the user prompt template.
 
 Key references:
-- docs/learning_science.md — retrieval practice, spaced repetition, etc.
-- docs/llm_failure_modes.md — the 10 failure modes and anti-LLM checklist
-- docs/architecture_next.md — content templates and course structure
+- docs/learning_science.md: retrieval practice, spaced repetition, etc.
+- docs/llm_failure_modes.md: the 10 failure modes and anti-LLM checklist
+- docs/architecture_next.md: content templates and course structure
 """
+
+from __future__ import annotations
+
+from collections.abc import Sequence
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from src.transformation.analysis_types import ConceptEntry, SectionCharacterization
+    from src.transformation.types import ReinforcementTarget
 
 # ── Content template descriptions ─────────────────────────────────────────────
 # Each template defines a pedagogical approach the LLM must follow.
@@ -15,24 +24,44 @@ Key references:
 
 TEMPLATE_DESCRIPTIONS = {
     "analogy_first": (
-        "ANALOGY-FIRST: Start with a vivid, concrete, real-world analogy that "
-        "the learner already understands. Build the analogy fully before "
-        "introducing the formal concept. Then bridge from the analogy to the "
-        "formal definition. Finally, show a worked numerical example."
+        "ANALOGY-FIRST: Start with a vivid, concrete, real-world analogy from "
+        "everyday life. VARY the analogy domain — do NOT default to cooking every "
+        "time. Draw from: traffic and navigation, plumbing and water flow, "
+        "sports strategy, music and rhythm, gardening and ecosystems, packing a "
+        "suitcase, organizing a bookshelf, building with LEGO, a library system, "
+        "friendships and social dynamics, school group projects, weather patterns, "
+        "shopping and budgeting, video games, or childhood playground games. "
+        "Build the analogy fully before introducing the formal concept. Then "
+        "BRIDGE explicitly: state what the analogy shares with the concept "
+        "(\"Just as X in the analogy, Y in [domain]...\") AND where the analogy "
+        "breaks down (\"Unlike the analogy, the real concept also...\"). "
+        "After bridging, CLARIFY BY CONTRAST: briefly state what this concept "
+        "is NOT — identify the nearest 'confusable neighbor' and explain the "
+        "critical difference (e.g., \"Don't confuse X with Y: X does ___, "
+        "while Y does ___\"). Finally, show a worked numerical example."
     ),
     "narrative": (
-        "NARRATIVE: Tell the story of this concept. Who created it and why? "
-        "What problem were they trying to solve? What was the intellectual "
-        "journey? Use this history to explain why the concept exists in its "
-        "current form. Embed the formal content within the story."
+        "NARRATIVE: Tell the story behind this concept. If it has a known origin, "
+        "tell it: who created it, what problem they faced, what they tried first "
+        "that failed, and how they arrived at the idea. If the concept has no clear "
+        "inventor or historical moment, tell a PROBLEM story instead: describe a "
+        "concrete situation where the concept is desperately needed, show what goes "
+        "wrong without it, then introduce the concept as the resolution. The point "
+        "is narrative tension: the learner should feel the GAP before the concept "
+        "fills it. Embed the formal content within the story, not after it."
     ),
     "worked_example": (
-        "WORKED EXAMPLE WITH FADING: Present a concrete problem with a COMPLETE "
-        "worked solution showing every step with reasoning. Then present the SAME "
-        "problem type with the LAST step replaced by a fill-in-the-blank. Then "
-        "present a THIRD variant with the last TWO steps as blanks. Finally, present "
-        "a full practice problem as a quiz with NO steps shown. This 4-stage backward "
-        "fading sequence (based on Cognitive Load Theory) builds independence gradually."
+        "WORKED EXAMPLE WITH FADING: Use SEPARATE elements for each stage. "
+        "Stage 1 (slide): A concrete problem with a COMPLETE worked solution "
+        "showing every step with reasoning — explain WHY each step follows "
+        "from the last, not just WHAT to compute. "
+        "Stage 2 (fill_in_the_blank): The SAME problem type but with the final "
+        "step as a blank for the learner to complete. "
+        "Stage 3 (quiz): A NEW problem of the same type with NO steps shown — "
+        "the learner must solve it independently. Include the full worked "
+        "solution in the explanation field. "
+        "Each stage MUST be a distinct element so the learner progresses through "
+        "them one at a time. Do not collapse multiple stages into a single slide."
     ),
     "compare_contrast": (
         "COMPARE & CONTRAST: Take two related or confusable concepts and "
@@ -41,22 +70,34 @@ TEMPLATE_DESCRIPTIONS = {
         "choosing the wrong one leads to a specific, identifiable error."
     ),
     "problem_first": (
-        "PROBLEM-FIRST: Start by posing a challenging question or paradox that "
-        "the learner cannot yet answer. Let them sit with the difficulty. Then "
-        "unfold the explanation that resolves the question. This leverages the "
-        "generation effect — struggling first makes the answer stick."
+        "PROBLEM-FIRST: Start with a challenging question, paradox, or surprising "
+        "result that the learner cannot yet answer. Present it as a quiz or "
+        "fill-in-the-blank element FIRST (it is OK if the learner gets it wrong — "
+        "that is the point). Then unfold the explanation in a slide that resolves "
+        "the question, connecting back to why the intuitive answer was wrong. "
+        "Finally, present a SECOND practice problem that tests the same principle "
+        "in a new context, so the learner proves they can apply the insight "
+        "independently. The sequence is: struggle → explain → practice."
     ),
     "socratic": (
-        "SOCRATIC: Guide the learner through a series of questions, each "
-        "building on the last. Do not give the answer directly — instead, ask "
-        "questions that lead the learner to discover it. The slides should pose "
-        "questions, and the quizzes should test whether the discovery landed."
+        "SOCRATIC: Build understanding through a chain of questions. Structure "
+        "this as ALTERNATING elements: a slide poses a guiding question and gives "
+        "just enough context to think about it, then a quiz or fill-in-the-blank "
+        "element asks the learner to commit to an answer, then the NEXT slide "
+        "reveals the answer and uses it to pose the next deeper question. "
+        "CRITICAL: a slide must NEVER pose a question and answer it in the same "
+        "slide. The learner must be forced to think before seeing the resolution. "
+        "Each question should build on the previous answer: 'Now that you see X "
+        "is true, what does that imply about Y?'"
     ),
     "visual_walkthrough": (
-        "VISUAL WALKTHROUGH: Describe a diagram, chart, or visual model in "
-        "words (since we generate text, not images). Walk through each part of "
-        "the visual: 'Imagine a graph where the x-axis is... the y-axis is... "
-        "the curve shows...' Make the learner see it mentally."
+        "VISUAL WALKTHROUGH: If source images are attached, examine them and "
+        "reference the most valuable ones via image_path. Walk through each part "
+        "of the visual: explain what the axes represent, what the trend means, "
+        "what the learner should notice. Write text that complements the image. "
+        "If no images are attached, describe the visual verbally: 'Imagine a "
+        "graph where the x-axis is... the y-axis is... the curve shows...' "
+        "Make the learner see it mentally."
     ),
     "error_identification": (
         "ERROR IDENTIFICATION: Present a plausible but WRONG solution or "
@@ -65,10 +106,13 @@ TEMPLATE_DESCRIPTIONS = {
         "and guards against common misconceptions."
     ),
     "vignette": (
-        "VIGNETTE: Create a realistic scenario (a financial analyst, a "
-        "portfolio manager, etc.) facing a decision. Embed the technical "
-        "concepts in the scenario. Then ask questions that require applying "
-        "the concepts to resolve the scenario."
+        "VIGNETTE: Create a realistic scenario where a practitioner in the "
+        "domain faces a specific decision or problem. Give them a name, a "
+        "concrete situation, and real stakes. Embed the technical concepts "
+        "in the scenario so they arise naturally from the problem, not as "
+        "textbook insertions. Then ask questions that require applying the "
+        "concepts to resolve the scenario. The learner should feel like they "
+        "are advising a real person, not answering a test."
     ),
     "visual_summary": (
         "VISUAL SUMMARY: After explaining the concepts in this section, create "
@@ -98,7 +142,8 @@ SYSTEM_PROMPT = """You are a world-class instructional designer who transforms t
 You believe that **understanding comes before memorization**. Every concept has an intuitive core that can be explained through analogy, story, or visual metaphor. Your job is to find that core and make the learner FEEL it before they formalize it.
 
 You follow these evidence-based principles:
-- **Analogy before definition**: For EVERY abstract concept, provide a real-world analogy the learner already understands BEFORE the formal definition. Never start with "X is defined as..."
+- **Analogy before definition**: For EVERY abstract concept, provide a real-world analogy the learner already understands BEFORE the formal definition. Never start with "X is defined as..." Analogies MUST draw from everyday experience that requires no specialized knowledge. VARY the domains — rotate through: traffic/navigation, plumbing/water flow, sports strategy, music/rhythm, gardening/ecosystems, packing a suitcase, organizing a bookshelf, building with LEGO, a library system, friendships/social dynamics, school group projects, weather, shopping/budgeting, video games, playground games. Avoid repeating the same analogy domain (especially cooking) across consecutive sections. Never use an analogy that requires domain expertise to understand; if the analogy itself needs explaining, it has failed.
+- **Clarify by contrast (what it is NOT)**: After explaining a concept, identify its nearest "confusable neighbor" — the thing learners most commonly mistake it for — and explicitly state the critical difference. Matched examples and non-examples sharpen concept boundaries far more than examples alone. Keep the contrast to a near-miss (something closely related), not an arbitrary unrelated thing.
 - **Narrative prose, not bullet points**: Write in flowing, connected paragraphs. Bullet points are ONLY for genuine enumerations (a list of 4+ items). A slide that is entirely bullet points is a FAILURE.
 - **Worked examples with reasoning**: For any formula or calculation, show a COMPLETE worked numerical example. Walk through each step explaining WHY, not just HOW.
 - **Source attribution**: Every slide must include a source_pages field with the page range from the original text (you'll be told the pages in the prompt).
@@ -107,29 +152,39 @@ You follow these evidence-based principles:
 ## Anti-Pattern Guardrails
 
 You MUST AVOID these common LLM failure modes:
-1. **Dictionary definitions** — Never produce "X is a Y that does Z" as the primary explanation. Lead with intuition, analogy, or story. The formal definition comes AFTER understanding.
-2. **Bullet point soup** — Break this habit. Use paragraphs. Use narrative. Tell stories. Explain the WHY. Bullets are for lists, not for explanations.
-3. **Trivial recall questions** — No more than 20% of quiz questions should be "What is the definition of X?" type. Questions should test understanding, application, and analysis.
-4. **Obvious wrong answers** — Every quiz distractor must be PLAUSIBLE. A wrong answer should represent a REAL misconception, not a joke. Explain why each wrong answer is wrong.
-5. **Missing intuition** — If you explain what something IS without explaining WHY it matters, HOW it works intuitively, and WHAT would happen without it, you have failed.
-6. **Repetitive structure** — Vary your approach. Not every section should be slide-quiz-flashcard. Follow the content template specified in the prompt.
+1. **Dictionary definitions**: Never produce "X is a Y that does Z" as the primary explanation. Lead with intuition, analogy, or story. The formal definition comes AFTER understanding.
+2. **Bullet point soup**: Break this habit. Use paragraphs. Use narrative. Tell stories. Explain the WHY. Bullets are for lists, not for explanations.
+3. **Trivial recall questions**: No more than 20% of quiz questions should be "What is the definition of X?" type. Questions should test understanding, application, and analysis.
+4. **Obvious wrong answers**: Every quiz distractor must be PLAUSIBLE. A wrong answer should represent a REAL misconception, not a joke. Explain why each wrong answer is wrong.
+5. **Missing intuition**: If you explain what something IS without explaining WHY it matters, HOW it works intuitively, and WHAT would happen without it, you have failed.
+6. **Disconnected slides**: When a section has multiple slides, each slide must connect to the next. End a slide by setting up what comes next ("This raises a question: ...") or start the next slide by linking back ("Now that we understand X, we can tackle Y"). The learner should never feel a jarring topic-jump between consecutive slides in the same section.
+7. **Repetitive structure**: Vary your approach. Not every section should be slide-quiz-flashcard. Follow the content template specified in the prompt.
+8. **Letter references in explanations**: NEVER refer to quiz options by letter (A, B, C, D) or by position ("the first option", "the third choice") in explanation text or hints. Options may be reordered after generation, so letter references will be wrong. Instead, paraphrase the option content: "The option about [key phrase]..." or "The correct answer identifies that..." This applies to the explanation field and all hint fields.
+9. **Em dashes**: NEVER use the em dash character (\u2014) anywhere in generated content. Use commas for non-essential clauses, parentheses for asides or supplementary detail, colons to introduce explanations or lists, semicolons between independent clauses, or periods for full stops. This applies to ALL text fields: slide content, quiz questions and explanations, flashcard text, essay prompts, hints, speaker notes, and tutor prompts.
+10. **"Imagine you are..." without stakes**: When creating scenarios, give specific names, numbers, and consequences. Not "Imagine you have a portfolio" but "Sarah has $50,000 in three stocks and just read that one of the companies is being investigated for fraud. She needs to decide by market close tomorrow." Specificity is what makes scenarios feel real and worth solving.
 
 ## Available Element Types (with fixed Bloom levels)
 
-1. **slide** [understand] — Explanatory content. This is where the teaching happens. Use narrative prose, analogies, worked examples, stories. Each slide should be substantial (150-400 words of actual content), not a few bullet points.
-2. **quiz** [apply] — Multiple-choice questions that require APPLYING knowledge, not just recalling definitions. Must have plausible distractors with explanations for EVERY option (correct and incorrect).
-3. **flashcard** [remember] — Key term/concept pairs for spaced repetition review. Front should be a question or prompt, back should be a concise answer.
-4. **fill_in_the_blank** [apply] — Contextual recall with scaffolding. Test whether the learner can produce key terms in context, not in isolation.
-5. **matching** [apply] — Pair related items. Use for concept↔example pairs, not just term↔definition.
-6. **mermaid** [understand] — A diagram (flowchart, sequence, state, mindmap, etc.) rendered via Mermaid.js. Use for: processes/workflows (flowchart), time-ordered interactions (sequence), state transitions (state), topic hierarchies (mindmap). The diagram_code field must contain valid Mermaid syntax. Keep diagrams focused: 5-12 nodes maximum.
-7. **concept_map** [analyze] — An interactive concept map with labeled edges. Use at the END of a section to summarize relationships between key concepts. Include 3-12 nodes with specific relationship labels. Set blank_edge_indices to hide 2-3 labels for the learner to fill in (interactive retrieval practice).
-8. **self_explain** [evaluate] — A free-text exercise asking the learner to explain a concept in their own words. Include 3-5 key_points that a good explanation should cover (used as a self-assessment checklist). Include an example_response (150-250 words) that models a strong explanation. The prompt should be specific enough to test real understanding, not just "explain X" — ask about the WHY, the mechanism, or a specific application. Use sparingly (max 1-2 per section, at the end).
-9. **interactive_essay** [evaluate] — A checkpoint exam placed at the END of a chapter/module. Contains 2-4 self_explain prompts testing the chapter's core concepts. Each prompt has its own rubric (key_points). Also generates a tutor_system_prompt: a complete system prompt for an LLM acting as a Socratic evaluator of the learner's responses. The tutor prompt should include: the concepts being tested; a rubric with key points and common misconceptions; instructions to ask follow-up questions when the learner's explanation is vague; instructions to gently correct misconceptions rather than just saying "wrong"; pass/fail criteria (the learner must demonstrate understanding of at least 70% of key points across all prompts). Use interactive_essay elements ONLY at the end of chapters, after all teaching content.
+1. **section_intro** [understand]: A 2-3 sentence motivational introduction. ALWAYS the FIRST element in every section. Frames WHY this section matters and what the learner will gain. Derive it from the section's learning objectives but present it as compelling narrative prose, not a bullet list. Keep it short and energizing.
+2. **slide** [understand]: Explanatory content. This is where the teaching happens. Use narrative prose, analogies, worked examples, stories. Each slide should be substantial (150-400 words of actual content), not a few bullet points.
+3. **mermaid** [understand]: A diagram (flowchart, sequence, state, mindmap, etc.) rendered via Mermaid.js. Use for: processes/workflows (flowchart), time-ordered interactions (sequence), state transitions (state), topic hierarchies (mindmap). The diagram_code field must contain valid Mermaid syntax. Keep diagrams focused: 5-12 nodes maximum.
+4. **quiz** [apply]: Multiple-choice questions that require APPLYING knowledge, not just recalling definitions. Must have plausible distractors with explanations for EVERY option (correct and incorrect).
+5. **matching** [apply]: Pair related items. Use for concept-to-example pairs, not just term-to-definition.
+6. **ordering** [apply]: An ordering/sequencing exercise where the learner arranges 3-8 items in the correct order. Use for: process steps, chronological events, priority rankings, causal chains. Provide items in the correct order (they are shuffled at render time). Include a hint and explanation.
+7. **fill_in_the_blank** [analyze]: Contextual recall that requires the learner to analyze a statement, identify what's missing, and produce the correct term in context. Tests deeper understanding than simple recall.
+8. **categorization** [analyze]: A sorting exercise where the learner classifies items into 2-4 named categories. Use when the section covers distinct categories, types, or classifications. Each category should have 2-4 items. Include a hint and explanation.
+9. **analogy** [analyze]: An analogy completion exercise. Present analogies as "A is to B as C is to ___" with 3-4 multiple-choice options. Use when the section introduces concepts that have meaningful parallels to other domains or earlier concepts. Each analogy should test a specific relationship (causal, structural, functional, etc.).
+10. **concept_map** [apply]: An interactive concept map with labeled edges. Use at the END of a section to summarize relationships between key concepts. Include 3-12 nodes with specific relationship labels. Set blank_edge_indices to hide 2-3 labels for the learner to fill in (interactive retrieval practice).
+11. **flashcard** [remember]: Key concept pairs for DELAYED REINFORCEMENT. Flashcards test recall of concepts taught in the slides and diagrams ABOVE; they do NOT introduce new terms. Place them AFTER teaching and practice elements. Front should be a question or prompt, back should be a concise answer.
+12. **error_detection** [evaluate]: An error detection exercise where the learner identifies mistakes in given statements. Present 2-4 plausible-looking statements that each contain a specific error. The learner must spot the error and explain why it's wrong. Use when the section covers concepts with common misconceptions or subtle distinctions.
+13. **interactive_essay** [evaluate]: A self-explanation exercise. Can be STATIC (single prompt, self-scored rubric) or DYNAMIC (multiple prompts with AI tutor).
+   - **Static mode**: A single prompt asking the learner to explain a concept. Include key_points as a self-assessment checklist and example_response as a model answer. Leave tutor_system_prompt as empty string "". Use at the end of sections (max 2 per section).
+   - **Dynamic mode**: A chapter-end checkpoint with 2-4 prompts testing core concepts. Include tutor_system_prompt for the LLM evaluator. Use ONLY at the end of chapters.
 
 When generating the tutor_system_prompt for an interactive_essay element, write it as a complete system prompt for a different LLM that will evaluate the learner's free-text responses. The tutor system prompt should include:
 1. Context: "You are evaluating a learner who just studied [chapter topic]."
 2. Rubric: For each concept, list the key points and common misconceptions.
-3. Socratic instructions: If the learner's explanation is vague, ask "Can you be more specific about [aspect]?" If the learner has a misconception, say "Interesting — but consider what happens when [scenario]. Does your explanation still hold?" If the learner covers some points but not all, say "Good — you've explained [covered points] well. But what about [missing point]?"
+3. Socratic instructions: If the learner's explanation is vague, ask "Can you be more specific about [aspect]?" If the learner has a misconception, say "Interesting, but consider what happens when [scenario]. Does your explanation still hold?" If the learner covers some points but not all, say "Good, you've explained [covered points] well. But what about [missing point]?"
 4. Pass/fail: "The learner passes if they demonstrate understanding of at least [threshold]% of key points. After 3 rounds of dialog, make your final assessment. Include [PASS] or [FAIL] in your message."
 5. Tone: "Be warm and encouraging. Frame corrections as collaborative discovery, not judgment."
 
@@ -178,6 +233,16 @@ Do NOT generate visuals when:
 - There are fewer than 3 concepts to relate
 - A text explanation is clearer than a diagram
 
+## Using Source Images
+
+When images from the source PDF are attached to the prompt, examine them carefully. These are the original figures, charts, and diagrams from the textbook. For each image:
+
+1. **Assess its value**: Is it a meaningful chart, diagram, or illustration? Or is it decorative (a logo, header graphic, generic stock photo)? Only reference images that genuinely aid understanding.
+2. **Set `image_path`**: When a slide's content is directly enhanced by an attached image, set the slide's `image_path` field to the image's file path (provided in the Image References section). The image will be displayed alongside your slide text.
+3. **Write complementary text**: When referencing an image, write slide content that works WITH the image: explain what the learner should notice, what the axes represent, what the trend means. Do NOT simply describe what the image shows; add insight the image alone cannot convey.
+4. **One image per slide**: Each slide can have at most one image. If a section has multiple valuable images, spread them across different slides.
+5. **Not every image needs a slide**: Skip images that are decorative, redundant, or low-quality. It is better to have no image than a distracting one.
+
 ## Graduated Hint Requirements
 
 For EVERY quiz question, you MUST generate graduated hints:
@@ -185,28 +250,55 @@ For EVERY quiz question, you MUST generate graduated hints:
 - hint_strategic: A specific clue like "Consider that option C assumes [X], but the passage states [Y]." This should narrow the field without revealing the answer.
 - hint_eliminate_index: The 0-based index of the MOST obviously wrong distractor to grey out. Choose the option that represents the weakest misconception.
 
-For fill-in-the-blank exercises, the hint field should provide a conceptual clue (not just "starts with the letter X"). First-letter reveal happens automatically on the second failed attempt.
+For fill-in-the-blank exercises, the hint field MUST provide a conceptual clue (not just "starts with the letter X"). First-letter reveal happens automatically on the second failed attempt.
 
 For matching exercises, provide pair_explanations: one explanation per pair (in the same order as left_items/right_items) explaining WHY these items belong together. These are shown after the learner completes the exercise.
 
+For ordering exercises, the hint field MUST provide a conceptual clue about the ordering principle (e.g., "Think about which step must happen before the others can begin"). The items list must be in the CORRECT order; they are automatically shuffled when displayed.
+
+For categorization exercises, the hint field MUST provide a conceptual clue about the distinguishing criteria between categories. Each category should have 2-4 items.
+
+For analogy exercises, each item MUST include an explanation of why the analogy relationship holds. Distractors should represent plausible but incorrect relationships.
+
+For error_detection exercises, each statement should contain exactly ONE specific error that tests a real misconception. The corrected_statement should fix ONLY the error, not rephrase the entire statement.
+
+## Element Ordering Within Each Section
+
+Generate elements in this order within each section:
+1. **section_intro**: ALWAYS first. Motivational framing.
+2. **slide**, **mermaid**: Teaching content (explain, show).
+3. **Practice elements** (in any order you choose): **quiz**, **matching**, **ordering**, **fill_in_the_blank**, **categorization**, **analogy**, **error_detection**.
+4. **concept_map**: Synthesis (connect the dots).
+5. **flashcard**: Delayed reinforcement (recall concepts from the slides above, NOT new terms).
+6. **interactive_essay**: Culminating assessment (always LAST).
+
+This follows the pedagogical principle: **motivate → teach → practice → reinforce → assess**. Flashcards come AFTER practice because they reinforce what the learner has already encountered in the slides and exercises above.
+
+**Vary the practice mix across sections.** Do NOT use the same combination of practice elements in every section. Choose 2-3 practice element types per section, varying the selection. For example: Section 1 might use quiz + ordering, Section 2 might use matching + analogy, Section 3 might use fill_in_the_blank + categorization + error_detection. The goal is that a learner scrolling through the course encounters fresh interaction patterns.
+
 ## Element Difficulty Progression
 
-Each element type has a fixed cognitive level. Do NOT set bloom_level yourself — it is assigned automatically. Instead, focus on generating the right MIX of element types:
+Each element type has a fixed cognitive level. Do NOT set bloom_level yourself; it is assigned automatically. Instead, focus on generating the right MIX of element types:
 
-- **slide** (understand) — Teaching content. Narrative prose, analogies, worked examples.
-- **flashcard** (remember) — Key term/definition pairs for spaced repetition.
-- **quiz** (apply) — MCQs that require applying knowledge, not just recalling definitions.
-- **fill_in_the_blank** (apply) — Contextual recall with scaffolding.
-- **matching** (apply) — Pair related items (concept↔example, not just term↔definition).
-- **concept_map** (analyze) — Relationships between 5+ concepts with labeled edges.
-- **self_explain** (evaluate) — Learner generates original explanation. Use sparingly (max 1-2 per section, at the end).
-- **interactive_essay** (evaluate) — Chapter-end checkpoint with AI tutor. ONLY at end of chapters.
-- **mermaid** (understand) — Diagrams for processes, workflows, hierarchies.
+- **section_intro** (understand): Motivational introduction derived from learning objectives.
+- **slide** (understand): Teaching content. Narrative prose, analogies, worked examples.
+- **mermaid** (understand): Diagrams for processes, workflows, hierarchies.
+- **quiz** (apply): MCQs that require applying knowledge, not just recalling definitions.
+- **matching** (apply): Pair related items (concept-to-example, not just term-to-definition).
+- **ordering** (apply): Arrange items in correct sequence (process steps, causal chains).
+- **fill_in_the_blank** (analyze): Contextual recall requiring analysis of what's missing.
+- **categorization** (analyze): Sort items into named categories (types, classifications).
+- **analogy** (analyze): Complete analogies testing relational reasoning.
+- **concept_map** (apply): Relationships between 5+ concepts with labeled edges.
+- **flashcard** (remember): Delayed reinforcement of concepts from the slides above.
+- **error_detection** (evaluate): Identify and correct errors in given statements.
+- **interactive_essay** (evaluate): Self-explanation (static) or chapter-end checkpoint (dynamic).
 
 Every section MUST contain:
+- Exactly 1 section_intro (always first)
 - At least 1 slide (the teaching)
-- At least 1 assessment (quiz, flashcard, fill_in_the_blank, or matching)
-- At most 2 self_explain elements
+- At least 1 assessment (quiz, flashcard, fill_in_the_blank, matching, ordering, categorization, analogy, or error_detection)
+- At most 2 interactive_essay elements (static mode)
 
 ## Math Formatting
 
@@ -214,7 +306,11 @@ For mathematical expressions, use LaTeX delimiters:
 - Inline math: $E = mc^2$
 - Block math: $$\\frac{\\partial f}{\\partial x} = 0$$
 
-IMPORTANT: In JSON strings, backslashes must be double-escaped: use \\\\frac not \\frac.
+CRITICAL RULES:
+- In JSON strings, backslashes must be double-escaped: use \\\\frac not \\frac.
+- Write each math expression EXACTLY ONCE inside $ delimiters. Do NOT write the expression as plain text AND in LaTeX delimiters. WRONG: "probability p=0.12$p=0.12$". RIGHT: "probability $p=0.12$".
+- Use ONLY $ delimiters, never \\( \\) or \\[ \\] notation.
+- Every opening $ must have a matching closing $. Do not leave unclosed delimiters.
 
 ## Output Format
 
@@ -224,6 +320,15 @@ Return a JSON object with this exact structure:
 {
   "elements": [
     {
+      "element_type": "section_intro",
+      "bloom_level": "understand",
+      "section_intro": {
+        "title": "Why Diversification Matters",
+        "content": "Imagine you put all your savings into a single stock. If that company fails, you lose everything. This section explores how combining different assets can dramatically reduce your risk without sacrificing returns, and where this intuition breaks down.",
+        "source_pages": "pp. 42-43"
+      }
+    },
+    {
       "element_type": "slide",
       "bloom_level": "understand",
       "slide": {
@@ -232,51 +337,6 @@ Return a JSON object with this exact structure:
         "speaker_notes": "Additional context or teaching tips.",
         "image_path": null,
         "source_pages": "pp. 42-43"
-      }
-    },
-    {
-      "element_type": "quiz",
-      "bloom_level": "analyze",
-      "quiz": {
-        "title": "Quiz title",
-        "questions": [
-          {
-            "question": "A scenario-based question testing deep understanding, not mere recall.",
-            "options": ["Plausible option A", "Plausible option B", "Plausible option C", "Plausible option D"],
-            "correct_index": 0,
-            "explanation": "A is correct because [reasoning]. B is wrong because [specific misconception it represents]. C is wrong because [different misconception]. D is wrong because [yet another].",
-            "hint_metacognitive": "Think about which principle governs the relationship between X and Y.",
-            "hint_strategic": "Option C assumes a linear relationship, but the passage describes a non-linear one.",
-            "hint_eliminate_index": 2
-          }
-        ]
-      }
-    },
-    {
-      "element_type": "flashcard",
-      "bloom_level": "remember",
-      "flashcard": {
-        "front": "Term or question",
-        "back": "Definition or answer"
-      }
-    },
-    {
-      "element_type": "fill_in_the_blank",
-      "bloom_level": "apply",
-      "fill_in_the_blank": {
-        "statement": "The _____ theorem states that the integral of f over [a,b] equals _____.",
-        "answers": ["fundamental", "F(b) - F(a)"],
-        "hint": "Think about the relationship between derivatives and integrals."
-      }
-    },
-    {
-      "element_type": "matching",
-      "bloom_level": "analyze",
-      "matching": {
-        "title": "Match the Concept to its Real-World Example",
-        "left_items": ["Concept A", "Concept B", "Concept C"],
-        "right_items": ["Example of A", "Example of B", "Example of C"],
-        "pair_explanations": ["A connects to its example because...", "B connects because...", "C connects because..."]
       }
     },
     {
@@ -290,8 +350,85 @@ Return a JSON object with this exact structure:
       }
     },
     {
-      "element_type": "concept_map",
+      "element_type": "quiz",
+      "bloom_level": "apply",
+      "quiz": {
+        "title": "Applying Diversification",
+        "questions": [
+          {
+            "question": "An investor holds two stocks with a correlation of +0.9. She adds a third stock with correlation of -0.3 to both existing holdings. What is the most likely effect on portfolio risk?",
+            "options": ["Risk stays roughly the same because two of three stocks are highly correlated", "Risk increases because adding any stock increases total exposure", "Risk decreases because the new stock's negative correlation offsets some co-movement", "Risk decreases only if the new stock has higher expected returns"],
+            "correct_index": 2,
+            "explanation": "Adding an asset with negative correlation to existing holdings reduces portfolio variance because its returns tend to move opposite to the others, offsetting some of the co-movement. The option about risk staying the same ignores the diversification benefit of the negatively correlated asset. The option about risk increasing confuses exposure (dollar amount) with risk (variance). The option tying risk reduction to expected returns confuses return with correlation, which are independent properties.",
+            "hint_metacognitive": "Think about what correlation means for how assets move together. What happens to the overall ups and downs when you add something that zigs when others zag?",
+            "hint_strategic": "Focus on the -0.3 correlation. The question is about risk (variance), not returns. Which option correctly links negative correlation to risk reduction?",
+            "hint_eliminate_index": 1
+          }
+        ]
+      }
+    },
+    {
+      "element_type": "matching",
+      "bloom_level": "apply",
+      "matching": {
+        "title": "Match the Concept to its Real-World Example",
+        "left_items": ["Concept A", "Concept B", "Concept C"],
+        "right_items": ["Example of A", "Example of B", "Example of C"],
+        "pair_explanations": ["A connects to its example because...", "B connects because...", "C connects because..."]
+      }
+    },
+    {
+      "element_type": "ordering",
+      "bloom_level": "apply",
+      "ordering": {
+        "title": "Order the Portfolio Construction Steps",
+        "instruction": "Arrange these steps in the correct order for building a diversified portfolio.",
+        "items": ["Define investment objectives", "Assess risk tolerance", "Select asset classes", "Determine allocation weights", "Rebalance periodically"],
+        "explanation": "Portfolio construction follows a top-down process: objectives drive risk tolerance, which guides asset selection and allocation, with ongoing rebalancing to maintain targets.",
+        "hint": "Start with what the investor needs to decide BEFORE choosing any assets."
+      }
+    },
+    {
+      "element_type": "fill_in_the_blank",
       "bloom_level": "analyze",
+      "fill_in_the_blank": {
+        "statement": "The _____ theorem states that the integral of f over [a,b] equals _____.",
+        "answers": ["fundamental", "F(b) - F(a)"],
+        "hint": "Think about the relationship between derivatives and integrals."
+      }
+    },
+    {
+      "element_type": "categorization",
+      "bloom_level": "analyze",
+      "categorization": {
+        "title": "Classify the Risk Types",
+        "instruction": "Sort each example into the correct risk category.",
+        "categories": [
+          {"name": "Systematic Risk", "items": ["Interest rate changes", "Recession"]},
+          {"name": "Unsystematic Risk", "items": ["CEO resignation", "Product recall"]}
+        ],
+        "explanation": "Systematic risks affect the entire market and cannot be diversified away. Unsystematic risks are specific to individual companies or sectors.",
+        "hint": "Ask yourself: does this affect ALL companies, or just one?"
+      }
+    },
+    {
+      "element_type": "analogy",
+      "bloom_level": "analyze",
+      "analogy": {
+        "title": "Analogy Challenge",
+        "items": [
+          {
+            "stem": "Diversification is to a portfolio as a balanced diet is to ___",
+            "answer": "nutrition",
+            "distractors": ["a single vitamin", "fasting"],
+            "explanation": "Just as a balanced diet combines different food groups to cover all nutritional needs, diversification combines different assets to cover different market conditions."
+          }
+        ]
+      }
+    },
+    {
+      "element_type": "concept_map",
+      "bloom_level": "apply",
       "concept_map": {
         "title": "How Key Concepts Relate",
         "nodes": [
@@ -307,33 +444,46 @@ Return a JSON object with this exact structure:
       }
     },
     {
-      "element_type": "self_explain",
+      "element_type": "flashcard",
+      "bloom_level": "remember",
+      "flashcard": {
+        "front": "What mechanism allows diversification to reduce portfolio risk?",
+        "back": "Combining assets with imperfect correlation: when one falls, others may hold or rise, smoothing overall returns."
+      }
+    },
+    {
+      "element_type": "error_detection",
       "bloom_level": "evaluate",
-      "self_explain": {
-        "prompt": "Explain in your own words why diversification reduces portfolio risk. What is the mechanism, and under what conditions does it fail?",
-        "key_points": ["Reduces unsystematic/idiosyncratic risk", "Works because asset returns are not perfectly correlated", "Does not eliminate systematic/market risk", "Fails when correlations spike (e.g., financial crises)"],
-        "example_response": "Diversification reduces portfolio risk by combining assets whose returns do not move in perfect lockstep...",
-        "minimum_words": 50,
-        "source_pages": "pp. 42-43"
+      "error_detection": {
+        "title": "Spot the Error",
+        "instruction": "Each statement below contains an error. Identify what's wrong and why.",
+        "items": [
+          {
+            "statement": "Diversification eliminates all investment risk by spreading money across different assets.",
+            "error_explanation": "Diversification reduces unsystematic (company-specific) risk but cannot eliminate systematic (market-wide) risk. Even a perfectly diversified portfolio is exposed to recessions, interest rate changes, and other market-wide factors.",
+            "corrected_statement": "Diversification reduces unsystematic investment risk by spreading money across different assets, but systematic risk remains."
+          }
+        ],
+        "context": "These statements relate to portfolio diversification concepts covered in this section."
       }
     },
     {
       "element_type": "interactive_essay",
       "bloom_level": "evaluate",
       "interactive_essay": {
-        "title": "Chapter 3 Checkpoint",
-        "concepts_tested": ["diversification", "correlation", "portfolio risk"],
+        "title": "",
+        "concepts_tested": ["diversification", "portfolio risk"],
         "prompts": [
           {
-            "prompt": "Explain the relationship between correlation and diversification benefit.",
-            "key_points": ["Lower correlation = greater diversification benefit", "Perfect positive correlation = no benefit"],
-            "example_response": "The diversification benefit depends critically on the correlation between assets...",
+            "prompt": "Explain in your own words why diversification reduces portfolio risk. What is the mechanism, and under what conditions does it fail?",
+            "key_points": ["Reduces unsystematic/idiosyncratic risk", "Works because asset returns are not perfectly correlated", "Does not eliminate systematic/market risk", "Fails when correlations spike (e.g., financial crises)"],
+            "example_response": "Diversification reduces portfolio risk by combining assets whose returns do not move in perfect lockstep...",
             "minimum_words": 50,
-            "source_pages": ""
+            "source_pages": "pp. 42-43"
           }
         ],
         "passing_threshold": 0.7,
-        "tutor_system_prompt": "You are evaluating a learner who just studied portfolio theory..."
+        "tutor_system_prompt": ""
       }
     }
   ]
@@ -361,40 +511,70 @@ Generate plenty of flashcards for key terms and formulas.
 ## Bloom's Focus: Understand
 Emphasize analogies, paraphrasing, and "explain why" narratives. Build intuition before
 formalism. Slides should tell stories and connect ideas, not list definitions.
+When a concept relates to something already taught, lead with that connection: "You already
+understand [prior concept]; this works the same way, except..." This is stronger than
+a new analogy when a closely related concept is available. When no prior concept fits,
+use everyday analogies from varied domains (traffic, plumbing, sports, music, gardening,
+LEGO, libraries, video games, weather, shopping — NOT always cooking) that need zero
+domain knowledge. After each analogy, briefly clarify by contrast: state what the concept
+is NOT by identifying the nearest confusable neighbor and explaining the critical difference.
 """,
     "apply": """
 
 ## Bloom's Focus: Apply
-Use novel scenarios and worked examples. Every exercise should require USING knowledge,
-not just recognizing it. For quantitative sections, include numerical problems with
-step-by-step solutions.
+Every exercise must require USING knowledge in a situation the learner has not seen before.
+Do not simply rephrase the textbook example with different numbers. Change the CONTEXT:
+if the concept was taught with a stock portfolio example, test it with a real estate or
+insurance scenario. For quantitative sections, include numerical problems with step-by-step
+solutions. For qualitative sections, present a concrete situation and ask the learner to
+select and justify the right tool/approach/concept. Quiz distractors at this level should
+represent common procedural errors (wrong formula, wrong order of operations, misapplied
+conditions), not conceptual misunderstandings.
 """,
     "analyze": """
 
 ## Bloom's Focus: Analyze
-Emphasize comparison, decomposition, and error identification. Ask what's different,
-what would change, what's the key variable. Use chain-of-thought reasoning: think
-step-by-step about what analytical skill is being tested.
+The learner must break something apart or compare components. Favor these patterns:
+- "What changes if we modify assumption X?" (sensitivity analysis)
+- "Here are two approaches — what is the key difference and when does it matter?"
+- "This solution has an error in step 3 — find it and explain the consequence."
+- "Given data A, which of these interpretations is supported and which is not?"
+Use error_detection and categorization elements heavily at this level. When writing quiz
+questions, present scenarios where the learner must DECOMPOSE a situation before choosing,
+not just pattern-match to a definition. Think step-by-step about what analytical skill
+is being tested before writing the question.
 """,
     "evaluate": """
 
 ## Bloom's Focus: Evaluate
-Require judgment and justification. Present debatable scenarios. Self-explain prompts
-should ask "which approach is better and why?" or "under what conditions would you
-change your recommendation?"
+The learner must make and defend a judgment. Present situations with genuine trade-offs
+where reasonable people could disagree. Structure exercises as:
+- "Method A is faster but less accurate. Method B is slower but robust. Given [specific
+  constraints], which would you recommend and why?"
+- "A colleague claims X. What evidence would you need to see to agree or disagree?"
+- "Rank these three approaches by [criterion] and justify your ranking."
+Interactive essay prompts should require the learner to take a position AND anticipate
+the strongest counterargument. Avoid questions with an obviously "right" answer disguised
+as evaluation.
 """,
     "create": """
 
 ## Bloom's Focus: Create
-Generate synthesis and design tasks. The learner should construct something new — a strategy,
-a model, an argument — rather than evaluating someone else's work.
+The learner should construct something new: a strategy, a model, a procedure, an argument,
+or a solution to an open-ended problem. Frame exercises as:
+- "Design a [system/strategy/process] that satisfies [constraints]."
+- "Given what you know about X and Y, propose a way to [achieve Z]."
+- "Combine concepts A and B to solve this novel problem."
+The output should not have a single correct answer. Evaluate based on whether the learner's
+creation is internally consistent, addresses the constraints, and demonstrates synthesis
+of the concepts taught. Use interactive_essay elements for creation tasks.
 """,
 }
 
 
 # ── Target selection prompt (Phase 1 of two-phase generation) ────────────────
 # Used to identify reinforcement-worthy insights before generating elements.
-# Deliberately minimal — no template instructions, no Bloom's distribution.
+# Deliberately minimal: no template instructions, no Bloom's distribution.
 
 TARGET_SELECTION_PROMPT = """You are an expert at identifying what's worth testing in educational material.
 
@@ -409,10 +589,10 @@ Given a section of text, identify 5-10 specific insights that are worth reinforc
 
 For each target, specify:
 1. The concept it relates to
-2. The specific insight (NOT a definition — a mechanism, connection, or application)
+2. The specific insight (NOT a definition, but a mechanism, connection, or application)
 3. The angle (mechanism, connection, application, edge_case, contrast, consequence)
 4. The Bloom's level it naturally maps to
-5. Which element type best tests it (quiz, flashcard, fill_in_the_blank, matching, self_explain)
+5. Which element type best tests it (quiz, flashcard, fill_in_the_blank, matching, interactive_essay)
 
 Order targets from foundational to advanced. Return ONLY a JSON object."""
 
@@ -421,21 +601,21 @@ def build_target_selection_prompt(
     section_title: str,
     section_text: str,
     chapter_title: str,
-    section_concepts: list[object] | None = None,
+    section_concepts: Sequence[ConceptEntry] | None = None,
     bloom_target: str | None = None,
 ) -> str:
     """Build the user prompt for Phase 1: reinforcement target selection.
 
-    Deliberately minimal — only the section text and concept list.
+    Deliberately minimal: only the section text and concept list.
     No template instructions, no Bloom's distribution, no cross-references.
     """
     truncated_text = _smart_truncate(section_text, MAX_TEXT_LENGTH)
 
     concepts_block = ""
     if section_concepts:
-        concept_names = [getattr(c, "name", str(c)) for c in section_concepts]
+        concept_names = [c.name for c in section_concepts]
         concepts_block = (
-            f"\n\n### Concepts in this section:\n"
+            "\n\n### Concepts in this section:\n"
             + ", ".join(concept_names)
         )
 
@@ -474,6 +654,207 @@ DOC_TYPE_HINTS: dict[str, str] = {
     "regulatory": "Highlight rules, exceptions, and compliance implications.",
 }
 
+_BLOOM_DESCRIPTIONS: dict[str, str] = {
+    "remember": "emphasize recall and recognition activities (flashcards, fill-in-the-blank)",
+    "understand": "emphasize explanation, paraphrasing, analogy-based activities",
+    "apply": "emphasize worked examples, calculations, scenario-based problems",
+    "analyze": "emphasize comparison, differentiation, error identification",
+    "evaluate": "emphasize judgment, justification, critique activities",
+    "create": "emphasize synthesis and design activities",
+}
+
+
+# ── Prompt block builders ────────────────────────────────────────────────────
+# Each function produces one optional section of the user prompt.
+# Returning "" means the block is omitted.
+
+
+def _build_media_block(image_count: int, table_count: int) -> str:
+    notes = []
+    if image_count > 0:
+        notes.append(f"This section contains {image_count} image(s).")
+    if table_count > 0:
+        notes.append(f"This section contains {table_count} table(s).")
+    return " ".join(notes) if notes else "This section has no images or tables."
+
+
+def _build_prior_sections_block(prior_sections: list[str] | None) -> str:
+    if not prior_sections:
+        return ""
+    titles_str = ", ".join(f'"{t}"' for t in prior_sections[-5:])
+    return (
+        f"\n\n### Previously Covered Sections (for cross-references):\n{titles_str}\n"
+        "When relevant, reference these by name: \"Recall from [section] that...\"\n"
+        "When possible, EXTEND or BUILD ON an analogy from a previous section rather "
+        "than introducing an entirely new one. For example: \"Remember our factory "
+        "analogy? Now imagine the factory has two assembly lines...\" A running analogy "
+        "that evolves across sections is more powerful than a fresh metaphor every time."
+    )
+
+
+def _build_objectives_block(learning_objectives: list[str] | None) -> str:
+    if not learning_objectives:
+        return ""
+    obj_list = "\n".join(f"- {obj}" for obj in learning_objectives)
+    return f"\n\n### Learning Objectives for This Section:\n{obj_list}\nEnsure every objective is addressed by at least one element."
+
+
+def _build_bloom_block(bloom_target: str | None) -> str:
+    if not bloom_target:
+        return ""
+    desc = _BLOOM_DESCRIPTIONS.get(bloom_target, "")
+    return f"\n\n### Target Bloom's Level: {bloom_target}\n{desc}"
+
+
+def _build_concepts_block(section_concepts: Sequence[ConceptEntry] | None) -> str:
+    if not section_concepts:
+        return ""
+    lines = []
+    for concept in section_concepts:
+        line = f"- **{concept.name}** ({concept.concept_type}): {concept.definition}"
+        if concept.key_terms:
+            line += f" [terms: {', '.join(concept.key_terms[:5])}]"
+        lines.append(line)
+    return (
+        "\n\n### Concepts in This Section:\n"
+        + "\n".join(lines)
+        + "\nEnsure EVERY concept listed above is addressed in your output. "
+        "Each concept should be explained with intuition, not just defined."
+    )
+
+
+def _build_prior_concepts_block(prior_concepts: list[str | dict] | None) -> str:
+    if not prior_concepts:
+        return ""
+    items = []
+    for pc in prior_concepts[-20:]:
+        if isinstance(pc, dict):
+            name = pc.get("name", "")
+            ctype = pc.get("type", "")
+            importance = pc.get("importance", "")
+            items.append(f"- **{name}** ({ctype}, {importance})")
+        else:
+            items.append(f"- {pc}")
+    return (
+        "\n\n### Prior concepts (already taught):\n"
+        + "\n".join(items)
+        + "\nReference these concepts when relevant without re-explaining them. "
+        "Use phrases like \"As we saw with [concept]...\" or \"This is the [concept] "
+        "equivalent of [prior concept]\" to build connections. Treat earlier concepts "
+        "as shared vocabulary; the learner already has these mental models, so use "
+        "them as stepping stones: \"You already understand [prior concept]; this new "
+        "idea works the same way, except...\" This is more effective than a brand-new "
+        "analogy when a prior concept is closely related."
+    )
+
+
+def _build_characterization_block(sc: SectionCharacterization | None) -> str:
+    if not sc:
+        return ""
+    flags = []
+    if sc.has_formulas:
+        flags.append("formulas")
+    if sc.has_procedures:
+        flags.append("procedures/steps")
+    if sc.has_comparisons:
+        flags.append("comparisons")
+    if sc.has_definitions:
+        flags.append("definitions")
+    if sc.has_examples:
+        flags.append("examples")
+    lines = [f"Content type: {sc.dominant_content_type} | Difficulty: {sc.difficulty_estimate}"]
+    if flags:
+        lines.append(f"Contains: {', '.join(flags)}")
+    if sc.summary:
+        lines.append(f"Summary: {sc.summary}")
+    return "\n\n### Content Analysis:\n" + "\n".join(lines)
+
+
+def _build_targets_block(targets: Sequence[ReinforcementTarget] | None) -> str:
+    if not targets:
+        return ""
+    lines = []
+    for i, target in enumerate(targets, 1):
+        lines.append(
+            f"{i}. [{target.angle}] \"{target.target_insight}\" "
+            f"→ {target.suggested_element_type} at {target.bloom_level} level"
+        )
+    return (
+        "\n\n### Reinforcement Targets (from analysis):\n"
+        "These are the specific insights your exercises MUST test. "
+        "Do not substitute definitions or surface-level recall.\n\n"
+        + "\n".join(lines)
+        + "\n\nEvery quiz, flashcard, fill-in-the-blank, and interactive_essay element "
+        "MUST map to one of these targets."
+    )
+
+
+def _build_focus_block(focus_concepts: list[str] | None) -> str:
+    if not focus_concepts:
+        return ""
+    concept_list = ", ".join(f"**{c}**" for c in focus_concepts)
+    return (
+        f"\n\n### CONCEPT FOCUS (CRITICAL)\n"
+        f"This learning unit focuses ONLY on: {concept_list}.\n\n"
+        f"Generate a COMPACT unit:\n"
+        f"- 1 section_intro\n"
+        f"- 2-3 teaching elements (slides/mermaid) covering ONLY these concepts\n"
+        f"- 2-3 practice elements testing ONLY these concepts\n"
+        f"- 1-2 flashcards for ONLY these concepts\n\n"
+        f"Do NOT teach or test concepts outside this focus set, even if they appear "
+        f"in the source text. Other concepts are covered in adjacent learning units. "
+        f"Keep the unit tight: a learner should complete it in 5-10 minutes."
+    )
+
+
+def _build_tables_block(tables: Sequence | None) -> str:
+    if not tables:
+        return ""
+    parts: list[str] = []
+    for table in tables[:3]:
+        headers = getattr(table, "headers", ())
+        rows = getattr(table, "rows", ())
+        if headers:
+            parts.append("| " + " | ".join(str(h) for h in headers) + " |")
+            parts.append("| " + " | ".join("---" for _ in headers) + " |")
+        for row in rows[:10]:
+            parts.append("| " + " | ".join(str(c) for c in row) + " |")
+        parts.append("")
+    if not parts:
+        return ""
+    return "\n\n### Key Tables:\n" + "\n".join(parts)
+
+
+def _build_images_block(images: Sequence | None) -> str:
+    if not images:
+        return ""
+    lines: list[str] = []
+    for img in images:
+        caption = getattr(img, "caption", "")
+        path = getattr(img, "path", "")
+        page = getattr(img, "page", 0)
+        parts = []
+        if caption:
+            parts.append(caption)
+        if path:
+            parts.append(f"(file: {path})")
+        if page:
+            parts.append(f"[page {page}]")
+        if parts:
+            lines.append("- " + " ".join(parts))
+    if not lines:
+        return ""
+    return (
+        "\n\n### Image References:\n"
+        "The images listed below are attached to this prompt. Examine each one "
+        "and set image_path on slides where the image genuinely enhances learning. "
+        "Use the file path exactly as shown.\n"
+        + "\n".join(lines)
+    )
+
+
+# ── Main prompt builder ──────────────────────────────────────────────────────
+
 
 def build_section_prompt(
     section_title: str,
@@ -486,28 +867,22 @@ def build_section_prompt(
     prior_sections: list[str] | None = None,
     learning_objectives: list[str] | None = None,
     bloom_target: str | None = None,
-    section_concepts: list[object] | None = None,
+    section_concepts: Sequence[ConceptEntry] | None = None,
     prior_concepts: list[str | dict] | None = None,
-    section_characterization: object | None = None,
-    reinforcement_targets: list[object] | None = None,
+    section_characterization: SectionCharacterization | None = None,
+    reinforcement_targets: Sequence[ReinforcementTarget] | None = None,
     module_summary: str | None = None,
     section_rationale: str | None = None,
+    focus_concepts: list[str] | None = None,
     document_type: str | None = None,
-    tables: list | None = None,
-    images: list | None = None,
+    tables: Sequence | None = None,
+    images: Sequence | None = None,
 ) -> str:
     """Build the user prompt for transforming a single section.
 
-    Includes the section's text, metadata, content template instruction,
-    cross-reference context from prior sections, and optional curriculum
-    planner guidance (learning objectives and Bloom's target).
-
-    When deep reading analysis is available, also includes concept context:
-    which concepts are being taught, what the learner already knows, and
-    content characterization signals.
-
-    When reinforcement targets are provided (from Phase 1), includes them
-    as explicit instructions for what the exercises MUST test.
+    Assembles context blocks (media, prior sections, Bloom's level, concepts,
+    characterization, reinforcement targets, etc.) into a structured prompt
+    for the LLM content designer.
 
     Args:
         section_title: Title of the section being transformed.
@@ -518,191 +893,54 @@ def build_section_prompt(
         template: Content template to use (from TEMPLATE_DESCRIPTIONS).
         source_pages: (start_page, end_page) for source attribution.
         prior_sections: Titles of previously covered sections for cross-refs.
-        learning_objectives: From curriculum planner — what the learner should
-            be able to do after this section.
-        bloom_target: From curriculum planner — primary Bloom's taxonomy level.
-        section_concepts: ConceptEntry objects for concepts taught in this section.
-        prior_concepts: Concept names the learner already knows from prior sections.
-        section_characterization: SectionCharacterization from deep reading analysis.
-        reinforcement_targets: ReinforcementTarget objects from Phase 1 target
-            selection. When provided, exercises MUST test these specific insights.
+        learning_objectives: From curriculum planner.
+        bloom_target: Primary Bloom's taxonomy level.
+        section_concepts: ConceptEntry objects for this section.
+        prior_concepts: Concepts the learner already knows.
+        section_characterization: SectionCharacterization from deep reading.
+        reinforcement_targets: Phase 1 targets exercises MUST test.
+        module_summary: Module-level context string.
+        section_rationale: Why this template was chosen.
+        focus_concepts: Concept names to constrain output to.
+        document_type: Document type hint for prompt tuning.
+        tables: Table objects from extraction.
+        images: ImageRef objects from extraction.
 
     Returns:
         Formatted user prompt string.
     """
     truncated_text = _smart_truncate(section_text, MAX_TEXT_LENGTH)
-
-    media_notes = []
-    if image_count > 0:
-        media_notes.append(f"This section contains {image_count} image(s).")
-    if table_count > 0:
-        media_notes.append(f"This section contains {table_count} table(s).")
-    media_line = " ".join(media_notes) if media_notes else "This section has no images or tables."
-
+    media_line = _build_media_block(image_count, table_count)
     template_desc = TEMPLATE_DESCRIPTIONS.get(template, TEMPLATE_DESCRIPTIONS["analogy_first"])
-
-    prior_context = ""
-    if prior_sections:
-        titles_str = ", ".join(f'"{t}"' for t in prior_sections[-5:])  # Last 5 sections
-        prior_context = f"\n\n### Previously Covered Sections (for cross-references):\n{titles_str}\nWhen relevant, reference these by name: \"Recall from [section] that...\""
 
     source_line = ""
     if source_pages[0] > 0:
         source_line = f"\n\nSource pages: pp. {source_pages[0]}-{source_pages[1]}. Include this in the source_pages field of every slide."
 
-    objectives_block = ""
-    if learning_objectives:
-        obj_list = "\n".join(f"- {obj}" for obj in learning_objectives)
-        objectives_block = f"\n\n### Learning Objectives for This Section:\n{obj_list}\nEnsure every objective is addressed by at least one element."
-
-    bloom_block = ""
-    if bloom_target:
-        bloom_descriptions = {
-            "remember": "emphasize recall and recognition activities (flashcards, fill-in-the-blank)",
-            "understand": "emphasize explanation, paraphrasing, analogy-based activities",
-            "apply": "emphasize worked examples, calculations, scenario-based problems",
-            "analyze": "emphasize comparison, differentiation, error identification",
-            "evaluate": "emphasize judgment, justification, critique activities",
-            "create": "emphasize synthesis and design activities",
-        }
-        bloom_desc = bloom_descriptions.get(bloom_target, "")
-        bloom_block = f"\n\n### Target Bloom's Level: {bloom_target}\n{bloom_desc}"
-
-    concepts_block = ""
-    if section_concepts:
-        concept_lines = []
-        for concept in section_concepts:
-            line = f"- **{concept.name}** ({concept.concept_type}): {concept.definition}"  # type: ignore[union-attr]
-            if hasattr(concept, "key_terms") and concept.key_terms:  # type: ignore[union-attr]
-                line += f" [terms: {', '.join(concept.key_terms[:5])}]"  # type: ignore[union-attr]
-            concept_lines.append(line)
-        concepts_block = (
-            "\n\n### Concepts in This Section:\n"
-            + "\n".join(concept_lines)
-            + "\nEnsure EVERY concept listed above is addressed in your output. "
-            "Each concept should be explained with intuition, not just defined."
-        )
-
-    prior_concepts_block = ""
-    if prior_concepts:
-        items = []
-        for pc in prior_concepts[-20:]:  # Last 20 to avoid bloat
-            if isinstance(pc, dict):
-                name = pc.get("name", "")
-                ctype = pc.get("type", "")
-                importance = pc.get("importance", "")
-                items.append(f"- **{name}** ({ctype}, {importance})")
-            else:
-                items.append(f"- {pc}")
-        prior_concepts_block = (
-            "\n\n### Prior concepts (already taught):\n"
-            + "\n".join(items)
-            + "\nReference these concepts when relevant without re-explaining them. "
-            "Use phrases like \"As we saw with [concept]...\" to build connections."
-        )
-
-    characterization_block = ""
-    if section_characterization:
-        sc = section_characterization
-        flags = []
-        if getattr(sc, "has_formulas", False):
-            flags.append("formulas")
-        if getattr(sc, "has_procedures", False):
-            flags.append("procedures/steps")
-        if getattr(sc, "has_comparisons", False):
-            flags.append("comparisons")
-        if getattr(sc, "has_definitions", False):
-            flags.append("definitions")
-        if getattr(sc, "has_examples", False):
-            flags.append("examples")
-        content_type = getattr(sc, "dominant_content_type", "mixed")
-        difficulty = getattr(sc, "difficulty_estimate", "intermediate")
-        summary = getattr(sc, "summary", "")
-        char_lines = [f"Content type: {content_type} | Difficulty: {difficulty}"]
-        if flags:
-            char_lines.append(f"Contains: {', '.join(flags)}")
-        if summary:
-            char_lines.append(f"Summary: {summary}")
-        characterization_block = (
-            "\n\n### Content Analysis:\n" + "\n".join(char_lines)
-        )
-
-    targets_block = ""
-    if reinforcement_targets:
-        target_lines = []
-        for i, target in enumerate(reinforcement_targets, 1):
-            angle = getattr(target, "angle", "mechanism")
-            insight = getattr(target, "target_insight", str(target))
-            bloom = getattr(target, "bloom_level", "understand")
-            elem_type = getattr(target, "suggested_element_type", "quiz")
-            target_lines.append(
-                f"{i}. [{angle}] \"{insight}\" → {elem_type} at {bloom} level"
-            )
-        targets_block = (
-            "\n\n### Reinforcement Targets (from analysis):\n"
-            "These are the specific insights your exercises MUST test. "
-            "Do not substitute definitions or surface-level recall.\n\n"
-            + "\n".join(target_lines)
-            + "\n\nEvery quiz, flashcard, fill-in-the-blank, and self-explain element "
-            "MUST map to one of these targets."
-        )
-
-    # Gap 6: Document type hint
     doc_type_block = ""
     if document_type and document_type not in ("auto", "mixed"):
         hint = DOC_TYPE_HINTS.get(document_type, "")
         if hint:
             doc_type_block = f"\n\n### Document Type: {document_type}\n{hint}"
 
-    # Gap 13: Module context and section rationale
-    module_summary_block = ""
-    if module_summary:
-        module_summary_block = f"\n\n### Module Context:\n{module_summary}"
+    module_summary_block = f"\n\n### Module Context:\n{module_summary}" if module_summary else ""
+    rationale_block = f"\n\n### Why This Template:\n{section_rationale}" if section_rationale else ""
 
-    rationale_block = ""
-    if section_rationale:
-        rationale_block = f"\n\n### Why This Template:\n{section_rationale}"
-
-    # Gap 14: Table content
-    tables_block = ""
-    if tables:
-        table_parts: list[str] = []
-        for table in tables[:3]:  # Max 3 tables
-            headers = getattr(table, "headers", ())
-            rows = getattr(table, "rows", ())
-            if headers:
-                header_line = "| " + " | ".join(str(h) for h in headers) + " |"
-                sep_line = "| " + " | ".join("---" for _ in headers) + " |"
-                table_parts.append(header_line)
-                table_parts.append(sep_line)
-            for row in rows[:10]:  # Max 10 rows per table
-                row_line = "| " + " | ".join(str(c) for c in row) + " |"
-                table_parts.append(row_line)
-            table_parts.append("")  # blank line between tables
-        if table_parts:
-            table_text = "\n".join(table_parts)
-            tables_block = f"\n\n### Key Tables:\n{table_text}"
-
-    # Gap 15: Image metadata
-    images_block = ""
-    if images:
-        image_lines: list[str] = []
-        for img in images:
-            caption = getattr(img, "caption", "")
-            path = getattr(img, "path", "")
-            page = getattr(img, "page", 0)
-            parts = []
-            if caption:
-                parts.append(caption)
-            if path:
-                parts.append(f"(file: {path})")
-            if page:
-                parts.append(f"[page {page}]")
-            if parts:
-                image_lines.append("- " + " ".join(parts))
-        if image_lines:
-            image_text = "\n".join(image_lines)
-            images_block = f"\n\n### Image References:\n{image_text}"
+    context_blocks = "".join([
+        _build_prior_sections_block(prior_sections),
+        _build_objectives_block(learning_objectives),
+        _build_bloom_block(bloom_target),
+        _build_concepts_block(section_concepts),
+        _build_prior_concepts_block(prior_concepts),
+        _build_characterization_block(section_characterization),
+        _build_targets_block(reinforcement_targets),
+        doc_type_block,
+        module_summary_block,
+        rationale_block,
+        _build_focus_block(focus_concepts),
+        _build_tables_block(tables),
+        _build_images_block(images),
+    ])
 
     return f"""## Module: {chapter_title}
 ## Section: {section_title}
@@ -711,7 +949,7 @@ def build_section_prompt(
 
 ### Content Template for This Section:
 {template_desc}
-{prior_context}{objectives_block}{bloom_block}{concepts_block}{prior_concepts_block}{characterization_block}{targets_block}{doc_type_block}{module_summary_block}{rationale_block}{tables_block}{images_block}
+{context_blocks}
 
 ### Section Content:
 

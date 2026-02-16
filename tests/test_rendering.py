@@ -10,13 +10,18 @@ from pathlib import Path
 import pytest
 
 from src.rendering.html_generator import (
+    _deduplicate_math,
     _derive_course_title,
     _element_id,
+    _fitb_interactive_answer_indices,
     _generate_chapter_colors,
     _load_course_meta,
     _markdown_to_html,
+    _markdown_to_html_inline,
     _prepare_graph_data,
     _render_fill_blanks,
+    _render_fitb_statement,
+    _sanitize_html,
     _write_course_meta,
     render_course,
 )
@@ -28,6 +33,15 @@ from src.transformation.analysis_types import (
     ResolvedConcept,
 )
 from src.transformation.types import (
+    AnalogyElement,
+    AnalogyExercise,
+    AnalogyItem,
+    CategorizationElement,
+    CategorizationExercise,
+    CategoryBucket,
+    ErrorDetectionElement,
+    ErrorDetectionExercise,
+    ErrorItem,
     Flashcard,
     FlashcardElement,
     FillInTheBlank,
@@ -36,11 +50,14 @@ from src.transformation.types import (
     MatchingElement,
     InteractiveEssay,
     InteractiveEssayElement,
+    OrderingElement,
+    OrderingExercise,
     Quiz,
     QuizElement,
     QuizQuestion,
+    SectionIntro,
+    SectionIntroElement,
     SelfExplain,
-    SelfExplainElement,
     Slide,
     SlideElement,
     TrainingModule,
@@ -163,6 +180,13 @@ class TestRenderCourse:
     def _make_module(self) -> TrainingModule:
         """Build a TrainingModule with one of each element type."""
         elements = [
+            SectionIntroElement(
+                bloom_level="understand",
+                section_intro=SectionIntro(
+                    title="Why This Matters",
+                    content="In this section you will learn the fundamentals of arithmetic and see why they matter in everyday life.",
+                ),
+            ),
             SlideElement(
                 bloom_level="understand",
                 slide=Slide(
@@ -171,7 +195,7 @@ class TestRenderCourse:
                 ),
             ),
             QuizElement(
-                bloom_level="analyze",
+                bloom_level="apply",
                 quiz=Quiz(
                     title="Check",
                     questions=[
@@ -184,10 +208,6 @@ class TestRenderCourse:
                     ],
                 ),
             ),
-            FlashcardElement(
-                bloom_level="remember",
-                flashcard=Flashcard(front="Term", back="Definition"),
-            ),
             FillInBlankElement(
                 bloom_level="apply",
                 fill_in_the_blank=FillInTheBlank(
@@ -197,22 +217,88 @@ class TestRenderCourse:
                 ),
             ),
             MatchingElement(
-                bloom_level="analyze",
+                bloom_level="apply",
                 matching=MatchingExercise(
                     title="Match terms",
                     left_items=["A", "B"],
                     right_items=["1", "2"],
                 ),
             ),
-            SelfExplainElement(
-                bloom_level="evaluate",
-                self_explain=SelfExplain(
-                    prompt="Explain diversification in your own words.",
-                    key_points=["reduces risk", "uncorrelated assets"],
-                    example_response="Diversification works by combining assets.",
-                    minimum_words=30,
+            OrderingElement(
+                bloom_level="apply",
+                ordering=OrderingExercise(
+                    title="Order Steps",
+                    instruction="Arrange in order",
+                    items=["First", "Second", "Third"],
+                    explanation="Natural ordering.",
+                    hint="Think about what comes first.",
                 ),
             ),
+            CategorizationElement(
+                bloom_level="analyze",
+                categorization=CategorizationExercise(
+                    title="Classify Items",
+                    instruction="Sort into categories",
+                    categories=[
+                        CategoryBucket(name="Fruits", items=["Apple", "Banana"]),
+                        CategoryBucket(name="Vegetables", items=["Carrot"]),
+                    ],
+                    explanation="Fruits grow on trees, vegetables in soil.",
+                    hint="Think about where they grow.",
+                ),
+            ),
+            ErrorDetectionElement(
+                bloom_level="evaluate",
+                error_detection=ErrorDetectionExercise(
+                    title="Spot Errors",
+                    instruction="Find the mistake",
+                    items=[
+                        ErrorItem(
+                            statement="The sun revolves around the Earth.",
+                            error_explanation="The Earth revolves around the Sun.",
+                            corrected_statement="The Earth revolves around the Sun.",
+                        ),
+                    ],
+                    context="Basic astronomy facts.",
+                ),
+            ),
+            AnalogyElement(
+                bloom_level="analyze",
+                analogy=AnalogyExercise(
+                    title="Analogy Challenge",
+                    items=[
+                        AnalogyItem(
+                            stem="Hot is to cold as up is to ___",
+                            answer="down",
+                            distractors=["left", "right"],
+                            explanation="These are opposite pairs.",
+                        ),
+                    ],
+                ),
+            ),
+            FlashcardElement(
+                bloom_level="remember",
+                flashcard=Flashcard(front="Term", back="Definition"),
+            ),
+            # Static interactive essay (single prompt, no tutor — replaces old self_explain)
+            InteractiveEssayElement(
+                bloom_level="evaluate",
+                interactive_essay=InteractiveEssay(
+                    title="Quick Reflection",
+                    concepts_tested=["diversification"],
+                    prompts=[
+                        SelfExplain(
+                            prompt="Explain diversification in your own words.",
+                            key_points=["reduces risk", "uncorrelated assets"],
+                            example_response="Diversification works by combining assets.",
+                            minimum_words=30,
+                        ),
+                    ],
+                    passing_threshold=0.7,
+                    tutor_system_prompt="",
+                ),
+            ),
+            # Dynamic interactive essay (multi-prompt + tutor)
             InteractiveEssayElement(
                 bloom_level="evaluate",
                 interactive_essay=InteractiveEssay(
@@ -283,15 +369,39 @@ class TestRenderCourse:
         # Matching
         assert "Match terms" in chapter_html
 
-    def test_chapter_contains_self_explain(self, tmp_path: Path) -> None:
+        # Ordering
+        assert "ordering-container" in chapter_html
+        assert "Order Steps" in chapter_html
+
+        # Categorization
+        assert "categorization-container" in chapter_html
+        assert "Classify Items" in chapter_html
+
+        # Error detection
+        assert "error-detection-container" in chapter_html
+        assert "Spot Errors" in chapter_html
+
+        # Analogy
+        assert "analogy-container" in chapter_html
+        assert "Analogy Challenge" in chapter_html
+
+    def test_chapter_contains_section_intro(self, tmp_path: Path) -> None:
         module = self._make_module()
         output_dir = tmp_path / "output"
         render_course(modules=[module], output_dir=output_dir, embed_images=False)
         chapter_html = (output_dir / "chapter_01.html").read_text(encoding="utf-8")
 
-        assert "self-explain-container" in chapter_html
+        assert "section-intro-container" in chapter_html
+        assert "Why This Matters" in chapter_html
+
+    def test_chapter_contains_static_essay(self, tmp_path: Path) -> None:
+        module = self._make_module()
+        output_dir = tmp_path / "output"
+        render_course(modules=[module], output_dir=output_dir, embed_images=False)
+        chapter_html = (output_dir / "chapter_01.html").read_text(encoding="utf-8")
+
+        assert "essay-container" in chapter_html
         assert "Explain diversification" in chapter_html
-        assert "explain-textarea" in chapter_html
 
     def test_chapter_contains_interactive_essay(self, tmp_path: Path) -> None:
         module = self._make_module()
@@ -311,6 +421,18 @@ class TestRenderCourse:
 
         assert "settingsModal" in chapter_html
         assert "tutorApiKey" in chapter_html
+
+    def test_help_modal_present_on_all_pages(self, tmp_path: Path) -> None:
+        """Help modal should appear on chapter, index, review, and mixed_review."""
+        module = self._make_module()
+        output_dir = tmp_path / "output"
+        render_course(modules=[module], output_dir=output_dir, embed_images=False)
+
+        for page in ("chapter_01.html", "index.html", "review.html", "mixed_review.html"):
+            html = (output_dir / page).read_text(encoding="utf-8")
+            assert "helpModal" in html, f"helpModal missing from {page}"
+            assert "help-btn" in html, f"help-btn missing from {page}"
+            assert "How This Course Works" in html, f"Help title missing from {page}"
 
     def test_multi_chapter_navigation(self, tmp_path: Path) -> None:
         """Chapters should have prev/next links to adjacent chapters."""
@@ -345,6 +467,92 @@ class TestRenderCourse:
         assert 'href="chapter_01.html" class="chapter-nav-btn"' in ch2
         # Chapter 2 should NOT have a next link (it's the last)
         assert 'href="chapter_02.html" class="chapter-nav-btn"' not in ch2
+
+    def test_duplicate_chapter_numbers_produce_unique_files(self, tmp_path: Path) -> None:
+        """Modules sharing the same source chapter_number must get unique files."""
+        modules = [
+            TrainingModule(
+                chapter_number=2,
+                title="Module A from Ch2",
+                sections=[
+                    TrainingSection(
+                        title="Section A",
+                        elements=[
+                            SlideElement(
+                                bloom_level="understand",
+                                slide=Slide(title="Slide A", content="Content A."),
+                            ),
+                        ],
+                    ),
+                ],
+            ),
+            TrainingModule(
+                chapter_number=2,
+                title="Module B from Ch2",
+                sections=[
+                    TrainingSection(
+                        title="Section B",
+                        elements=[
+                            SlideElement(
+                                bloom_level="understand",
+                                slide=Slide(title="Slide B", content="Content B."),
+                            ),
+                        ],
+                    ),
+                ],
+            ),
+            TrainingModule(
+                chapter_number=4,
+                title="Module C from Ch4",
+                sections=[
+                    TrainingSection(
+                        title="Section C",
+                        elements=[
+                            SlideElement(
+                                bloom_level="understand",
+                                slide=Slide(title="Slide C", content="Content C."),
+                            ),
+                        ],
+                    ),
+                ],
+            ),
+        ]
+        output_dir = tmp_path / "output"
+        render_course(modules=modules, output_dir=output_dir, embed_images=False)
+
+        # Should produce 3 unique files named by sequential index, not source chapter
+        assert (output_dir / "chapter_01.html").exists()
+        assert (output_dir / "chapter_02.html").exists()
+        assert (output_dir / "chapter_03.html").exists()
+
+        ch1 = (output_dir / "chapter_01.html").read_text(encoding="utf-8")
+        ch2 = (output_dir / "chapter_02.html").read_text(encoding="utf-8")
+        ch3 = (output_dir / "chapter_03.html").read_text(encoding="utf-8")
+
+        # Each file should contain its own module's content, not be overwritten
+        assert "Slide A" in ch1
+        assert "Slide B" in ch2
+        assert "Slide C" in ch3
+
+        # Element IDs should be unique across modules
+        import re
+        ids1 = set(re.findall(r'data-element-id="([^"]+)"', ch1))
+        ids2 = set(re.findall(r'data-element-id="([^"]+)"', ch2))
+        ids3 = set(re.findall(r'data-element-id="([^"]+)"', ch3))
+        assert ids1.isdisjoint(ids2), "Modules with same chapter_number must have unique element IDs"
+        assert ids2.isdisjoint(ids3)
+
+        # Navigation: ch1 → ch2 → ch3
+        assert 'href="chapter_02.html" class="chapter-nav-btn"' in ch1
+        assert 'href="chapter_01.html" class="chapter-nav-btn"' in ch2
+        assert 'href="chapter_03.html" class="chapter-nav-btn"' in ch2
+        assert 'href="chapter_02.html" class="chapter-nav-btn"' in ch3
+
+        # Index should list all 3 modules with correct links
+        index_html = (output_dir / "index.html").read_text(encoding="utf-8")
+        assert "chapter_01.html" in index_html
+        assert "chapter_02.html" in index_html
+        assert "chapter_03.html" in index_html
 
     def test_theme_init_script_present(self, tmp_path: Path) -> None:
         """Both chapter and index HTML should contain the theme init script."""
@@ -902,3 +1110,331 @@ class TestEditableMetadata:
         html = index.read_text(encoding="utf-8")
         assert "_meta" in html
         assert "saveMeta" in html
+
+
+# ── Currency protection tests ────────────────────────────────────────────
+
+
+class TestCurrencyProtection:
+    """Tests for currency $ signs not being treated as LaTeX delimiters."""
+
+    def test_currency_not_treated_as_latex(self) -> None:
+        result = _markdown_to_html("Buy for **$90** and earn $100")
+        assert "<strong>" in result
+        # Currency $ is rendered as &#36; HTML entity so KaTeX ignores it
+        assert "&#36;90" in result
+        assert "&#36;100" in result
+
+    def test_currency_with_decimal(self) -> None:
+        result = _markdown_to_html("The price is $3.14 per unit")
+        assert "&#36;3.14" in result
+
+    def test_currency_with_comma(self) -> None:
+        result = _markdown_to_html("Worth $1,000,000 total")
+        assert "&#36;1,000,000" in result
+
+    def test_latex_still_works_with_currency(self) -> None:
+        result = _markdown_to_html("Cost is $50 and $x^2$ is math")
+        assert "&#36;50" in result
+        assert "$x^2$" in result
+
+    def test_only_dollar_sign_is_protected(self) -> None:
+        """Digits after the $ should remain visible."""
+        result = _markdown_to_html("Earn $200 per day")
+        assert "&#36;200" in result
+        assert "200" in result
+
+
+# ── Inline markdown variant tests ────────────────────────────────────────
+
+
+class TestMarkdownToHtmlInline:
+    """Tests for the inline markdown variant that strips <p> wrappers."""
+
+    def test_strips_single_paragraph_wrapper(self) -> None:
+        result = _markdown_to_html_inline("**bold** text")
+        assert "<strong>bold</strong> text" == result
+
+    def test_preserves_multi_paragraph(self) -> None:
+        result = _markdown_to_html_inline("Para one.\n\nPara two.")
+        assert "<p>" in result
+
+    def test_preserves_latex_inline(self) -> None:
+        result = _markdown_to_html_inline("The formula $x^2$")
+        assert "$x^2$" in result
+        assert "<p>" not in result
+
+    def test_preserves_currency(self) -> None:
+        result = _markdown_to_html_inline("Pay $50 now")
+        assert "&#36;50" in result
+        assert "<p>" not in result
+
+
+# ── HTML sanitization tests ──────────────────────────────────────────────
+
+
+class TestHtmlSanitization:
+    """Tests for HTML sanitization in markdown output."""
+
+    def test_strips_script_tags(self) -> None:
+        result = _sanitize_html('<p>Safe</p><script>alert(1)</script>')
+        assert "<script>" not in result
+        assert "alert" not in result
+        assert "<p>Safe</p>" in result
+
+    def test_strips_style_tags(self) -> None:
+        result = _sanitize_html('<p>Safe</p><style>body{display:none}</style>')
+        assert "<style>" not in result
+        assert "<p>Safe</p>" in result
+
+    def test_strips_event_handlers(self) -> None:
+        result = _sanitize_html('<img src="x" onerror="alert(1)">')
+        assert "onerror" not in result
+        assert "alert" not in result
+
+    def test_preserves_normal_html(self) -> None:
+        result = _sanitize_html("<p><strong>bold</strong> and <em>italic</em></p>")
+        assert "<strong>bold</strong>" in result
+        assert "<em>italic</em>" in result
+
+    def test_markdown_to_html_sanitizes(self) -> None:
+        """_markdown_to_html should sanitize its output."""
+        result = _markdown_to_html('Normal **bold** <script>alert(1)</script>')
+        assert "<strong>bold</strong>" in result
+        assert "<script>" not in result
+
+
+# ── FITB statement rendering tests ───────────────────────────────────────
+
+
+class TestRenderFitbStatement:
+    """Tests for LaTeX-aware FITB statement rendering."""
+
+    def test_blanks_outside_latex_become_inputs(self) -> None:
+        result = _render_fitb_statement("The _____ theorem.")
+        assert '<input type="text"' in result
+        assert "_____" not in result
+
+    def test_blanks_inside_latex_become_katex_markers(self) -> None:
+        result = _render_fitb_statement(r"$\Delta z \sim N(0, _____) $")
+        assert "<input" not in result
+        assert r"\underline" in result
+        assert r"\hspace{3em}" in result
+
+    def test_mixed_blanks_inside_and_outside_latex(self) -> None:
+        result = _render_fitb_statement(
+            r"The _____ is $\Delta z \sim N(0, _____)$"
+        )
+        assert "<input" in result  # outside blank
+        assert r"\underline" in result  # inside-latex blank
+
+    def test_markdown_preserved_in_fitb(self) -> None:
+        result = _render_fitb_statement("The **important** _____ value.")
+        assert "<strong>important</strong>" in result
+        assert "<input" in result
+
+    def test_currency_in_fitb(self) -> None:
+        result = _render_fitb_statement("The price is $50 and _____ dollars.")
+        assert "&#36;50" in result
+        assert "<input" in result
+
+    def test_multiple_blanks_indexing(self) -> None:
+        result = _render_fitb_statement("_____ and _____")
+        assert 'data-blank-index="0"' in result
+        assert 'data-blank-index="1"' in result
+
+
+class TestFitbInteractiveAnswerIndices:
+    """Tests for identifying which FITB blanks are interactive."""
+
+    def test_all_outside_latex(self) -> None:
+        indices = _fitb_interactive_answer_indices("_____ and _____")
+        assert indices == [0, 1]
+
+    def test_blank_inside_latex_excluded(self) -> None:
+        indices = _fitb_interactive_answer_indices(
+            r"The _____ is $N(0, _____)$"
+        )
+        assert indices == [0]
+
+    def test_no_blanks(self) -> None:
+        indices = _fitb_interactive_answer_indices("No blanks here")
+        assert indices == []
+
+    def test_all_inside_latex(self) -> None:
+        indices = _fitb_interactive_answer_indices(r"$_____ + _____$")
+        assert indices == []
+
+
+# ── Markdown in all element types (integration) ─────────────────────────
+
+
+class TestMarkdownInAllElements:
+    """Integration tests for markdown rendering in non-slide elements."""
+
+    def test_flashcard_renders_markdown(self, tmp_path: Path) -> None:
+        module = TrainingModule(
+            chapter_number=1,
+            title="Ch",
+            sections=[
+                TrainingSection(
+                    title="S",
+                    elements=[
+                        FlashcardElement(
+                            bloom_level="remember",
+                            flashcard=Flashcard(
+                                front="**Bold** term with $x^2$",
+                                back="The definition uses *emphasis*",
+                            ),
+                        ),
+                    ],
+                ),
+            ],
+        )
+        output_dir = tmp_path / "output"
+        render_course(modules=[module], output_dir=output_dir, embed_images=False)
+        html = (output_dir / "chapter_01.html").read_text(encoding="utf-8")
+        assert "<strong>Bold</strong>" in html
+        assert "<em>emphasis</em>" in html
+        assert "$x^2$" in html
+
+    def test_quiz_renders_markdown(self, tmp_path: Path) -> None:
+        module = TrainingModule(
+            chapter_number=1,
+            title="Ch",
+            sections=[
+                TrainingSection(
+                    title="S",
+                    elements=[
+                        QuizElement(
+                            bloom_level="analyze",
+                            quiz=Quiz(
+                                title="Q",
+                                questions=[
+                                    QuizQuestion(
+                                        question="What is **bold** in $E=mc^2$?",
+                                        options=["Option with `code`", "Plain option"],
+                                        correct_index=0,
+                                        explanation="Because **this** is the reason.",
+                                    ),
+                                ],
+                            ),
+                        ),
+                    ],
+                ),
+            ],
+        )
+        output_dir = tmp_path / "output"
+        render_course(modules=[module], output_dir=output_dir, embed_images=False)
+        html = (output_dir / "chapter_01.html").read_text(encoding="utf-8")
+        assert "<strong>bold</strong>" in html
+        assert "$E=mc^2$" in html
+        assert "<code>code</code>" in html
+
+    def test_matching_renders_markdown(self, tmp_path: Path) -> None:
+        module = TrainingModule(
+            chapter_number=1,
+            title="Ch",
+            sections=[
+                TrainingSection(
+                    title="S",
+                    elements=[
+                        MatchingElement(
+                            bloom_level="analyze",
+                            matching=MatchingExercise(
+                                title="Match",
+                                left_items=["**Bold** item", "Normal item"],
+                                right_items=["Match A", "Match B"],
+                            ),
+                        ),
+                    ],
+                ),
+            ],
+        )
+        output_dir = tmp_path / "output"
+        render_course(modules=[module], output_dir=output_dir, embed_images=False)
+        html = (output_dir / "chapter_01.html").read_text(encoding="utf-8")
+        assert "<strong>Bold</strong>" in html
+
+    def test_fitb_currency_not_garbled(self, tmp_path: Path) -> None:
+        module = TrainingModule(
+            chapter_number=1,
+            title="Ch",
+            sections=[
+                TrainingSection(
+                    title="S",
+                    elements=[
+                        FillInBlankElement(
+                            bloom_level="apply",
+                            fill_in_the_blank=FillInTheBlank(
+                                statement="Buy for $90 and the _____ is $100.",
+                                answers=["price"],
+                                hint="Think about it.",
+                            ),
+                        ),
+                    ],
+                ),
+            ],
+        )
+        output_dir = tmp_path / "output"
+        render_course(modules=[module], output_dir=output_dir, embed_images=False)
+        html = (output_dir / "chapter_01.html").read_text(encoding="utf-8")
+        assert "&#36;90" in html
+        assert "&#36;100" in html
+        assert "<input" in html
+
+
+# ── Math deduplication tests ─────────────────────────────────────────────
+
+
+class TestDeduplicateMath:
+    """Tests for _deduplicate_math which fixes LLM doubled math expressions."""
+
+    def test_no_math_passes_through(self) -> None:
+        assert _deduplicate_math("No math here") == "No math here"
+
+    def test_normal_math_unchanged(self) -> None:
+        text = "The value is $p = 0.12$ for this case."
+        assert _deduplicate_math(text) == text
+
+    def test_removes_plain_echo_after_inline_math(self) -> None:
+        # LLM writes "$p=0.12$p=0.12"
+        text = "probability $p=0.12$p=0.12 for the device"
+        result = _deduplicate_math(text)
+        assert result == "probability $p=0.12$ for the device"
+
+    def test_removes_plain_echo_after_with_spaces(self) -> None:
+        text = "$X=1$X=1 if it fails"
+        result = _deduplicate_math(text)
+        assert result == "$X=1$ if it fails"
+
+    def test_removes_plain_echo_before_inline_math(self) -> None:
+        # LLM writes "p=0.12$p=0.12$"
+        text = "probability p=0.12$p=0.12$ for the device"
+        result = _deduplicate_math(text)
+        assert result == "probability $p=0.12$ for the device"
+
+    def test_removes_echo_with_latex_commands(self) -> None:
+        # LLM writes "$f_X(x)$fX(x)" — LaTeX stripped version matches
+        text = "The PMF $f_X(x)$fX(x) gives"
+        result = _deduplicate_math(text)
+        assert result == "The PMF $f_X(x)$ gives"
+
+    def test_display_math_unchanged(self) -> None:
+        text = "The equation is $$E = mc^2$$ which shows"
+        assert _deduplicate_math(text) == text
+
+    def test_multiple_expressions_each_deduped(self) -> None:
+        text = "We have $p=0.12$p=0.12 and $X=1$X=1"
+        result = _deduplicate_math(text)
+        assert result == "We have $p=0.12$ and $X=1$"
+
+    def test_end_to_end_through_markdown(self) -> None:
+        """Verify dedup runs inside _markdown_to_html."""
+        text = "The probability is $p=0.12$p=0.12 for this."
+        html = _markdown_to_html(text)
+        # Should contain the math delimiters once, not doubled
+        assert "$p=0.12$" in html
+        # The plain text echo should be gone
+        assert "p=0.12p=0.12" not in html
+        assert "$p=0.12$p=0.12" not in html

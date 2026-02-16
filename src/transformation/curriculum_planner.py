@@ -16,14 +16,15 @@ import logging
 import re
 
 from src.extraction.types import Book, Chapter, Section
-from src.transformation.analysis_types import ChapterAnalysis, ConceptGraph
+from src.transformation.analysis_types import ChapterAnalysis, ConceptGraph, SectionCharacterization
 from src.transformation.content_pre_analyzer import (
     DOCUMENT_TYPE_TEMPLATE_WEIGHTS,
     DocumentType,
     format_document_type_guidance,
 )
-from src.transformation.llm_client import LLMClient, LLMError
+from src.transformation.llm_client import LLMClient
 from src.transformation.types import (
+    BloomLevel,
     CurriculumBlueprint,
     ModuleBlueprint,
     SectionBlueprint,
@@ -48,8 +49,14 @@ characterizations. Your output is a CurriculumBlueprint JSON.
 
 ## CURRICULUM DESIGN RULES
 
-1. **PRESERVE good structure** — if the source has clear chapters and sections, \
-keep them. Don't reorganize well-organized material.
+1. **SPLIT dense sections into bite-size learning units** — when a source section \
+covers 3+ distinct concepts (listed in the section characterization), create \
+MULTIPLE blueprint sections from that single source section. Each sub-section \
+should focus on 1-2 closely related concepts, with its own learning objectives, \
+template, and bloom_target. All sub-sections sharing a source section MUST use \
+the SAME `source_section_title`. Use `focus_concepts` to specify which concept \
+names each sub-section covers. For source sections with 1-2 concepts, keep them \
+as a single blueprint section (do not split trivially small sections).
 2. **REORGANIZE bad structure** — if topics are scattered or the document has no \
 clear chapters, group related topics logically and create a learning progression.
 3. **SCAFFOLD learning** — order topics from foundational → advanced within each module. \
@@ -57,7 +64,9 @@ When a concept dependency graph is provided, FOLLOW it: foundation concepts firs
 then concepts that build on them, then advanced concepts last.
 4. **Map back to source** — every section in the blueprint must set \
 `source_section_title` to the EXACT title of the extracted section it draws from. \
-This is how the content generator finds the text.
+Multiple blueprint sections CAN share the same `source_section_title` when a \
+source section is split into concept-focused units. This is how the content \
+generator finds the source text.
 5. **Assign templates based on CONTENT TYPE**, not rotation. When section \
 characterizations are provided, use the dominant_content_type to guide your choice:
    - conceptual / has_definitions → "analogy_first" or "narrative"
@@ -88,6 +97,12 @@ is provided, USE IT to determine prerequisites rather than guessing.
 10. **COVER ALL CHAPTERS** — you MUST create exactly one module per chapter in the \
 source material. Every chapter listed in the content summary must appear as a module \
 in your output. Do NOT skip or omit any chapters.
+11. **Set focus_concepts** — for each blueprint section, list the concept names \
+(from the concept inventory) that this section should teach and practice. \
+Use EXACT concept names from the inventory. When a source section is split \
+into multiple learning units, each sub-section's focus_concepts should be a \
+disjoint subset covering all the section's concepts. When a source section is \
+kept as one unit, focus_concepts can be empty (covers all).
 
 ## OUTPUT FORMAT
 
@@ -104,13 +119,14 @@ Return ONLY a JSON object matching this schema (no markdown fences):
       "summary": "...",
       "sections": [
         {
-          "title": "...",
-          "source_section_title": "exact title from extracted content",
-          "learning_objectives": ["Explain ...", "Calculate ..."],
+          "title": "Basis and Span",
+          "source_section_title": "3.1 Vector Spaces",
+          "learning_objectives": ["Define a basis and explain its relationship to span"],
           "template": "analogy_first",
           "bloom_target": "understand",
           "prerequisites": [],
-          "rationale": "This section introduces key terminology, so analogy_first helps build intuition."
+          "rationale": "Basis and span are tightly coupled concepts best taught together.",
+          "focus_concepts": ["basis", "span"]
         }
       ]
     }
@@ -192,6 +208,11 @@ def plan_curriculum(
         blueprint, book, chapter_analyses, document_type,
     )
 
+    # Split sections that cover too many concepts into bite-size units
+    blueprint = _split_overloaded_sections(
+        blueprint, chapter_analyses, concept_graph,
+    )
+
     # Validate Bloom's progression
     progression_warnings = validate_progression(blueprint)
     for warning in progression_warnings:
@@ -223,7 +244,9 @@ and concepts. Middle modules should build on these with applications. Final \
 modules should require synthesis across topics.
 5. **SOURCE ATTRIBUTION** — every module must set `source_book_index` to the \
 index of the book it primarily draws from (0-based). Every section must set \
-`source_section_title` to the EXACT title of the extracted section.
+`source_section_title` to the EXACT title of the extracted section. Multiple \
+blueprint sections CAN share the same `source_section_title` when a source \
+section is split into concept-focused units.
 6. **source_chapter_number** must match the chapter number from the source book.
 7. **Assign templates based on CONTENT TYPE**, not rotation:
    - Definitions/concepts → "analogy_first" or "narrative"
@@ -242,6 +265,20 @@ index of the book it primarily draws from (0-based). Every section must set \
    - Judgment/evaluation → "evaluate"
 9. **Add 1-3 learning objectives** per section — measurable, verb-based.
 10. **Identify prerequisites** — list section titles that should be covered first.
+11. **SPLIT dense sections into bite-size learning units** — when a source section \
+covers 3+ distinct concepts, create MULTIPLE blueprint sections from that single \
+source section. Each sub-section should focus on 1-2 closely related concepts. \
+Use `focus_concepts` to specify which concept names each sub-section covers. \
+For source sections with 1-2 concepts, keep them as a single unit.
+12. **Set focus_concepts** — for each blueprint section, list the concept names \
+that this section should teach and practice. Use EXACT concept names from the \
+concept inventory. When a source section is split, each sub-section's \
+focus_concepts should be a disjoint subset covering all the section's concepts.
+13. **COVER ALL CHAPTERS FROM ALL DOCUMENTS** — you MUST include content from \
+EVERY chapter of EVERY document. Create at least one module per source chapter. \
+Do NOT skip, merge, or omit any chapters. If two chapters overlap, still create \
+separate modules for each but cross-reference the overlap. The total number of \
+modules should be >= the total number of chapters across all documents.
 
 ## OUTPUT FORMAT
 
@@ -259,14 +296,15 @@ Return ONLY a JSON object matching this schema (no markdown fences):
       "summary": "...",
       "sections": [
         {
-          "title": "...",
-          "source_section_title": "exact title from extracted content",
+          "title": "Basis and Span",
+          "source_section_title": "3.1 Vector Spaces",
           "source_book_index": 0,
-          "learning_objectives": ["Explain ...", "Calculate ..."],
+          "learning_objectives": ["Define a basis and explain its relationship to span"],
           "template": "analogy_first",
           "bloom_target": "understand",
           "prerequisites": [],
-          "rationale": "..."
+          "rationale": "Basis and span are tightly coupled concepts best taught together.",
+          "focus_concepts": ["basis", "span"]
         }
       ]
     }
@@ -341,6 +379,21 @@ def plan_multi_document_curriculum(
         "Multi-doc curriculum planned: %d modules, %d total sections",
         len(blueprint.modules),
         sum(len(m.sections) for m in blueprint.modules),
+    )
+
+    # Fill in properly-designed modules for any chapters the LLM skipped
+    blueprint = _ensure_all_chapters_covered_multi_doc(
+        blueprint, books, client, chapter_analyses_per_book, document_type,
+    )
+
+    # Split sections that cover too many concepts into bite-size units
+    flat_analyses = (
+        [a for book_analyses in chapter_analyses_per_book for a in book_analyses]
+        if chapter_analyses_per_book
+        else None
+    )
+    blueprint = _split_overloaded_sections(
+        blueprint, flat_analyses, concept_graph,
     )
 
     progression_warnings = validate_progression(blueprint)
@@ -428,7 +481,9 @@ def _build_content_summary(book: Book) -> str:
     for chapter in book.chapters:
         section_count = len(chapter.sections)
         parts.append(
-            f"## Chapter {chapter.chapter_number}: {chapter.title} "
+            f"## Chapter {chapter.chapter_number} "
+            f"(source_chapter_number={chapter.chapter_number}): "
+            f"{chapter.title} "
             f"(pp. {chapter.start_page}-{chapter.end_page}, {section_count} sections)"
         )
 
@@ -470,6 +525,79 @@ def _build_content_summary(book: Book) -> str:
     return result
 
 
+def _format_section_characterization(
+    sc: SectionCharacterization,
+    analysis: ChapterAnalysis,
+    concept_graph: ConceptGraph | None,
+) -> list[str]:
+    """Format a single section characterization into summary lines."""
+    flags = []
+    if sc.has_formulas:
+        flags.append("formulas")
+    if sc.has_procedures:
+        flags.append("procedures")
+    if sc.has_comparisons:
+        flags.append("comparisons")
+    if sc.has_definitions:
+        flags.append("definitions")
+    if sc.has_examples:
+        flags.append("examples")
+    flags_str = f" [{', '.join(flags)}]" if flags else ""
+
+    section_concepts = [
+        concept_graph.resolve(c.name) if concept_graph else c.name
+        for c in analysis.concepts if c.section_title == sc.section_title
+    ]
+    concepts_str = f" concepts=[{', '.join(section_concepts)}]" if section_concepts else ""
+
+    lines = [
+        f"  Section: {sc.section_title} — {sc.dominant_content_type}, "
+        f"{sc.difficulty_estimate}{flags_str}{concepts_str}"
+    ]
+    if sc.summary:
+        lines.append(f"    Summary: {sc.summary}")
+    return lines
+
+
+def _format_chapter_analysis(
+    chapter: Chapter,
+    analysis: ChapterAnalysis | None,
+    concept_graph: ConceptGraph | None,
+) -> list[str]:
+    """Format a single chapter's analysis into summary lines."""
+    lines: list[str] = [
+        f"## Chapter {chapter.chapter_number} "
+        f"(source_chapter_number={chapter.chapter_number}): "
+        f"{chapter.title} "
+        f"(pp. {chapter.start_page}-{chapter.end_page}, {len(chapter.sections)} sections)"
+    ]
+
+    if analysis:
+        if analysis.concepts:
+            concept_names = [
+                concept_graph.resolve(c.name) if concept_graph else c.name
+                for c in analysis.concepts
+            ]
+            lines.append(f"  Concepts ({len(concept_names)}): {', '.join(concept_names)}")
+        if analysis.external_prerequisites:
+            lines.append(f"  Prerequisites from prior chapters: {', '.join(analysis.external_prerequisites)}")
+        if analysis.logical_flow:
+            lines.append(f"  Logical flow: {analysis.logical_flow}")
+        for sc in analysis.section_characterizations:
+            lines.extend(_format_section_characterization(sc, analysis, concept_graph))
+    else:
+        for section in chapter.sections:
+            snippet = section.text.strip()[:_SECTION_SNIPPET_LENGTH]
+            if len(section.text.strip()) > _SECTION_SNIPPET_LENGTH:
+                snippet += "..."
+            lines.append(f"  - {section.title} (pp. {section.start_page}-{section.end_page})")
+            if snippet:
+                lines.append(f"    > {snippet}")
+
+    lines.append("")
+    return lines
+
+
 def _build_rich_content_summary(
     book: Book,
     chapter_analyses: list[ChapterAnalysis],
@@ -488,90 +616,24 @@ def _build_rich_content_summary(
         "",
     ]
 
-    # Add concept dependency order from the graph
     if concept_graph and concept_graph.topological_order:
         parts.append("# Concept Dependency Order (learn in this sequence):")
         parts.append(" → ".join(concept_graph.topological_order[:30]))
         parts.append("")
-
     if concept_graph and concept_graph.foundation_concepts:
         parts.append(f"# Foundation concepts (start here): {', '.join(concept_graph.foundation_concepts[:10])}")
         parts.append("")
-
     if concept_graph and concept_graph.advanced_concepts:
         parts.append(f"# Advanced concepts (build toward): {', '.join(concept_graph.advanced_concepts[:10])}")
         parts.append("")
 
-    # Per-chapter analysis
     analyses_by_num = {a.chapter_number: a for a in chapter_analyses}
-
     for chapter in book.chapters:
         analysis = analyses_by_num.get(chapter.chapter_number)
-        section_count = len(chapter.sections)
-        parts.append(
-            f"## Chapter {chapter.chapter_number}: {chapter.title} "
-            f"(pp. {chapter.start_page}-{chapter.end_page}, {section_count} sections)"
-        )
-
-        if analysis:
-            # Concepts in this chapter (compact: names only to fit all chapters)
-            if analysis.concepts:
-                concept_names = [
-                    concept_graph.resolve(c.name) if concept_graph else c.name
-                    for c in analysis.concepts
-                ]
-                parts.append(f"  Concepts ({len(concept_names)}): {', '.join(concept_names)}")
-
-            # External prerequisites
-            if analysis.external_prerequisites:
-                parts.append(f"  Prerequisites from prior chapters: {', '.join(analysis.external_prerequisites)}")
-
-            # Logical flow
-            if analysis.logical_flow:
-                parts.append(f"  Logical flow: {analysis.logical_flow}")
-
-            # Section characterizations
-            for sc in analysis.section_characterizations:
-                flags = []
-                if sc.has_formulas:
-                    flags.append("formulas")
-                if sc.has_procedures:
-                    flags.append("procedures")
-                if sc.has_comparisons:
-                    flags.append("comparisons")
-                if sc.has_definitions:
-                    flags.append("definitions")
-                if sc.has_examples:
-                    flags.append("examples")
-                flags_str = f" [{', '.join(flags)}]" if flags else ""
-                # Find concepts in this section
-                section_concepts = [
-                    concept_graph.resolve(c.name) if concept_graph else c.name
-                    for c in analysis.concepts if c.section_title == sc.section_title
-                ]
-                concepts_str = f" concepts=[{', '.join(section_concepts)}]" if section_concepts else ""
-                parts.append(
-                    f"  Section: {sc.section_title} — {sc.dominant_content_type}, "
-                    f"{sc.difficulty_estimate}{flags_str}{concepts_str}"
-                )
-                if sc.summary:
-                    parts.append(f"    Summary: {sc.summary}")
-        else:
-            # Fallback to snippets if no analysis for this chapter
-            for section in chapter.sections:
-                snippet = section.text.strip()[:_SECTION_SNIPPET_LENGTH]
-                if len(section.text.strip()) > _SECTION_SNIPPET_LENGTH:
-                    snippet += "..."
-                parts.append(
-                    f"  - {section.title} (pp. {section.start_page}-{section.end_page})"
-                )
-                if snippet:
-                    parts.append(f"    > {snippet}")
-
-        parts.append("")
+        parts.extend(_format_chapter_analysis(chapter, analysis, concept_graph))
 
     result = "\n".join(parts)
-    if len(result) > _MAX_SUMMARY_LENGTH * 4:  # Allow generous budget for rich summaries
+    if len(result) > _MAX_SUMMARY_LENGTH * 4:
         result = result[:_MAX_SUMMARY_LENGTH * 4] + "\n\n[... truncated ...]"
 
     return result
@@ -715,6 +777,335 @@ def _ensure_all_chapters_covered(
     )
 
 
+_MISSING_CHAPTERS_PROMPT = """\
+You are a curriculum architect. You previously designed a multi-document course \
+but MISSED some chapters. Below is (A) your existing curriculum and (B) the \
+chapters you missed. Design ADDITIONAL modules that integrate these missing \
+chapters into a coherent extension of the existing course.
+
+## RULES
+1. Create one module per missing chapter (or group tightly related chapters).
+2. Give each module a descriptive title — NOT just "Chapter N Title".
+3. Each module must set `source_book_index` and `source_chapter_number` to \
+match the source document.
+4. Assign templates based on content type, not rotation.
+5. Set bloom_target based on content complexity.
+6. Add 1-3 learning objectives per section.
+7. Map `source_section_title` to the EXACT extracted section titles.
+8. Consider how these modules relate to the existing ones — set prerequisites \
+when a missing module builds on an existing one.
+
+## OUTPUT FORMAT
+Return ONLY a JSON object:
+{
+  "modules": [ ... same format as before ... ]
+}"""
+
+
+def _ensure_all_chapters_covered_multi_doc(
+    blueprint: CurriculumBlueprint,
+    books: list[Book],
+    client: LLMClient,
+    chapter_analyses_per_book: list[list[ChapterAnalysis]] | None = None,
+    document_type: DocumentType = "mixed",
+) -> CurriculumBlueprint:
+    """Design proper modules for any chapters the LLM skipped across all books.
+
+    Multi-document version of _ensure_all_chapters_covered(). Checks every
+    chapter in every book. For missing chapters, sends a follow-up LLM call
+    to design properly-titled modules with learning objectives and template
+    assignments — not raw chapter dumps.
+    """
+    # Build coverage set from both module-level AND section-level book indices
+    covered: set[tuple[int, int]] = set()
+    for m in blueprint.modules:
+        if m.source_chapter_number is not None:
+            book_idx = m.source_book_index or 0
+            covered.add((book_idx, m.source_chapter_number))
+        # Also check section-level: a module from book 0 may reference
+        # sections from book 1 via source_book_index on sections
+        for s in m.sections:
+            if s.source_book_index is not None and m.source_chapter_number is not None:
+                covered.add((s.source_book_index, m.source_chapter_number))
+
+    # Find missing chapters across all books
+    missing: list[tuple[int, Book, Chapter]] = []
+    for book_idx, book in enumerate(books):
+        for chapter in book.chapters:
+            if (book_idx, chapter.chapter_number) not in covered:
+                missing.append((book_idx, book, chapter))
+
+    if not missing:
+        return blueprint
+
+    total_chapters = sum(len(b.chapters) for b in books)
+    logger.warning(
+        "Multi-doc blueprint covers %d/%d chapters. Designing modules for %d missing chapters via LLM.",
+        len(covered), total_chapters, len(missing),
+    )
+
+    # Build context: existing modules + missing chapter summaries
+    existing_summary = "## (A) EXISTING MODULES\n"
+    for m in blueprint.modules:
+        existing_summary += f"- {m.title} (book={m.source_book_index}, ch={m.source_chapter_number})\n"
+
+    missing_summary = "\n## (B) MISSING CHAPTERS — design modules for these\n"
+    for book_idx, book, chapter in missing:
+        section_count = len(chapter.sections)
+        missing_summary += (
+            f"\n### Document {book_idx}: {book.title}\n"
+            f"Chapter {chapter.chapter_number}: {chapter.title} "
+            f"(pp. {chapter.start_page}-{chapter.end_page}, {section_count} sections)\n"
+        )
+        # Include section info and analysis if available
+        analyses_by_num: dict[int, ChapterAnalysis] = {}
+        if chapter_analyses_per_book and book_idx < len(chapter_analyses_per_book):
+            analyses_by_num = {
+                a.chapter_number: a for a in chapter_analyses_per_book[book_idx]
+            }
+        analysis = analyses_by_num.get(chapter.chapter_number)
+
+        for section in chapter.sections:
+            text_len = len(section.text.strip())
+            missing_summary += f"  - {section.title} ({text_len} chars)\n"
+
+        if analysis:
+            concept_names = [c.name for c in analysis.concepts]
+            if concept_names:
+                missing_summary += f"  Concepts: {', '.join(concept_names[:15])}\n"
+            for sc in analysis.section_characterizations:
+                missing_summary += f"  Section '{sc.section_title}': {sc.dominant_content_type}, {sc.difficulty_estimate}\n"
+
+    user_prompt = existing_summary + missing_summary
+
+    # Use a structured response that just has "modules" list
+    from pydantic import BaseModel
+
+    class _SupplementBlueprint(BaseModel):
+        modules: list[ModuleBlueprint]
+
+    try:
+        supplement = client.complete_structured(
+            _MISSING_CHAPTERS_PROMPT, user_prompt, _SupplementBlueprint
+        )
+        new_modules = list(blueprint.modules) + supplement.modules
+
+        logger.info(
+            "LLM designed %d additional modules for missing chapters (total now: %d)",
+            len(supplement.modules), len(new_modules),
+        )
+    except Exception:
+        logger.warning(
+            "LLM follow-up for missing chapters failed. Falling back to passthrough modules.",
+        )
+        # Fallback: deterministic passthrough (better than losing chapters)
+        weights = DOCUMENT_TYPE_TEMPLATE_WEIGHTS.get(
+            document_type, DOCUMENT_TYPE_TEMPLATE_WEIGHTS["mixed"]
+        )
+        templates_by_weight = sorted(weights.keys(), key=lambda t: -weights[t])
+
+        new_modules = list(blueprint.modules)
+        for book_idx, book, chapter in missing:
+            title = re.sub(r"^CHAPTER\s+\d+[:\s]*", "", chapter.title).strip() or chapter.title
+            sections: list[SectionBlueprint] = []
+            for idx, section in enumerate(chapter.sections):
+                sections.append(SectionBlueprint(
+                    title=section.title,
+                    source_section_title=section.title,
+                    source_book_index=book_idx,
+                    template=templates_by_weight[idx % len(templates_by_weight)],
+                    bloom_target="understand",
+                ))
+            new_modules.append(ModuleBlueprint(
+                title=title,
+                source_chapter_number=chapter.chapter_number,
+                source_book_index=book_idx,
+                summary=f"Chapter {chapter.chapter_number}: {title}",
+                sections=sections,
+            ))
+
+    # Sort: keep LLM-designed modules first, then supplementary by book order
+    original_count = len(blueprint.modules)
+    original = new_modules[:original_count]
+    supplementary = new_modules[original_count:]
+    supplementary.sort(
+        key=lambda m: (m.source_book_index or 0, m.source_chapter_number or 0)
+    )
+    new_modules = original + supplementary
+
+    return CurriculumBlueprint(
+        course_title=blueprint.course_title,
+        course_summary=blueprint.course_summary,
+        learner_journey=blueprint.learner_journey,
+        modules=new_modules,
+    )
+
+
+# ── Concept-level section splitting (deterministic safety net) ─────────────
+
+# Minimum number of core/supporting concepts to trigger automatic splitting.
+_MIN_CONCEPTS_TO_SPLIT = 4
+
+# Maximum concepts per learning unit when auto-splitting.
+_MAX_CONCEPTS_PER_UNIT = 2
+
+
+def _split_overloaded_sections(
+    blueprint: CurriculumBlueprint,
+    chapter_analyses: list[ChapterAnalysis] | None,
+    concept_graph: ConceptGraph | None = None,
+) -> CurriculumBlueprint:
+    """Deterministically split sections that cover too many concepts.
+
+    Safety net for when the LLM planner doesn't split dense sections itself.
+    Only splits sections that:
+    1. Have no focus_concepts specified (LLM didn't split)
+    2. Map to a source section with 4+ core/supporting concepts
+    3. Have deep reading analysis available
+
+    Args:
+        blueprint: The curriculum blueprint to post-process.
+        chapter_analyses: Deep reading analyses per chapter.
+        concept_graph: Consolidated concept dependency graph.
+
+    Returns:
+        Blueprint with overloaded sections split into focused units.
+    """
+    if not chapter_analyses:
+        return blueprint
+
+    analyses_by_num = {a.chapter_number: a for a in chapter_analyses}
+
+    new_modules = []
+    any_split = False
+
+    for module in blueprint.modules:
+        analysis = analyses_by_num.get(module.source_chapter_number) if module.source_chapter_number is not None else None
+        if not analysis:
+            new_modules.append(module)
+            continue
+
+        new_sections: list[SectionBlueprint] = []
+        for section_bp in module.sections:
+            if section_bp.focus_concepts:
+                # LLM already specified focus — keep as-is
+                new_sections.append(section_bp)
+                continue
+
+            # Find concepts for this source section
+            source_title = section_bp.source_section_title or section_bp.title
+            section_concepts = [
+                c for c in analysis.concepts
+                if c.section_title.lower().strip() == source_title.lower().strip()
+            ]
+
+            # Filter to core + supporting (ignore peripheral)
+            meaningful = [
+                c for c in section_concepts if c.importance != "peripheral"
+            ]
+
+            if len(meaningful) < _MIN_CONCEPTS_TO_SPLIT:
+                new_sections.append(section_bp)
+                continue
+
+            # Order by concept graph topology if available
+            if concept_graph and concept_graph.topological_order:
+                topo_index = {
+                    name.lower().strip(): i
+                    for i, name in enumerate(concept_graph.topological_order)
+                }
+                meaningful.sort(
+                    key=lambda c: topo_index.get(
+                        concept_graph.resolve(c.name).lower().strip(), 999
+                    )
+                )
+
+            # Chunk into groups of _MAX_CONCEPTS_PER_UNIT
+            chunks = [
+                meaningful[i : i + _MAX_CONCEPTS_PER_UNIT]
+                for i in range(0, len(meaningful), _MAX_CONCEPTS_PER_UNIT)
+            ]
+
+            any_split = True
+            logger.info(
+                "Auto-splitting section '%s' (%d concepts) into %d units",
+                section_bp.title, len(meaningful), len(chunks),
+            )
+
+            for i, chunk in enumerate(chunks):
+                concept_names = [c.name for c in chunk]
+                title_parts = " and ".join(concept_names[:_MAX_CONCEPTS_PER_UNIT])
+                sub_title = f"{section_bp.title}: {title_parts}"
+
+                objectives = [
+                    f"Explain {c.name} and its role" for c in chunk
+                ]
+
+                bloom = _bloom_from_concept_position(chunk, concept_graph)
+
+                prerequisites = list(section_bp.prerequisites) if i == 0 else [new_sections[-1].title]
+
+                new_sections.append(SectionBlueprint(
+                    title=sub_title,
+                    source_section_title=section_bp.source_section_title,
+                    source_book_index=section_bp.source_book_index,
+                    learning_objectives=objectives,
+                    template=section_bp.template,
+                    bloom_target=bloom or section_bp.bloom_target,
+                    prerequisites=prerequisites,
+                    rationale=f"Auto-split: focusing on {', '.join(concept_names)} from dense section.",
+                    focus_concepts=concept_names,
+                ))
+
+        new_modules.append(ModuleBlueprint(
+            title=module.title,
+            source_chapter_number=module.source_chapter_number,
+            source_book_index=module.source_book_index,
+            summary=module.summary,
+            sections=new_sections,
+        ))
+
+    if not any_split:
+        return blueprint
+
+    return CurriculumBlueprint(
+        course_title=blueprint.course_title,
+        course_summary=blueprint.course_summary,
+        learner_journey=blueprint.learner_journey,
+        modules=new_modules,
+    )
+
+
+def _bloom_from_concept_position(
+    concepts: list,
+    concept_graph: ConceptGraph | None,
+) -> BloomLevel | None:
+    """Determine bloom_target from concept position in dependency graph."""
+    if not concept_graph:
+        return None
+
+    for c in concepts:
+        canonical = concept_graph.resolve(c.name)
+        if canonical in concept_graph.foundation_concepts:
+            return "understand"
+        if canonical in concept_graph.advanced_concepts:
+            return "analyze"
+
+    # Default based on how many dependencies the concepts have
+    max_deps = 0
+    for c in concepts:
+        canonical = concept_graph.resolve(c.name)
+        deps = sum(1 for e in concept_graph.edges if e.target == canonical)
+        max_deps = max(max_deps, deps)
+
+    if max_deps == 0:
+        return "understand"
+    elif max_deps <= 2:
+        return "apply"
+    else:
+        return "analyze"
+
+
 # ── Bloom's progression validation ─────────────────────────────────────────
 
 # Canonical ordering of Bloom's levels for progression validation.
@@ -733,6 +1124,8 @@ def validate_progression(blueprint: CurriculumBlueprint) -> list[str]:
 
     Allows small dips (one level) but flags significant regressions where
     a section drops more than one Bloom level below its predecessor.
+    Allows Bloom resets when transitioning between different source sections
+    (concept sub-units for a new topic naturally restart the progression).
 
     Args:
         blueprint: The curriculum blueprint to validate.
@@ -744,8 +1137,15 @@ def validate_progression(blueprint: CurriculumBlueprint) -> list[str]:
 
     for module in blueprint.modules:
         prev_level = 0
+        prev_source = ""
         for section in module.sections:
             level = _BLOOM_ORDER.get(section.bloom_target, 2)
+            source = section.source_section_title or section.title
+
+            # Allow Bloom reset when switching to a new source section
+            if source != prev_source:
+                prev_level = 0
+
             if level < prev_level - 1:
                 warnings.append(
                     f"Module '{module.title}': section '{section.title}' "
@@ -753,6 +1153,7 @@ def validate_progression(blueprint: CurriculumBlueprint) -> list[str]:
                     f"from previous section (level {prev_level})"
                 )
             prev_level = level
+            prev_source = source
 
     return warnings
 
@@ -763,20 +1164,81 @@ def validate_progression(blueprint: CurriculumBlueprint) -> list[str]:
 def find_matching_chapter(book: Book, module_bp: ModuleBlueprint) -> Chapter | None:
     """Find the extracted Chapter that matches a blueprint module.
 
-    Tries source_chapter_number first, then falls back to title matching.
+    Tries sequential chapter_number and title-embedded chapter number in
+    parallel.  When both match **different** chapters, uses section-match
+    count from the blueprint as a validation signal to pick the winner
+    (preferring sequential on ties).  Falls back to title text matching.
+
+    The title-embedded path handles the common case where PDFs start
+    mid-book (e.g. "CHAPTER 3" is the first extracted chapter, numbered
+    chapter_number=1 sequentially).  The LLM may reference the PDF's own
+    chapter number (3) rather than the extraction's sequential number (1).
     """
     if module_bp.source_chapter_number is not None:
+        # Pass 1: exact sequential chapter_number match
+        sequential_match: Chapter | None = None
         for ch in book.chapters:
             if ch.chapter_number == module_bp.source_chapter_number:
-                return ch
+                sequential_match = ch
+                break
 
-    # Fallback: match by title
+        # Pass 2: match against chapter number embedded in title
+        # e.g. "CHAPTER 3 Fundamentals of Statistics" → 3
+        title_match: Chapter | None = None
+        for ch in book.chapters:
+            title_num = _extract_chapter_number_from_title(ch.title)
+            if title_num is not None and title_num == module_bp.source_chapter_number:
+                title_match = ch
+                break
+
+        if sequential_match and not title_match:
+            return sequential_match
+        if title_match and not sequential_match:
+            return title_match
+        if sequential_match and title_match:
+            if sequential_match is title_match:
+                return sequential_match
+            # Ambiguity: two different chapters claim the number.
+            # Use blueprint section matches as a tiebreaker.
+            if module_bp.sections:
+                seq_hits = _count_section_matches(sequential_match, module_bp.sections)
+                title_hits = _count_section_matches(title_match, module_bp.sections)
+                if title_hits > seq_hits:
+                    logger.info(
+                        "Chapter resolution: title-embedded match '%s' "
+                        "has more section hits (%d) than sequential match '%s' (%d)",
+                        title_match.title, title_hits,
+                        sequential_match.title, seq_hits,
+                    )
+                    return title_match
+            return sequential_match
+
+    # Pass 3: match by title text
     bp_title_lower = module_bp.title.lower().strip()
     for ch in book.chapters:
         if ch.title.lower().strip() == bp_title_lower:
             return ch
 
     return None
+
+
+_CHAPTER_NUM_RE = re.compile(r"(?:chapter|ch\.?)\s+(\d+)", re.IGNORECASE)
+
+
+def _extract_chapter_number_from_title(title: str) -> int | None:
+    """Extract a chapter number from a title like 'CHAPTER 3 Fundamentals'."""
+    m = _CHAPTER_NUM_RE.search(title)
+    return int(m.group(1)) if m else None
+
+
+def _count_section_matches(
+    chapter: Chapter, section_bps: list[SectionBlueprint],
+) -> int:
+    """Count how many blueprint sections match sections in *chapter*."""
+    return sum(
+        1 for sbp in section_bps
+        if find_matching_section(chapter, sbp) is not None
+    )
 
 
 def _normalize_section_title(title: str) -> str:

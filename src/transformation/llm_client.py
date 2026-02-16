@@ -13,14 +13,20 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Protocol, TypeVar
+from typing import Protocol, TypeVar, Union
 
 import instructor
 import openai
+import pydantic
+from instructor.core.exceptions import InstructorError
 
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
+
+# User prompt can be a plain string or a list of multimodal content blocks
+# (text + image_url) for vision-enabled calls.
+UserPrompt = Union[str, list[dict]]
 
 # Maximum number of retry attempts for transient API failures
 # (rate limits, 5xx errors). Used by both complete() and complete_structured().
@@ -48,16 +54,16 @@ class LLMClient(Protocol):
     variants of each that route to a cheaper model for simple tasks.
     """
 
-    def complete(self, system_prompt: str, user_prompt: str) -> str: ...
+    def complete(self, system_prompt: str, user_prompt: UserPrompt) -> str: ...
 
-    def complete_light(self, system_prompt: str, user_prompt: str) -> str: ...
+    def complete_light(self, system_prompt: str, user_prompt: UserPrompt) -> str: ...
 
     def complete_structured(
-        self, system_prompt: str, user_prompt: str, response_model: type[T]
+        self, system_prompt: str, user_prompt: UserPrompt, response_model: type[T]
     ) -> T: ...
 
     def complete_structured_light(
-        self, system_prompt: str, user_prompt: str, response_model: type[T]
+        self, system_prompt: str, user_prompt: UserPrompt, response_model: type[T]
     ) -> T: ...
 
 
@@ -95,13 +101,13 @@ class OpenAIClient:
         )
         self._instructor = instructor.from_openai(raw_client, mode=instructor.Mode.JSON)
 
-    def _complete(self, target_model: str, system_prompt: str, user_prompt: str) -> str:
+    def _complete(self, target_model: str, system_prompt: str, user_prompt: UserPrompt) -> str:
         """Raw text completion (shared implementation)."""
         last_error: Exception | None = None
 
         for attempt in range(MAX_API_RETRIES):
             try:
-                response = self._instructor.client.chat.completions.create(
+                response = self._instructor.client.chat.completions.create(  # pyright: ignore[reportOptionalMemberAccess] -- instructor wraps OpenAI client
                     model=target_model,
                     messages=[
                         {"role": "system", "content": system_prompt},
@@ -128,7 +134,7 @@ class OpenAIClient:
         raise LLMError(f"Failed after {MAX_API_RETRIES} retries: {last_error}")
 
     def _structured(
-        self, target_model: str, system_prompt: str, user_prompt: str, response_model: type[T]
+        self, target_model: str, system_prompt: str, user_prompt: UserPrompt, response_model: type[T]
     ) -> T:
         """Schema-constrained completion via Instructor (shared implementation).
 
@@ -140,13 +146,14 @@ class OpenAIClient:
 
         for attempt in range(MAX_API_RETRIES):
             try:
-                return self._instructor.chat.completions.create(
+                # Instructor patches the OpenAI client with response_model support;
+                # pyright doesn't see the patched signature, so we suppress here.
+                create = self._instructor.chat.completions.create  # pyright: ignore[reportOptionalMemberAccess]
+                msgs = [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
+                return create(  # type: ignore[call-overload]  # pyright: ignore[reportCallIssue,reportArgumentType]
                     model=target_model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    response_model=response_model,
+                    messages=msgs,
+                    response_model=response_model,  # pyright: ignore[reportArgumentType]
                     max_completion_tokens=self._max_tokens,
                     temperature=self._temperature,
                     max_retries=VALIDATION_RETRIES,
@@ -160,28 +167,28 @@ class OpenAIClient:
                         delay, attempt + 1, MAX_API_RETRIES, exc,
                     )
                     time.sleep(delay)
-            except Exception as exc:
+            except (InstructorError, openai.APIConnectionError, pydantic.ValidationError) as exc:
                 raise LLMError(f"Structured completion failed: {exc}") from exc
 
         raise LLMError(f"Structured completion failed after {MAX_API_RETRIES} retries: {last_error}")
 
-    def complete(self, system_prompt: str, user_prompt: str) -> str:
+    def complete(self, system_prompt: str, user_prompt: UserPrompt) -> str:
         """Raw text completion using the primary model."""
         return self._complete(self._model, system_prompt, user_prompt)
 
-    def complete_light(self, system_prompt: str, user_prompt: str) -> str:
+    def complete_light(self, system_prompt: str, user_prompt: UserPrompt) -> str:
         """Raw text completion using the light model."""
         logger.debug("Using light model (%s) for raw completion", self._model_light)
         return self._complete(self._model_light, system_prompt, user_prompt)
 
     def complete_structured(
-        self, system_prompt: str, user_prompt: str, response_model: type[T]
+        self, system_prompt: str, user_prompt: UserPrompt, response_model: type[T]
     ) -> T:
         """Schema-constrained completion using the primary model."""
         return self._structured(self._model, system_prompt, user_prompt, response_model)
 
     def complete_structured_light(
-        self, system_prompt: str, user_prompt: str, response_model: type[T]
+        self, system_prompt: str, user_prompt: UserPrompt, response_model: type[T]
     ) -> T:
         """Schema-constrained completion using the light model."""
         logger.debug("Using light model (%s) for structured completion", self._model_light)

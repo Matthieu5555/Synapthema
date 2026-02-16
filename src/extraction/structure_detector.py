@@ -142,7 +142,8 @@ def detect_toc_with_llm(
 
     for page_idx in range(pages_to_read):
         page = doc[page_idx]
-        text = page.get_text().strip()
+        text: str = page.get_text()  # pyright: ignore[reportAssignmentType] -- PyMuPDF untyped
+        text = text.strip()
         if text:
             pages_text.append(f"--- PAGE {page_idx + 1} ---\n{text}")
 
@@ -213,6 +214,133 @@ def _extract_json_from_response(text: str) -> str:
         return match.group(0)
 
     return text.strip()
+
+
+# ── LLM-based subsection detection ─────────────────────────────────────────
+
+
+_SUBSECTION_EXTRACTION_PROMPT = """\
+You are analyzing a single chapter from a document to extract its internal structure.
+
+Your task: identify ALL section and subsection headings within this chapter, \
+with their page numbers.
+
+Look for:
+1. Numbered headings (e.g., "2.1 Title", "2.1.1 Subtitle")
+2. Named sections with consistent formatting
+3. Any structural markers that indicate subsections within this chapter
+
+Return a JSON array of objects, each with:
+- "level": integer (2=section, 3=subsection — level 1 is the chapter itself)
+- "title": string (the heading text, including any numbering like "2.1")
+- "page": integer (1-indexed page number where this section starts)
+
+Rules:
+- Include EVERY heading you find within this chapter
+- Page numbers must be integers, 1-indexed
+- Titles should be clean text (no page numbers, no dots/leaders)
+- Order entries by page number
+- Do NOT include the chapter title itself (only its subsections)
+- Do NOT include "Answers", "Solutions", or back-matter sections
+- Return ONLY the JSON array, no other text
+- If you cannot identify clear subsections, return an empty array: []"""
+
+
+def detect_subsections_with_llm(
+    doc: fitz.Document,
+    start_page: int,
+    end_page: int,
+    chapter_title: str,
+    llm_client: LLMClient,
+) -> tuple[TocEntry, ...]:
+    """Use an LLM to detect subsection structure within a chapter.
+
+    Sends the chapter's page text to the LLM and gets back structured
+    section entries with titles, levels, and page numbers. This is the
+    fallback for chapters whose embedded TOC has no subsection entries.
+
+    Args:
+        doc: An open PyMuPDF document.
+        start_page: 1-indexed first page of the chapter (inclusive).
+        end_page: 1-indexed last page of the chapter (inclusive).
+        chapter_title: The chapter's title (for prompt context).
+        llm_client: An LLM client with a complete_light() method.
+
+    Returns:
+        Tuple of TocEntry objects. Empty if detection fails or finds < 2.
+    """
+    pages_text: list[str] = []
+    for page_idx in range(max(0, start_page - 1), min(end_page, len(doc))):
+        page = doc[page_idx]
+        text: str = page.get_text()  # pyright: ignore[reportAssignmentType] -- PyMuPDF untyped
+        text = text.strip()
+        if text:
+            pages_text.append(f"--- PAGE {page_idx + 1} ---\n{text}")
+
+    if not pages_text:
+        return ()
+
+    combined_text = "\n\n".join(pages_text)
+
+    # Truncate if too long (keep under ~12k chars to leave room for response)
+    if len(combined_text) > 12000:
+        combined_text = combined_text[:12000] + "\n\n[... truncated ...]"
+
+    user_prompt = (
+        f"Here is the chapter '{chapter_title}' "
+        f"(pages {start_page}-{end_page}). "
+        f"Extract all section and subsection headings.\n\n"
+        f"{combined_text}"
+    )
+
+    try:
+        raw_response = llm_client.complete_light(
+            _SUBSECTION_EXTRACTION_PROMPT, user_prompt,
+        )
+
+        json_text = _extract_json_from_response(raw_response)
+        toc_data = json.loads(json_text)
+
+        if not isinstance(toc_data, list):
+            logger.warning("LLM subsection response is not a list")
+            return ()
+
+        entries: list[TocEntry] = []
+        for item in toc_data:
+            if not isinstance(item, dict):
+                continue
+            level = int(item.get("level", 2))
+            title = str(item.get("title", "")).strip()
+            page = int(item.get("page", 0))
+
+            if not title or page < 1:
+                continue
+            # Clamp to chapter's page range
+            page = max(start_page, min(page, end_page))
+
+            entries.append(TocEntry(level=level, title=title, page=page))
+
+        # Sort by page
+        entries.sort(key=lambda e: (e.page, e.level))
+
+        if len(entries) < 2:
+            logger.debug(
+                "LLM found %d subsections for '%s' (below threshold, ignoring)",
+                len(entries), chapter_title,
+            )
+            return ()
+
+        logger.info(
+            "LLM detected %d subsections in '%s' (pages %d-%d)",
+            len(entries), chapter_title, start_page, end_page,
+        )
+        return tuple(entries)
+
+    except (LLMError, json.JSONDecodeError, ValueError, TypeError, KeyError) as exc:
+        logger.warning(
+            "LLM subsection detection failed for '%s': %s", chapter_title, exc,
+        )
+        return ()
 
 
 # ── Chapter identification ─────────────────────────────────────────────────

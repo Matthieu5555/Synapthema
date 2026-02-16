@@ -224,8 +224,9 @@ def analyze_chapter_sections(
 # ── Formula detection ────────────────────────────────────────────────────────
 
 # LaTeX math: $...$ (not currency like $100) and $$...$$
-_INLINE_MATH = re.compile(r"(?<!\w)\$(?!\d)(.+?)\$(?!\d)")
-_DISPLAY_MATH = re.compile(r"\$\$(.+?)\$\$", re.DOTALL)
+# NOTE: Use [$] instead of \$ — Python 3.13+ treats \$ as end-of-string anchor.
+_INLINE_MATH = re.compile(r"(?<!\w)[$](?!\d)(.+?)[$](?!\d)")
+_DISPLAY_MATH = re.compile(r"[$][$](.+?)[$][$]", re.DOTALL)
 
 # LaTeX commands commonly used in formulas
 _LATEX_COMMANDS = re.compile(

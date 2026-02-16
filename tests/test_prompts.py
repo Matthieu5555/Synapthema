@@ -134,16 +134,19 @@ class TestBuildSectionPrompt:
 
 
 class TestNewElementTypes:
-    """Tests for self_explain and milestone element types in prompts."""
+    """Tests for section_intro, interactive_essay, and ordering in prompts."""
 
     def test_milestone_assessment_template_exists(self) -> None:
         assert "milestone_assessment" in TEMPLATE_DESCRIPTIONS
 
-    def test_self_explain_in_system_prompt(self) -> None:
-        assert "self_explain" in SYSTEM_PROMPT
+    def test_section_intro_in_system_prompt(self) -> None:
+        assert "section_intro" in SYSTEM_PROMPT
 
     def test_interactive_essay_in_system_prompt(self) -> None:
         assert "interactive_essay" in SYSTEM_PROMPT
+
+    def test_element_ordering_instruction_in_system_prompt(self) -> None:
+        assert "Element Ordering" in SYSTEM_PROMPT
 
 
 class TestConceptContext:
@@ -295,13 +298,13 @@ class TestBloomPromptSupplements:
 
     def test_apply_contains_scenario_keywords(self) -> None:
         supplement = BLOOM_PROMPT_SUPPLEMENTS["apply"]
-        assert "scenario" in supplement.lower()
-        assert "worked example" in supplement.lower()
+        assert "scenario" in supplement.lower() or "situation" in supplement.lower()
+        assert "numerical" in supplement.lower() or "novel" in supplement.lower()
 
     def test_analyze_contains_comparison_keywords(self) -> None:
         supplement = BLOOM_PROMPT_SUPPLEMENTS["analyze"]
-        assert "comparison" in supplement.lower() or "decomposition" in supplement.lower()
-        assert "chain-of-thought" in supplement.lower()
+        assert "compare" in supplement.lower() or "decompos" in supplement.lower() or "error" in supplement.lower()
+        assert "step" in supplement.lower()
 
     def test_evaluate_contains_judgment_keywords(self) -> None:
         supplement = BLOOM_PROMPT_SUPPLEMENTS["evaluate"]
@@ -385,7 +388,7 @@ class TestReinforcementTargetsInSectionPrompt:
                 target_insight="Penalizes upside volatility equally",
                 angle="mechanism",
                 bloom_level="evaluate",
-                suggested_element_type="self_explain",
+                suggested_element_type="interactive_essay",
             ),
             ReinforcementTarget(
                 concept_name="Duration",
@@ -418,3 +421,61 @@ class TestReinforcementTargetsInSectionPrompt:
             table_count=0,
         )
         assert "Reinforcement Targets" not in result
+
+
+class TestFocusConceptsPromptBlock:
+    """Tests for the CONCEPT FOCUS block in build_section_prompt."""
+
+    def test_includes_focus_block_when_provided(self) -> None:
+        result = build_section_prompt(
+            section_title="Basis and Span",
+            section_text="Content about vector spaces...",
+            chapter_title="Linear Algebra",
+            image_count=0,
+            table_count=0,
+            focus_concepts=["basis", "span"],
+        )
+        assert "CONCEPT FOCUS" in result
+        assert "**basis**" in result
+        assert "**span**" in result
+        assert "ONLY" in result
+        assert "5-10 minutes" in result
+
+    def test_no_focus_block_when_none(self) -> None:
+        result = build_section_prompt(
+            section_title="Sec",
+            section_text="Text",
+            chapter_title="Ch",
+            image_count=0,
+            table_count=0,
+            focus_concepts=None,
+        )
+        assert "CONCEPT FOCUS" not in result
+
+    def test_no_focus_block_when_empty_list(self) -> None:
+        result = build_section_prompt(
+            section_title="Sec",
+            section_text="Text",
+            chapter_title="Ch",
+            image_count=0,
+            table_count=0,
+            focus_concepts=[],
+        )
+        assert "CONCEPT FOCUS" not in result
+
+    def test_focus_block_coexists_with_other_blocks(self) -> None:
+        result = build_section_prompt(
+            section_title="Sec",
+            section_text="Content " * 50,
+            chapter_title="Ch",
+            image_count=0,
+            table_count=0,
+            template="worked_example",
+            learning_objectives=["Understand X"],
+            bloom_target="apply",
+            focus_concepts=["concept_a", "concept_b"],
+        )
+        assert "CONCEPT FOCUS" in result
+        assert "WORKED EXAMPLE" in result
+        assert "Understand X" in result
+        assert "**concept_a**" in result

@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Spaced Review — {{ course_title }}</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.css">
     <style>
 {{ css|safe }}
     </style>
@@ -28,12 +29,32 @@
     <div class="course-header-right">
         <a href="mixed_review.html" class="review-crossnav">Switch to Mixed Practice &#8594;</a>
         <button class="theme-toggle" onclick="__lxpToggleTheme()" title="Toggle theme">&#9788;</button>
+        <button class="help-btn" onclick="openHelp()" title="How this course works"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg></button>
     </div>
 </nav>
 
 <div class="index-container">
     <h1 class="index-title">Spaced Review</h1>
     <p class="index-subtitle" id="reviewSubtitle">Loading flashcards…</p>
+
+    <details class="help-section" style="max-width:48rem; margin:1rem auto;">
+        <summary class="help-section-title">Why spaced review works</summary>
+        <div class="help-section-content">
+            <p>
+                Spaced repetition is one of the most proven techniques in learning
+                science. By reviewing material just as you're about to forget it, you
+                strengthen long-term memory far more effectively than re-reading or
+                cramming. The FSRS algorithm schedules each item based on your personal
+                performance — items you find difficult come back sooner, easy ones are
+                spaced further apart.
+            </p>
+            <p style="color:var(--text-muted); font-size:0.85rem; margin-top:0.5rem;">
+                Based on: Cepeda et al. (2006) meta-analysis of 184 studies;
+                Rowland (2014) testing effect meta-analysis showing g&nbsp;=&nbsp;0.50
+                effect size.
+            </p>
+        </div>
+    </details>
 
     <div class="review-stats" id="reviewStats" style="display:none;">
         <span class="review-stat"><strong id="statDue">0</strong> due</span>
@@ -42,38 +63,45 @@
     </div>
 
     <div id="emptyState" style="display:none; text-align:center; margin-top:3rem;">
-        <p style="font-size:1.2rem; color:var(--text-muted);">No flashcards available yet.</p>
-        <p style="color:var(--text-muted); margin-top:0.5rem;">Visit chapter pages to populate your review deck.</p>
+        <p style="font-size:1.2rem; color:var(--text-muted);">No review items available yet.</p>
+        <p style="color:var(--text-muted); margin-top:0.5rem;">Visit chapter pages to build your review deck.</p>
         <a href="index.html" class="nav-btn" style="display:inline-block; margin-top:1.5rem; text-decoration:none;">Back to Course</a>
     </div>
 
     <div id="doneState" style="display:none; text-align:center; margin-top:3rem;">
         <p style="font-size:1.5rem; color:var(--success); font-weight:700;">All caught up!</p>
-        <p style="color:var(--text-muted); margin-top:0.5rem;">No cards due for review. Come back later.</p>
+        <p style="color:var(--text-muted); margin-top:0.5rem;">No items due for review. Come back later.</p>
         <p style="color:var(--text-muted); margin-top:0.25rem;" id="nextDueText"></p>
         <a href="index.html" class="nav-btn" style="display:inline-block; margin-top:1.5rem; text-decoration:none;">Back to Course</a>
     </div>
 
     <div id="reviewArea" style="display:none;">
-        <div class="review-card-container">
-            <div class="flashcard-container" style="perspective:1000px;">
-                <div class="flashcard review-flashcard" id="reviewCard" onclick="flipCard()">
-                    <div class="flashcard-front" id="cardFront"></div>
-                    <div class="flashcard-back" id="cardBack"></div>
+        <!-- Flashcard view -->
+        <div id="flashcardView" style="display:none;">
+            <div class="review-card-container">
+                <div class="flashcard-container" style="perspective:1000px;">
+                    <div class="flashcard review-flashcard" id="reviewCard" onclick="flipCard()">
+                        <div class="flashcard-front" id="cardFront"></div>
+                        <div class="flashcard-back" id="cardBack"></div>
+                    </div>
                 </div>
+                <p class="review-card-meta" id="cardMeta"></p>
             </div>
-            <p class="review-card-meta" id="cardMeta"></p>
+            <div id="flipPrompt" class="review-flip-prompt">
+                <button class="nav-btn" onclick="flipCard()">Show Answer</button>
+            </div>
         </div>
 
-        <div id="flipPrompt" class="review-flip-prompt">
-            <button class="nav-btn" onclick="flipCard()">Show Answer</button>
+        <!-- Exercise view -->
+        <div id="exerciseView" style="display:none;">
+            <div id="reviewExerciseCard" class="mixed-exercise-card"></div>
         </div>
 
         <div id="ratingButtons" class="review-rating-buttons" style="display:none;">
-            <button class="review-btn review-btn-again" onclick="rateCard(1)">Again</button>
-            <button class="review-btn review-btn-hard" onclick="rateCard(2)">Hard</button>
-            <button class="review-btn review-btn-good" onclick="rateCard(3)">Good</button>
-            <button class="review-btn review-btn-easy" onclick="rateCard(4)">Easy</button>
+            <button class="review-btn review-btn-again" onclick="rateItem(1)">Again</button>
+            <button class="review-btn review-btn-hard" onclick="rateItem(2)">Hard</button>
+            <button class="review-btn review-btn-good" onclick="rateItem(3)">Good</button>
+            <button class="review-btn review-btn-easy" onclick="rateItem(4)">Easy</button>
         </div>
 
         <div class="review-progress" id="reviewProgress"></div>
@@ -83,6 +111,45 @@
 <script>
 // ── Learner Model ─────────────────────────────────────────────────────────
 {% include '_learner_model.js' %}
+
+function renderMath(el) {
+    if (typeof renderMathInElement === 'function') {
+        renderMathInElement(el, {
+            delimiters: [
+                {left: '$$', right: '$$', display: true},
+                {left: '$', right: '$', display: false},
+                {left: '\\(', right: '\\)', display: false},
+                {left: '\\[', right: '\\]', display: true}
+            ],
+            throwOnError: false
+        });
+    }
+}
+
+// ── Progressive letter-reveal hint ────────────────────────────────────────
+window.revealNextLetters = function(input) {
+    var answer = input.dataset.answer || input.dataset.correctLabel || '';
+    if (!answer) return;
+    var level = parseInt(input.dataset.hintLevel || '0') + 1;
+    input.dataset.hintLevel = level;
+    var words = answer.split(/\s+/);
+    var placeholder = words.map(function(word) {
+        var chars = [];
+        for (var i = 0; i < word.length; i++) {
+            if (level === 1) { chars.push('_'); }
+            else if (i < level - 1) { chars.push(word[i]); }
+            else { chars.push('_'); }
+        }
+        return chars.join(' ');
+    }).join('   ');
+    input.placeholder = placeholder;
+    var btn = input.nextElementSibling;
+    if (!btn || !btn.classList.contains('hint-letter-btn')) {
+        btn = input.parentElement && input.parentElement.querySelector('.hint-letter-btn');
+    }
+    var maxLetters = Math.max.apply(null, words.map(function(w) { return w.length; }));
+    if (btn && level > maxLetters) { btn.disabled = true; btn.style.opacity = '0.3'; }
+};
 
 // ── Theme toggle ──────────────────────────────────────────────────────────
 window.__lxpToggleTheme = function() {
@@ -102,46 +169,66 @@ window.__lxpToggleTheme = function() {
 // ── FSRS-5 Algorithm ─────────────────────────────────────────────────────
 {% include '_fsrs.js' %}
 
-// ── Review Session ───────────────────────────────────────────────────────
+// ── Unified Review Session ──────────────────────────────────────────────
 (function() {
     var COURSE_SLUG = '{{ course_slug }}';
     var FLASHCARD_KEY = 'lxp_' + COURSE_SLUG + '_flashcards';
+    var EXERCISES_KEY = 'lxp_' + COURSE_SLUG + '_exercises';
     var REVIEW_LOG_KEY = 'lxp_' + COURSE_SLUG + '_review_log';
     var learnerModel = __lxpCreateLearnerModel(COURSE_SLUG);
 
+    // Load both flashcards and exercises
     var allCards = {};
     try { allCards = JSON.parse(localStorage.getItem(FLASHCARD_KEY) || '{}'); } catch(e) {}
+    var allExercises = [];
+    try { allExercises = JSON.parse(localStorage.getItem(EXERCISES_KEY) || '[]'); } catch(e) {}
+
+    // Filter exercises to those with FSRS fields
+    var fsrsExercises = allExercises.filter(function(ex) { return ex.reps !== undefined; });
 
     var cardKeys = Object.keys(allCards);
-    if (cardKeys.length === 0) {
+    var totalItems = cardKeys.length + fsrsExercises.length;
+
+    if (totalItems === 0) {
         document.getElementById('emptyState').style.display = 'block';
-        document.getElementById('reviewSubtitle').textContent = 'FSRS-based flashcard review';
+        document.getElementById('reviewSubtitle').textContent = 'FSRS-based spaced review';
         return;
     }
 
-    // Determine due and new cards
+    // Build unified queue entries: { source, key/idx, item, concepts }
     var now = Date.now();
-    var dueKeys = [];
-    var newKeys = [];
+    var dueItems = [];
+    var newItems = [];
     var nextDueTime = Infinity;
 
     cardKeys.forEach(function(key) {
         var c = allCards[key];
+        var entry = { source: 'flashcard', key: key, item: c, concepts: c.concepts || [] };
         if (c.reps === 0) {
-            newKeys.push(key);
+            newItems.push(entry);
         } else if (!c.nextReview || c.nextReview <= now) {
-            dueKeys.push(key);
+            dueItems.push(entry);
         } else if (c.nextReview < nextDueTime) {
             nextDueTime = c.nextReview;
         }
     });
 
-    // Prioritize cards by concept mastery: struggling concepts first
+    fsrsExercises.forEach(function(ex, idx) {
+        var entry = { source: 'exercise', idx: idx, item: ex, concepts: ex.concepts || [] };
+        if (ex.reps === 0) {
+            newItems.push(entry);
+        } else if (!ex.nextReview || ex.nextReview <= now) {
+            dueItems.push(entry);
+        } else if (ex.nextReview < nextDueTime) {
+            nextDueTime = ex.nextReview;
+        }
+    });
+
+    // Prioritize by concept mastery
     var conceptMastery = learnerModel.getConceptMastery();
-    function cardPriority(key) {
-        var card = allCards[key];
-        var concepts = card.concepts || [];
-        var minPriority = 3; // default: progressing
+    function itemPriority(entry) {
+        var concepts = entry.concepts;
+        var minPriority = 3;
         var hasHypercorrections = false;
         concepts.forEach(function(c) {
             var cm = conceptMastery[c];
@@ -153,46 +240,48 @@ window.__lxpToggleTheme = function() {
                 if (cm.hypercorrections > 0) hasHypercorrections = true;
             }
         });
-        // Boost priority for concepts with hypercorrections (confident but wrong)
         if (hasHypercorrections && minPriority > 0) minPriority -= 0.5;
         return minPriority;
     }
 
-    dueKeys.sort(function(a, b) { return cardPriority(a) - cardPriority(b); });
-    newKeys.sort(function(a, b) { return cardPriority(a) - cardPriority(b); });
+    dueItems.sort(function(a, b) { return itemPriority(a) - itemPriority(b); });
+    newItems.sort(function(a, b) { return itemPriority(a) - itemPriority(b); });
 
-    // Session queue: due cards first (struggling concepts prioritized), then new cards (max 20)
-    var sessionQueue = dueKeys.concat(newKeys.slice(0, 20));
+    var sessionQueue = dueItems.concat(newItems.slice(0, 20));
 
-    // Gap 39: Filter by concept if ?concept= query parameter is set
+    // Filter by concept if ?concept= query parameter is set
     var urlParams = new URLSearchParams(window.location.search);
     var filterConcept = urlParams.get('concept');
     if (filterConcept) {
-        sessionQueue = sessionQueue.filter(function(key) {
-            var card = allCards[key];
-            return card.concepts && card.concepts.indexOf(filterConcept) >= 0;
+        sessionQueue = sessionQueue.filter(function(entry) {
+            return entry.concepts.indexOf(filterConcept) >= 0;
         });
     }
 
     // Count today's reviews
-    var todayStart = new Date(); todayStart.setHours(0,0,0,0);
     var reviewedToday = 0;
     try {
         var log = JSON.parse(localStorage.getItem(REVIEW_LOG_KEY) || '{}');
-        var todayKey = todayStart.toISOString().slice(0, 10);
+        var todayKey = new Date().toISOString().slice(0, 10);
         reviewedToday = log[todayKey] || 0;
     } catch(e) {}
 
-    document.getElementById('statDue').textContent = dueKeys.length;
-    document.getElementById('statNew').textContent = newKeys.length;
+    document.getElementById('statDue').textContent = dueItems.length;
+    document.getElementById('statNew').textContent = newItems.length;
     document.getElementById('statReviewed').textContent = reviewedToday;
     document.getElementById('reviewStats').style.display = 'flex';
+
+    var fcCount = cardKeys.length;
+    var exCount = fsrsExercises.length;
     if (filterConcept) {
         document.getElementById('reviewSubtitle').textContent =
-            'Reviewing concept: ' + filterConcept + ' — ' + sessionQueue.length + ' cards';
+            'Reviewing concept: ' + filterConcept + ' — ' + sessionQueue.length + ' items';
     } else {
+        var parts = [];
+        if (fcCount > 0) parts.push(fcCount + ' flashcard' + (fcCount !== 1 ? 's' : ''));
+        if (exCount > 0) parts.push(exCount + ' exercise' + (exCount !== 1 ? 's' : ''));
         document.getElementById('reviewSubtitle').textContent =
-            'FSRS-based flashcard review — ' + cardKeys.length + ' cards total';
+            'FSRS-based spaced review — ' + parts.join(', ');
     }
 
     if (sessionQueue.length === 0) {
@@ -209,29 +298,77 @@ window.__lxpToggleTheme = function() {
     document.getElementById('reviewArea').style.display = 'block';
     var currentIdx = 0;
     var isFlipped = false;
+    var currentExerciseCorrect = null; // tracks exercise result before rating
 
-    function showCard() {
+    function escapeHtml(str) {
+        if (!str) return '';
+        var div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
+    }
+
+    // ── Show current item ────────────────────────────────────────────────
+    function showItem() {
         if (currentIdx >= sessionQueue.length) {
             document.getElementById('reviewArea').style.display = 'none';
             document.getElementById('doneState').style.display = 'block';
             document.getElementById('doneState').querySelector('p').textContent =
-                'Session complete! Reviewed ' + currentIdx + ' cards.';
+                'Session complete! Reviewed ' + currentIdx + ' items.';
             return;
         }
-        var key = sessionQueue[currentIdx];
-        var card = allCards[key];
-        document.getElementById('cardFront').textContent = card.front;
-        document.getElementById('cardBack').textContent = card.back;
+
+        document.getElementById('ratingButtons').style.display = 'none';
+        document.getElementById('reviewProgress').textContent =
+            (currentIdx + 1) + ' / ' + sessionQueue.length;
+        currentExerciseCorrect = null;
+
+        var entry = sessionQueue[currentIdx];
+        if (entry.source === 'flashcard') {
+            showFlashcard(entry);
+        } else {
+            showExercise(entry);
+        }
+    }
+
+    function showFlashcard(entry) {
+        document.getElementById('flashcardView').style.display = 'block';
+        document.getElementById('exerciseView').style.display = 'none';
+        var card = entry.item;
+        document.getElementById('cardFront').innerHTML = card.front;
+        document.getElementById('cardBack').innerHTML = card.back;
+        renderMath(document.getElementById('cardFront'));
+        renderMath(document.getElementById('cardBack'));
         document.getElementById('cardMeta').textContent =
             'Chapter ' + card.chapterNum + ' — ' + card.sectionTitle;
         document.getElementById('reviewCard').classList.remove('flipped');
         document.getElementById('flipPrompt').style.display = 'block';
-        document.getElementById('ratingButtons').style.display = 'none';
-        document.getElementById('reviewProgress').textContent =
-            (currentIdx + 1) + ' / ' + sessionQueue.length;
         isFlipped = false;
     }
 
+    function showExercise(entry) {
+        document.getElementById('flashcardView').style.display = 'none';
+        document.getElementById('exerciseView').style.display = 'block';
+        var card = document.getElementById('reviewExerciseCard');
+        card.innerHTML = '';
+        var ex = entry.item;
+
+        if (ex.type === 'quiz') renderReviewQuiz(card, ex);
+        else if (ex.type === 'fitb') renderReviewFitb(card, ex);
+        else if (ex.type === 'matching') renderReviewMatching(card, ex);
+        else if (ex.type === 'self_explain') renderReviewSelfExplain(card, ex);
+        else if (ex.type === 'ordering') renderReviewOrdering(card, ex);
+        else if (ex.type === 'categorization') renderReviewCategorization(card, ex);
+        else if (ex.type === 'error_detection') renderReviewErrorDetection(card, ex);
+        else if (ex.type === 'analogy') renderReviewAnalogy(card, ex);
+    }
+
+    // Called by exercise renderers when the exercise is complete
+    function exerciseDone(isCorrect) {
+        currentExerciseCorrect = isCorrect;
+        document.getElementById('ratingButtons').style.display = 'flex';
+    }
+
+    // ── Flashcard flip ───────────────────────────────────────────────────
     window.flipCard = function() {
         if (isFlipped) return;
         isFlipped = true;
@@ -240,52 +377,508 @@ window.__lxpToggleTheme = function() {
         document.getElementById('ratingButtons').style.display = 'flex';
     };
 
-    window.rateCard = function(grade) {
-        var key = sessionQueue[currentIdx];
-        var card = allCards[key];
-        allCards[key] = FSRS.scheduleCard(card, grade);
-
-        // Record in learner model (concept-level accuracy)
+    // ── Unified rating ───────────────────────────────────────────────────
+    window.rateItem = function(grade) {
+        var entry = sessionQueue[currentIdx];
         var isCorrect = grade >= 3;
-        var concepts = card.concepts || [];
+        var concepts = entry.concepts;
 
-        // Gap 25: Boost grade for struggling concepts answered correctly
-        if (isCorrect && concepts.some(function(c) {
-            return conceptMastery[c] && conceptMastery[c].mastery === 'struggling';
-        })) {
-            // Struggling concept answered correctly — the FSRS card is already scheduled;
-            // the learner model data helps prioritize future reviews
-            if (grade === 3) grade = 3; // Keep as-is, but data sharing helps prioritization
+        if (entry.source === 'flashcard') {
+            allCards[entry.key] = FSRS.scheduleCard(entry.item, grade);
+            try { localStorage.setItem(FLASHCARD_KEY, JSON.stringify(allCards)); } catch(e) {}
+        } else {
+            // Schedule exercise via FSRS
+            var scheduled = FSRS.scheduleCard(entry.item, grade);
+            // Copy FSRS fields back to the exercise
+            entry.item.difficulty = scheduled.difficulty;
+            entry.item.stability = scheduled.stability;
+            entry.item.reps = scheduled.reps;
+            entry.item.lapses = scheduled.lapses;
+            entry.item.lastReview = scheduled.lastReview;
+            entry.item.nextReview = scheduled.nextReview;
+
+            // Find and update in allExercises array
+            var exIdx = allExercises.indexOf(entry.item);
+            if (exIdx === -1) {
+                // Fallback: match by type + chapter + title
+                for (var i = 0; i < allExercises.length; i++) {
+                    if (allExercises[i].type === entry.item.type &&
+                        allExercises[i].chapter === entry.item.chapter &&
+                        allExercises[i].data && entry.item.data &&
+                        allExercises[i].data.title === entry.item.data.title) {
+                        exIdx = i;
+                        break;
+                    }
+                }
+            }
+            if (exIdx >= 0) {
+                allExercises[exIdx] = entry.item;
+            }
+            try { localStorage.setItem(EXERCISES_KEY, JSON.stringify(allExercises)); } catch(e) {}
         }
 
+        // Record in learner model
         if (concepts.length > 0) {
-            learnerModel.recordAnswer(concepts, card.bloom || '', isCorrect);
+            learnerModel.recordAnswer(concepts, entry.item.bloom || '', isCorrect);
         }
 
         // If "Again", re-queue at the end
         if (grade === 1) {
-            sessionQueue.push(key);
+            sessionQueue.push(entry);
         }
-
-        // Save updated cards
-        try { localStorage.setItem(FLASHCARD_KEY, JSON.stringify(allCards)); } catch(e) {}
 
         // Update review log
         try {
-            var log = JSON.parse(localStorage.getItem(REVIEW_LOG_KEY) || '{}');
-            var todayKey = new Date().toISOString().slice(0, 10);
-            log[todayKey] = (log[todayKey] || 0) + 1;
-            localStorage.setItem(REVIEW_LOG_KEY, JSON.stringify(log));
-            document.getElementById('statReviewed').textContent = log[todayKey];
+            var log2 = JSON.parse(localStorage.getItem(REVIEW_LOG_KEY) || '{}');
+            var todayKey2 = new Date().toISOString().slice(0, 10);
+            log2[todayKey2] = (log2[todayKey2] || 0) + 1;
+            localStorage.setItem(REVIEW_LOG_KEY, JSON.stringify(log2));
+            document.getElementById('statReviewed').textContent = log2[todayKey2];
         } catch(e) {}
 
         currentIdx++;
-        showCard();
+        showItem();
     };
 
-    showCard();
+    // ── Exercise Renderers ───────────────────────────────────────────────
+
+    // Quiz
+    var selectedOption = -1;
+    function renderReviewQuiz(container, ex) {
+        var q = ex.data;
+        var html = '<div class="quiz-container">' +
+            '<div class="quiz-title">Chapter ' + ex.chapter + ' — ' + ex.section + '</div>';
+        if (ex.bloom) html += '<span class="bloom-badge bloom-' + ex.bloom.toLowerCase() + '">' + ex.bloom + '</span>';
+        html += '<div class="quiz-question"><div class="quiz-question-text">' + (q.question || '') + '</div><ul class="quiz-options">';
+        q.options.forEach(function(opt, i) {
+            html += '<li class="quiz-option" data-idx="' + i + '" onclick="selectReviewOption(this)">' +
+                    '<span class="quiz-option-marker">' + String.fromCharCode(65 + i) + '</span>' +
+                    '<span>' + (opt || '') + '</span></li>';
+        });
+        html += '</ul><div class="quiz-explanation" id="revExplanation">' + (q.explanation || '') + '</div>' +
+                '<button class="quiz-check-btn" id="revCheckBtn" onclick="checkReviewQuiz(' + q.correct + ')" disabled>Check Answer</button></div></div>';
+        container.innerHTML = html;
+        renderMath(container);
+        selectedOption = -1;
+    }
+
+    window.selectReviewOption = function(el) {
+        el.parentNode.querySelectorAll('.quiz-option').forEach(function(o) { o.classList.remove('selected'); });
+        el.classList.add('selected');
+        selectedOption = parseInt(el.dataset.idx);
+        document.getElementById('revCheckBtn').disabled = false;
+    };
+
+    window.checkReviewQuiz = function(correctIdx) {
+        var opts = document.querySelectorAll('#reviewExerciseCard .quiz-option');
+        opts.forEach(function(o) {
+            o.onclick = null;
+            var idx = parseInt(o.dataset.idx);
+            if (idx === correctIdx) o.classList.add('correct');
+            if (idx === selectedOption && idx !== correctIdx) o.classList.add('incorrect');
+        });
+        document.getElementById('revExplanation').classList.add('visible');
+        document.getElementById('revCheckBtn').style.display = 'none';
+        exerciseDone(selectedOption === correctIdx);
+    };
+
+    // Fill-in-the-blank
+    function renderReviewFitb(container, ex) {
+        var q = ex.data;
+        var html = '<div class="fitb-container">' +
+            '<div class="quiz-title">Chapter ' + ex.chapter + ' — ' + ex.section + '</div>';
+        if (ex.bloom) html += '<span class="bloom-badge bloom-' + ex.bloom.toLowerCase() + '">' + ex.bloom + '</span>';
+        html += '<p class="fitb-statement">';
+        for (var i = 0; i < q.answers.length; i++) {
+            html += '<input type="text" class="fitb-blank" data-blank-index="' + i + '" data-answer="' + escapeHtml(q.answers[i]) + '" placeholder="...">';
+            html += '<button class="hint-letter-btn fitb-hint-letter-btn" onclick="revealNextLetters(this.previousElementSibling)" title="Reveal a letter">?</button>';
+            if (i < q.answers.length - 1) html += ' ';
+        }
+        html += '</p>';
+        if (q.hint) html += '<p class="fitb-hint" style="display:none;">' + (q.hint || '') + '</p>';
+        if (q.statement_html) {
+            html = '<div class="fitb-container">' +
+                '<div class="quiz-title">Chapter ' + ex.chapter + ' — ' + ex.section + '</div>';
+            if (ex.bloom) html += '<span class="bloom-badge bloom-' + ex.bloom.toLowerCase() + '">' + ex.bloom + '</span>';
+            html += '<div class="fitb-statement">' + q.statement_html + '</div>';
+            if (q.hint) html += '<p class="fitb-hint" style="display:none;">' + (q.hint || '') + '</p>';
+        }
+        html += '<button class="quiz-check-btn" onclick="checkReviewFitb()">Check</button></div>';
+        container.innerHTML = html;
+        renderMath(container);
+        container.dataset.answers = JSON.stringify(q.answers);
+    }
+
+    window.checkReviewFitb = function() {
+        var container = document.getElementById('reviewExerciseCard');
+        var answers = JSON.parse(container.dataset.answers || '[]');
+        var blanks = container.querySelectorAll('.fitb-blank');
+        var allCorrect = true;
+        blanks.forEach(function(blank, i) {
+            var expected = (answers[i] || '').trim().toLowerCase();
+            var given = blank.value.trim().toLowerCase();
+            if (given === expected) {
+                blank.classList.add('correct');
+            } else {
+                blank.classList.add('incorrect');
+                blank.value = answers[i];
+                allCorrect = false;
+            }
+            blank.disabled = true;
+        });
+        var hint = container.querySelector('.fitb-hint');
+        if (hint) hint.style.display = 'block';
+        container.querySelector('.quiz-check-btn').style.display = 'none';
+        exerciseDone(allCorrect);
+    };
+
+    // Matching (self-assessed review)
+    function renderReviewMatching(container, ex) {
+        var q = ex.data;
+        var html = '<div class="matching-container">' +
+            '<div class="quiz-title">Chapter ' + ex.chapter + ' — ' + ex.section + '</div>';
+        if (ex.bloom) html += '<span class="bloom-badge bloom-' + ex.bloom.toLowerCase() + '">' + ex.bloom + '</span>';
+        if (q.title) html += '<div class="matching-title">' + (q.title || '') + '</div>';
+        html += '<div class="matching-review"><h3>Match the following:</h3>';
+        var left = q.leftItems || [];
+        var right = q.rightItems || [];
+        for (var i = 0; i < left.length; i++) {
+            html += '<div style="display:flex;gap:0.5rem;align-items:center;padding:0.5rem 0;">' +
+                    '<strong>' + (left[i] || '') + '</strong>' +
+                    ' <span style="color:var(--text-muted);">&rarr;</span> ' +
+                    '<span>' + (right[i] || '') + '</span></div>';
+        }
+        html += '</div><button class="quiz-check-btn" onclick="checkReviewMatching()">I reviewed these matches</button></div>';
+        container.innerHTML = html;
+        renderMath(container);
+    }
+
+    window.checkReviewMatching = function() {
+        document.querySelector('#reviewExerciseCard .quiz-check-btn').style.display = 'none';
+        exerciseDone(true);
+    };
+
+    // Self-explain
+    function renderReviewSelfExplain(container, ex) {
+        var q = ex.data;
+        var html = '<div class="self-explain-review">' +
+            '<div class="quiz-title">Chapter ' + ex.chapter + ' — ' + ex.section + '</div>';
+        if (ex.bloom) html += '<span class="bloom-badge bloom-' + ex.bloom.toLowerCase() + '">' + ex.bloom + '</span>';
+        html += '<div class="self-explain-prompt">' + (q.prompt || 'Explain this concept') + '</div>';
+        html += '<textarea class="explain-textarea self-explain-input" rows="4" placeholder="Type your explanation..."></textarea>';
+        html += '<button class="quiz-check-btn" onclick="checkReviewSelfExplain()" disabled>Submit Explanation</button></div>';
+        container.innerHTML = html;
+        renderMath(container);
+        var textarea = container.querySelector('.self-explain-input');
+        textarea.addEventListener('input', function() {
+            var words = textarea.value.trim().split(/\s+/).filter(function(w) { return w.length > 0; });
+            container.querySelector('.quiz-check-btn').disabled = words.length < 3;
+        });
+    }
+
+    window.checkReviewSelfExplain = function() {
+        var container = document.getElementById('reviewExerciseCard');
+        container.querySelector('.self-explain-input').readOnly = true;
+        var ex = sessionQueue[currentIdx].item;
+        var rubric = (ex.data && ex.data.rubric) || [];
+        if (rubric.length > 0) {
+            var html = '<div class="explain-rubric" style="margin-top:1rem;"><h4>Key points to check:</h4><ul>';
+            rubric.forEach(function(p) { html += '<li>' + (p || '') + '</li>'; });
+            html += '</ul></div>';
+            container.querySelector('.quiz-check-btn').insertAdjacentHTML('afterend', html);
+        }
+        container.querySelector('.quiz-check-btn').style.display = 'none';
+        exerciseDone(true);
+    };
+
+    // Ordering
+    function renderReviewOrdering(container, ex) {
+        var q = ex.data;
+        var html = '<div class="ordering-container" data-attempts="0">' +
+            '<div class="quiz-title">Chapter ' + ex.chapter + ' — ' + ex.section + '</div>';
+        if (ex.bloom) html += '<span class="bloom-badge bloom-' + ex.bloom.toLowerCase() + '">' + ex.bloom + '</span>';
+        if (q.title) html += '<div class="ordering-title">' + (q.title || '') + '</div>';
+        if (q.instruction) html += '<p class="ordering-instruction">' + (q.instruction || '') + '</p>';
+        html += '<ol class="ordering-list">';
+        q.items.forEach(function(item, i) {
+            html += '<li class="ordering-item" data-idx="' + i + '">' +
+                    '<span class="ordering-handle">&#9776;</span>' +
+                    '<span class="ordering-text">' + (item || '') + '</span>' +
+                    '<span class="ordering-arrows">' +
+                    '<button class="ordering-arrow-btn" onclick="revMoveItem(this,-1)">&#9650;</button>' +
+                    '<button class="ordering-arrow-btn" onclick="revMoveItem(this,1)">&#9660;</button>' +
+                    '</span></li>';
+        });
+        html += '</ol>';
+        if (q.hint) html += '<div class="ordering-hint" style="display:none;">Hint: ' + (q.hint || '') + '</div>';
+        if (q.explanation) html += '<div class="ordering-explanation" style="display:none;">' + (q.explanation || '') + '</div>';
+        html += '<button class="quiz-check-btn" onclick="checkRevOrdering()">Check Order</button></div>';
+        container.innerHTML = html;
+        renderMath(container);
+        container.dataset.correctOrder = JSON.stringify(q.correctOrder);
+    }
+
+    window.revMoveItem = function(btn, dir) {
+        var item = btn.closest('.ordering-item');
+        var list = item.parentNode;
+        var items = Array.from(list.children);
+        var idx = items.indexOf(item);
+        if (dir === -1 && idx > 0) list.insertBefore(item, items[idx - 1]);
+        else if (dir === 1 && idx < items.length - 1) list.insertBefore(items[idx + 1], item);
+    };
+
+    window.checkRevOrdering = function() {
+        var container = document.querySelector('#reviewExerciseCard .ordering-container');
+        var correctOrder = JSON.parse(document.getElementById('reviewExerciseCard').dataset.correctOrder);
+        var items = container.querySelectorAll('.ordering-item');
+        var attempts = parseInt(container.dataset.attempts || '0') + 1;
+        container.dataset.attempts = attempts;
+        var allCorrect = true;
+        items.forEach(function(item, i) {
+            if (correctOrder[i] === i) { item.classList.add('ordering-correct'); item.classList.remove('ordering-wrong'); }
+            else { item.classList.remove('ordering-correct'); item.classList.add('ordering-wrong'); allCorrect = false; }
+        });
+        var btn = container.querySelector('.quiz-check-btn');
+        if (allCorrect || attempts >= 3) {
+            btn.style.display = 'none';
+            if (!allCorrect) {
+                var list = container.querySelector('.ordering-list');
+                var arr = Array.from(items);
+                var slots = new Array(arr.length);
+                arr.forEach(function(el, i) { slots[correctOrder[i]] = el; });
+                slots.forEach(function(el) { el.classList.remove('ordering-wrong'); el.classList.add('ordering-revealed'); list.appendChild(el); });
+            }
+            var expl = container.querySelector('.ordering-explanation');
+            if (expl) expl.style.display = 'block';
+            container.querySelectorAll('.ordering-arrow-btn').forEach(function(b) { b.disabled = true; });
+            exerciseDone(allCorrect);
+        } else if (attempts === 1) {
+            var hint = container.querySelector('.ordering-hint');
+            if (hint) hint.style.display = 'block';
+            btn.textContent = 'Try Again';
+        } else if (attempts === 2) {
+            items.forEach(function(item, i) { if (correctOrder[i] === i) item.classList.add('ordering-locked'); });
+            btn.textContent = 'Last Try';
+        }
+    };
+
+    // Categorization
+    function renderReviewCategorization(container, ex) {
+        var q = ex.data;
+        var html = '<div class="categorization-container" data-attempts="0">' +
+            '<div class="quiz-title">Chapter ' + ex.chapter + ' — ' + ex.section + '</div>';
+        if (ex.bloom) html += '<span class="bloom-badge bloom-' + ex.bloom.toLowerCase() + '">' + ex.bloom + '</span>';
+        if (q.title) html += '<div class="categorization-title">' + (q.title || '') + '</div>';
+        if (q.instruction) html += '<p class="categorization-instruction">' + (q.instruction || '') + '</p>';
+        html += '<div class="categorization-categories">';
+        (q.categoryNames || []).forEach(function(name, i) {
+            html += '<div class="categorization-bucket" data-cat-idx="' + i + '">' +
+                    '<div class="categorization-bucket-title">' + (name || '') + '</div>' +
+                    '<div class="categorization-bucket-items"></div></div>';
+        });
+        html += '</div><div class="categorization-pool" id="revCatPool"></div>';
+        if (q.hint) html += '<div class="categorization-hint" style="display:none;">Hint: ' + (q.hint || '') + '</div>';
+        if (q.explanation) html += '<div class="categorization-explanation" style="display:none;">' + (q.explanation || '') + '</div>';
+        html += '<button class="quiz-check-btn" onclick="checkRevCategorization()">Check Categories</button></div>';
+        container.innerHTML = html;
+        renderMath(container);
+
+        var pool = container.querySelector('#revCatPool');
+        var items = q.items || [];
+        var shuffled = items.map(function(it, i) { return { item: it, idx: i }; });
+        for (var si = shuffled.length - 1; si > 0; si--) {
+            var sj = Math.floor(Math.random() * (si + 1));
+            var tmp = shuffled[si]; shuffled[si] = shuffled[sj]; shuffled[sj] = tmp;
+        }
+        shuffled.forEach(function(s) {
+            var el = document.createElement('div');
+            el.className = 'categorization-item';
+            el.innerHTML = s.item.text;
+            el.dataset.correctCat = s.item.correct_cat;
+            el.onclick = function() { if (!el.classList.contains('cat-placed')) el.classList.toggle('cat-selected'); };
+            pool.appendChild(el);
+        });
+        container.querySelectorAll('.categorization-bucket').forEach(function(bucket) {
+            bucket.onclick = function(e) {
+                if (e.target.closest('.categorization-item')) return;
+                var sel = pool.querySelector('.categorization-item.cat-selected');
+                if (!sel) return;
+                sel.classList.remove('cat-selected');
+                sel.classList.add('cat-placed');
+                bucket.querySelector('.categorization-bucket-items').appendChild(sel);
+            };
+        });
+    }
+
+    window.checkRevCategorization = function() {
+        var container = document.querySelector('#reviewExerciseCard .categorization-container');
+        var attempts = parseInt(container.dataset.attempts || '0') + 1;
+        container.dataset.attempts = attempts;
+        var allCorrect = true;
+        container.querySelectorAll('.categorization-bucket').forEach(function(bucket) {
+            var catIdx = parseInt(bucket.dataset.catIdx);
+            bucket.querySelectorAll('.categorization-item').forEach(function(item) {
+                if (parseInt(item.dataset.correctCat) === catIdx) { item.classList.add('cat-correct'); item.classList.remove('cat-wrong'); }
+                else { item.classList.add('cat-wrong'); item.classList.remove('cat-correct'); allCorrect = false; }
+            });
+        });
+        var poolItems = container.querySelectorAll('.categorization-pool .categorization-item');
+        if (poolItems.length > 0) allCorrect = false;
+        var btn = container.querySelector('.quiz-check-btn');
+        if (allCorrect || attempts >= 3) {
+            btn.style.display = 'none';
+            if (!allCorrect) {
+                container.querySelectorAll('.categorization-item.cat-wrong').forEach(function(item) {
+                    var cb = container.querySelector('.categorization-bucket[data-cat-idx="' + item.dataset.correctCat + '"]');
+                    item.classList.remove('cat-wrong'); item.classList.add('cat-revealed');
+                    cb.querySelector('.categorization-bucket-items').appendChild(item);
+                });
+                poolItems.forEach(function(item) {
+                    var cb = container.querySelector('.categorization-bucket[data-cat-idx="' + item.dataset.correctCat + '"]');
+                    item.classList.add('cat-revealed');
+                    cb.querySelector('.categorization-bucket-items').appendChild(item);
+                });
+            }
+            var expl = container.querySelector('.categorization-explanation');
+            if (expl) expl.style.display = 'block';
+            exerciseDone(allCorrect);
+        } else if (attempts === 1) {
+            var hint = container.querySelector('.categorization-hint');
+            if (hint) hint.style.display = 'block';
+            btn.textContent = 'Try Again';
+        } else if (attempts === 2) {
+            btn.textContent = 'Last Try';
+        }
+    };
+
+    // Error Detection
+    function renderReviewErrorDetection(container, ex) {
+        var q = ex.data;
+        var html = '<div class="error-detection-container">' +
+            '<div class="quiz-title">Chapter ' + ex.chapter + ' — ' + ex.section + '</div>';
+        if (ex.bloom) html += '<span class="bloom-badge bloom-' + ex.bloom.toLowerCase() + '">' + ex.bloom + '</span>';
+        if (q.title) html += '<div class="error-detection-title">' + (q.title || '') + '</div>';
+        if (q.instruction) html += '<p class="error-detection-instruction">' + (q.instruction || '') + '</p>';
+        if (q.context) html += '<p class="error-detection-context">' + (q.context || '') + '</p>';
+        q.items.forEach(function(item, i) {
+            html += '<div class="error-item" data-idx="' + i + '">' +
+                    '<div class="error-statement">' + (i + 1) + '. ' + (item.statement || '') + '</div>' +
+                    '<button class="quiz-check-btn error-reveal-btn" onclick="revRevealError(this)">Reveal Error</button>' +
+                    '<div class="error-feedback" style="display:none;">' +
+                    '<div class="error-explanation"><strong>Error:</strong> ' + (item.explanation || '') + '</div>' +
+                    '<div class="error-corrected"><strong>Corrected:</strong> ' + (item.corrected || '') + '</div>' +
+                    '</div></div>';
+        });
+        html += '</div>';
+        container.innerHTML = html;
+        renderMath(container);
+    }
+
+    window.revRevealError = function(btn) {
+        var item = btn.closest('.error-item');
+        btn.style.display = 'none';
+        item.querySelector('.error-feedback').style.display = 'block';
+        item.querySelector('.error-statement').classList.add('error-shown');
+        var container = document.querySelector('#reviewExerciseCard .error-detection-container');
+        var allRevealed = true;
+        container.querySelectorAll('.error-item').forEach(function(ei) {
+            if (ei.querySelector('.error-feedback').style.display === 'none') allRevealed = false;
+        });
+        if (allRevealed) exerciseDone(true);
+    };
+
+    // Analogy
+    function renderReviewAnalogy(container, ex) {
+        var q = ex.data;
+        var html = '<div class="analogy-container">' +
+            '<div class="quiz-title">Chapter ' + ex.chapter + ' — ' + ex.section + '</div>';
+        if (ex.bloom) html += '<span class="bloom-badge bloom-' + ex.bloom.toLowerCase() + '">' + ex.bloom + '</span>';
+        if (q.title) html += '<div class="analogy-title">' + escapeHtml(q.title) + '</div>';
+        html += '<div class="analogy-items" id="revAnalogyItems"></div></div>';
+        container.innerHTML = html;
+
+        var itemsDiv = container.querySelector('#revAnalogyItems');
+        var items = q.items || [];
+        var answeredCount = 0;
+        var correctCount2 = 0;
+
+        items.forEach(function(item) {
+            var qDiv = document.createElement('div');
+            qDiv.className = 'analogy-question';
+            qDiv.dataset.correct = item.correct_index;
+            qDiv.dataset.attempts = '0';
+
+            var stemEl = document.createElement('div');
+            stemEl.className = 'analogy-stem';
+            stemEl.innerHTML = item.stem;
+            qDiv.appendChild(stemEl);
+
+            var optList = document.createElement('ul');
+            optList.className = 'analogy-options';
+            item.options.forEach(function(opt, oi) {
+                var li = document.createElement('li');
+                li.className = 'analogy-option';
+                li.dataset.optionIndex = oi;
+                li.innerHTML = opt;
+                li.onclick = function() {
+                    if (qDiv.classList.contains('analogy-answered')) return;
+                    optList.querySelectorAll('.analogy-option').forEach(function(o) { o.classList.remove('analogy-selected'); });
+                    li.classList.add('analogy-selected');
+                    qDiv.querySelector('.analogy-check-btn').disabled = false;
+                };
+                optList.appendChild(li);
+            });
+            qDiv.appendChild(optList);
+
+            var checkBtn = document.createElement('button');
+            checkBtn.className = 'quiz-check-btn analogy-check-btn';
+            checkBtn.textContent = 'Check';
+            checkBtn.disabled = true;
+            checkBtn.onclick = function() {
+                var selected = qDiv.querySelector('.analogy-option.analogy-selected');
+                if (!selected) return;
+                var selIdx = parseInt(selected.dataset.optionIndex);
+                var correctIdx = parseInt(qDiv.dataset.correct);
+                var att = parseInt(qDiv.dataset.attempts) + 1;
+                qDiv.dataset.attempts = att;
+                if (selIdx === correctIdx || att >= 3) {
+                    qDiv.classList.add('analogy-answered');
+                    qDiv.querySelectorAll('.analogy-option')[correctIdx].classList.add('analogy-correct');
+                    if (selIdx !== correctIdx) selected.classList.add('analogy-wrong');
+                    else correctCount2++;
+                    checkBtn.disabled = true;
+                    checkBtn.textContent = selIdx === correctIdx ? 'Correct!' : 'Showing answer';
+                    explEl.style.display = 'block';
+                    answeredCount++;
+                    if (answeredCount === items.length) exerciseDone(correctCount2 === items.length);
+                } else {
+                    selected.classList.add('analogy-wrong');
+                    selected.classList.remove('analogy-selected');
+                    checkBtn.disabled = true;
+                    checkBtn.textContent = att === 2 ? 'Last Try' : 'Try Again';
+                }
+            };
+            qDiv.appendChild(checkBtn);
+
+            var explEl = document.createElement('div');
+            explEl.className = 'analogy-explanation';
+            explEl.style.display = 'none';
+            explEl.innerHTML = item.explanation || '';
+            qDiv.appendChild(explEl);
+
+            itemsDiv.appendChild(qDiv);
+        });
+        renderMath(container);
+    }
+
+    showItem();
 })();
 </script>
+
+{% include '_help_modal.html' %}
+
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/contrib/auto-render.min.js"></script>
 
 </body>
 </html>

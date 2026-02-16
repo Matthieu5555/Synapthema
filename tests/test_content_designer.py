@@ -5,15 +5,24 @@ Uses a mock LLMClient to test transform_chapter() without API calls.
 
 from __future__ import annotations
 
+import threading
 from typing import TypeVar
 
 import pytest
 
 from src.extraction.types import Chapter, Section
-from src.transformation.content_designer import transform_chapter, MIN_SECTION_TEXT_LENGTH
+from src.transformation.analysis_types import ConceptEntry
+from src.transformation.content_designer import (
+    _check_cross_references,
+    _prepare_section_inputs,
+    transform_chapter,
+    MIN_SECTION_TEXT_LENGTH,
+)
 from src.transformation.types import (
     Flashcard,
     FlashcardElement,
+    ModuleBlueprint,
+    SectionBlueprint,
     Slide,
     SlideElement,
     TrainingElement,
@@ -39,6 +48,7 @@ class MockLLMClient:
                 flashcard=Flashcard(front="Q", back="A"),
             ),
         ]
+        self._lock = threading.Lock()
         self.call_count = 0
         self.last_system_prompt: str = ""
 
@@ -52,8 +62,9 @@ class MockLLMClient:
     def complete_structured(
         self, system_prompt: str, user_prompt: str, response_model: type[T]
     ) -> T:
-        self.call_count += 1
-        self.last_system_prompt = system_prompt
+        with self._lock:
+            self.call_count += 1
+            self.last_system_prompt = system_prompt
 
         from src.transformation.types import ReinforcementTargetSet as RTS
         if response_model is RTS:
@@ -78,7 +89,7 @@ class MockLLMClient:
                     target_insight="Mock insight about edge cases",
                     angle="edge_case",
                     bloom_level="analyze",
-                    suggested_element_type="self_explain",
+                    suggested_element_type="interactive_essay",
                 ),
             ])  # type: ignore[return-value]
 
@@ -124,7 +135,7 @@ def _make_chapter(
                 level=3,
                 start_page=1,
                 end_page=5,
-                text="A" * 200,
+                text="A" * 600,  # 600 chars: above _MIN_TEXT_FOR_TARGETS (500)
             ),
         )
     return Chapter(
@@ -164,7 +175,7 @@ class TestTransformChapter:
             level=3,
             start_page=2,
             end_page=5,
-            text="y" * 500,
+            text="y" * 600,
         )
         client = MockLLMClient()
         chapter = _make_chapter(sections=(short, long))
@@ -202,8 +213,8 @@ class TestTransformChapter:
         assert any("[error]" in n for n in module.sections[0].verification_notes)
 
     def test_multiple_sections_combined(self) -> None:
-        s1 = Section(title="S1", level=3, start_page=1, end_page=3, text="a" * 200)
-        s2 = Section(title="S2", level=3, start_page=4, end_page=6, text="b" * 200)
+        s1 = Section(title="S1", level=3, start_page=1, end_page=3, text="a" * 600)
+        s2 = Section(title="S2", level=3, start_page=4, end_page=6, text="b" * 600)
         client = MockLLMClient()
         chapter = _make_chapter(sections=(s1, s2))
 
@@ -287,7 +298,7 @@ class TestBloomSupplementIntegration:
         assert client.call_count == 2
         # last_system_prompt is from the element generation call (Phase 2)
         assert "Bloom's Focus: Analyze" in client.last_system_prompt
-        assert "comparison" in client.last_system_prompt.lower() or "decomposition" in client.last_system_prompt.lower()
+        assert "compar" in client.last_system_prompt.lower() or "decompos" in client.last_system_prompt.lower()
 
     def test_default_bloom_supplement_without_blueprint(self) -> None:
         """Without a blueprint, defaults to 'understand' supplement."""
@@ -311,6 +322,7 @@ class TestTwoPhaseGeneration:
             """Fails on ReinforcementTargetSet, succeeds on SectionResponse."""
 
             def __init__(self) -> None:
+                self._lock = threading.Lock()
                 self.call_count = 0
 
             def complete(self, system_prompt: str, user_prompt: str) -> str:
@@ -322,7 +334,8 @@ class TestTwoPhaseGeneration:
             def complete_structured(
                 self, system_prompt: str, user_prompt: str, response_model: type[T]
             ) -> T:
-                self.call_count += 1
+                with self._lock:
+                    self.call_count += 1
                 from src.transformation.content_designer import SectionResponse
                 from src.transformation.types import ReinforcementTargetSet as RTS
                 if response_model is RTS:
@@ -526,3 +539,529 @@ class TestSectionResponseValidators:
             ),
         ])
         assert len(resp.elements) == 2
+
+
+class TestPrepareSectionInputsFallback:
+    """Tests for _prepare_section_inputs fallback when blueprint sections miss."""
+
+    def test_falls_back_to_chapter_sections_when_all_blueprint_sections_miss(self) -> None:
+        """When every blueprint section fails to match, fall back to the
+        chapter's own sections via template rotation instead of returning
+        an empty list."""
+        chapter = Chapter(
+            chapter_number=1,
+            title="Fundamentals of Probability",
+            start_page=1,
+            end_page=30,
+            sections=(
+                Section(
+                    title="Basic Probability",
+                    level=2,
+                    start_page=1,
+                    end_page=15,
+                    text="A" * 500,
+                ),
+                Section(
+                    title="Conditional Probability",
+                    level=2,
+                    start_page=16,
+                    end_page=30,
+                    text="B" * 500,
+                ),
+            ),
+        )
+        blueprint = ModuleBlueprint(
+            title="Probability Foundations",
+            source_chapter_number=1,
+            sections=[
+                SectionBlueprint(
+                    title="Nonexistent Section A",
+                    source_section_title="1.1 Sample Space",
+                ),
+                SectionBlueprint(
+                    title="Nonexistent Section B",
+                    source_section_title="1.2 Independence",
+                ),
+            ],
+        )
+
+        inputs = _prepare_section_inputs(chapter, blueprint)
+
+        # Should fall back to the chapter's 2 real sections
+        assert len(inputs) == 2
+        assert inputs[0].title == "Basic Probability"
+        assert inputs[1].title == "Conditional Probability"
+
+    def test_returns_matched_sections_when_some_hit(self) -> None:
+        """When at least one blueprint section matches, don't fall back."""
+        chapter = Chapter(
+            chapter_number=1,
+            title="Test Chapter",
+            start_page=1,
+            end_page=10,
+            sections=(
+                Section(
+                    title="Real Section",
+                    level=2,
+                    start_page=1,
+                    end_page=5,
+                    text="A" * 500,
+                ),
+                Section(
+                    title="Another Section",
+                    level=2,
+                    start_page=6,
+                    end_page=10,
+                    text="B" * 500,
+                ),
+            ),
+        )
+        blueprint = ModuleBlueprint(
+            title="Test Module",
+            source_chapter_number=1,
+            sections=[
+                SectionBlueprint(
+                    title="Matched",
+                    source_section_title="Real Section",
+                ),
+                SectionBlueprint(
+                    title="Nonexistent",
+                    source_section_title="Does Not Exist",
+                ),
+            ],
+        )
+
+        inputs = _prepare_section_inputs(chapter, blueprint)
+
+        # Only the matched section, NOT a full fallback
+        assert len(inputs) == 1
+        assert inputs[0].title == "Matched"
+
+
+# ── Cross-reference validation ───────────────────────────────────────────────
+
+
+def _concept(name: str, section: str = "Test Section") -> ConceptEntry:
+    """Helper to create a ConceptEntry for testing."""
+    return ConceptEntry(
+        name=name,
+        definition=f"Definition of {name}",
+        concept_type="definition",
+        section_title=section,
+    )
+
+
+class TestCheckCrossReferences:
+    """Tests for _check_cross_references()."""
+
+    def test_no_prior_concepts_returns_empty(self) -> None:
+        elements = [
+            SlideElement(
+                bloom_level="understand",
+                slide=Slide(title="Intro", content="Some content about variance."),
+            ),
+        ]
+        warnings = _check_cross_references(
+            elements, [_concept("variance")], prior_concepts=None,
+        )
+        assert warnings == []
+
+    def test_no_section_concepts_returns_empty(self) -> None:
+        elements = [
+            SlideElement(
+                bloom_level="understand",
+                slide=Slide(title="Intro", content="Some content."),
+            ),
+        ]
+        warnings = _check_cross_references(
+            elements, section_concepts=[], prior_concepts=["variance"],
+        )
+        assert warnings == []
+
+    def test_unrelated_concepts_returns_empty(self) -> None:
+        """When current and prior concepts share no words, no warning."""
+        elements = [
+            SlideElement(
+                bloom_level="understand",
+                slide=Slide(title="Intro", content="Content about derivatives."),
+            ),
+        ]
+        warnings = _check_cross_references(
+            elements,
+            [_concept("Black-Scholes model")],
+            prior_concepts=["linear regression"],
+        )
+        assert warnings == []
+
+    def test_related_concepts_with_cross_ref_returns_empty(self) -> None:
+        """When cross-reference language is present, no warning."""
+        elements = [
+            SlideElement(
+                bloom_level="understand",
+                slide=Slide(
+                    title="Portfolio Variance",
+                    content="As we saw earlier, variance measures spread. "
+                    "Portfolio variance extends this to multiple assets.",
+                ),
+            ),
+        ]
+        warnings = _check_cross_references(
+            elements,
+            [_concept("portfolio variance")],
+            prior_concepts=["variance"],
+        )
+        assert warnings == []
+
+    def test_related_concepts_with_explicit_mention_returns_empty(self) -> None:
+        """When prior concept name is mentioned explicitly, no warning."""
+        elements = [
+            SlideElement(
+                bloom_level="understand",
+                slide=Slide(
+                    title="Portfolio Variance",
+                    content="Portfolio variance builds on the concept of variance "
+                    "that we defined previously.",
+                ),
+            ),
+        ]
+        warnings = _check_cross_references(
+            elements,
+            [_concept("portfolio variance")],
+            prior_concepts=["variance"],
+        )
+        assert warnings == []
+
+    def test_related_concepts_missing_cross_ref_emits_warning(self) -> None:
+        """When related concepts exist but no cross-reference language, warn."""
+        elements = [
+            SlideElement(
+                bloom_level="understand",
+                slide=Slide(
+                    title="Portfolio Risk",
+                    content="The weighted sum of covariances determines overall risk.",
+                ),
+            ),
+        ]
+        # "portfolio risk" shares the word "portfolio" with prior "portfolio optimization"
+        # but the content mentions neither the prior concept name nor cross-ref language.
+        warnings = _check_cross_references(
+            elements,
+            [_concept("portfolio risk")],
+            prior_concepts=["portfolio optimization"],
+        )
+        assert len(warnings) == 1
+        assert "cross-reference" in warnings[0].lower()
+
+    def test_prior_concepts_as_dicts(self) -> None:
+        """Prior concepts can be dicts with a 'name' key (from pipeline)."""
+        elements = [
+            SlideElement(
+                bloom_level="understand",
+                slide=Slide(
+                    title="Covariance",
+                    content="Covariance measures how two variables move together.",
+                ),
+            ),
+        ]
+        warnings = _check_cross_references(
+            elements,
+            [_concept("covariance matrix")],
+            prior_concepts=[{"name": "covariance", "type": "definition"}],
+        )
+        # "covariance" is explicitly mentioned → no warning
+        assert warnings == []
+
+
+# ── Focus concepts passthrough ──────────────────────────────────────────────
+
+
+class TestFocusConceptsPassthrough:
+    """Tests for focus_concepts propagation through _prepare_section_inputs."""
+
+    def test_extracts_focus_concepts_from_blueprint(self) -> None:
+        chapter = Chapter(
+            chapter_number=1,
+            title="Test",
+            start_page=1,
+            end_page=10,
+            sections=(
+                Section(
+                    title="Real Section",
+                    level=2,
+                    start_page=1,
+                    end_page=10,
+                    text="A" * 500,
+                ),
+            ),
+        )
+        blueprint = ModuleBlueprint(
+            title="M1",
+            source_chapter_number=1,
+            sections=[
+                SectionBlueprint(
+                    title="Focused Unit",
+                    source_section_title="Real Section",
+                    focus_concepts=["concept_a", "concept_b"],
+                ),
+            ],
+        )
+
+        inputs = _prepare_section_inputs(chapter, blueprint)
+
+        assert len(inputs) == 1
+        assert inputs[0].focus_concepts == ["concept_a", "concept_b"]
+
+    def test_empty_focus_concepts_becomes_none(self) -> None:
+        chapter = Chapter(
+            chapter_number=1,
+            title="Test",
+            start_page=1,
+            end_page=10,
+            sections=(
+                Section(
+                    title="Real Section",
+                    level=2,
+                    start_page=1,
+                    end_page=10,
+                    text="A" * 500,
+                ),
+            ),
+        )
+        blueprint = ModuleBlueprint(
+            title="M1",
+            source_chapter_number=1,
+            sections=[
+                SectionBlueprint(
+                    title="Full Section",
+                    source_section_title="Real Section",
+                    focus_concepts=[],
+                ),
+            ],
+        )
+
+        inputs = _prepare_section_inputs(chapter, blueprint)
+
+        assert len(inputs) == 1
+        assert inputs[0].focus_concepts is None
+
+    def test_multiple_units_share_source_section(self) -> None:
+        """Multiple blueprint sections can map to the same source section."""
+        chapter = Chapter(
+            chapter_number=1,
+            title="Test",
+            start_page=1,
+            end_page=10,
+            sections=(
+                Section(
+                    title="Dense Section",
+                    level=2,
+                    start_page=1,
+                    end_page=10,
+                    text="A" * 500,
+                ),
+            ),
+        )
+        blueprint = ModuleBlueprint(
+            title="M1",
+            source_chapter_number=1,
+            sections=[
+                SectionBlueprint(
+                    title="Unit A",
+                    source_section_title="Dense Section",
+                    focus_concepts=["alpha", "beta"],
+                ),
+                SectionBlueprint(
+                    title="Unit B",
+                    source_section_title="Dense Section",
+                    focus_concepts=["gamma", "delta"],
+                ),
+            ],
+        )
+
+        inputs = _prepare_section_inputs(chapter, blueprint)
+
+        assert len(inputs) == 2
+        assert inputs[0].focus_concepts == ["alpha", "beta"]
+        assert inputs[1].focus_concepts == ["gamma", "delta"]
+        # Both point to the same source section
+        assert inputs[0].section.title == "Dense Section"
+        assert inputs[1].section.title == "Dense Section"
+
+
+# ── Phase 1 skip + parallel execution ─────────────────────────────────────
+
+
+class TestPhase1SkipConditions:
+    """Tests that Phase 1 (target selection) is skipped appropriately."""
+
+    def test_skips_phase1_when_focus_concepts_set(self) -> None:
+        """Sections with focus_concepts should skip target selection."""
+        section = Section(
+            title="Dense Section",
+            level=2,
+            start_page=1,
+            end_page=10,
+            text="X" * 600,  # Long enough for Phase 1
+        )
+        blueprint = ModuleBlueprint(
+            title="M1",
+            source_chapter_number=1,
+            sections=[
+                SectionBlueprint(
+                    title="Focused Unit",
+                    source_section_title="Dense Section",
+                    focus_concepts=["concept_a"],
+                ),
+            ],
+        )
+        client = MockLLMClient()
+        chapter = _make_chapter(sections=(section,))
+
+        transform_chapter(chapter, client, blueprint=blueprint)
+
+        # Only 1 call (Phase 2) — Phase 1 skipped because focus_concepts is set
+        assert client.call_count == 1
+
+    def test_skips_phase1_for_short_sections(self) -> None:
+        """Sections shorter than _MIN_TEXT_FOR_TARGETS skip target selection."""
+        from src.transformation.content_designer import _MIN_TEXT_FOR_TARGETS
+
+        section = Section(
+            title="Short Section",
+            level=2,
+            start_page=1,
+            end_page=3,
+            text="Y" * (_MIN_TEXT_FOR_TARGETS - 1),
+        )
+        client = MockLLMClient()
+        chapter = _make_chapter(sections=(section,))
+
+        transform_chapter(chapter, client)
+
+        # Only 1 call (Phase 2) — Phase 1 skipped due to short text
+        assert client.call_count == 1
+
+    def test_runs_phase1_for_long_unfocused_sections(self) -> None:
+        """Sections without focus_concepts and >= _MIN_TEXT_FOR_TARGETS get Phase 1."""
+        from src.transformation.content_designer import _MIN_TEXT_FOR_TARGETS
+
+        section = Section(
+            title="Long Section",
+            level=2,
+            start_page=1,
+            end_page=10,
+            text="Z" * (_MIN_TEXT_FOR_TARGETS + 100),
+        )
+        client = MockLLMClient()
+        chapter = _make_chapter(sections=(section,))
+
+        transform_chapter(chapter, client)
+
+        # 2 calls: Phase 1 (target selection) + Phase 2 (generation)
+        assert client.call_count == 2
+
+
+class TestParallelSectionProcessing:
+    """Tests that parallel section processing produces correct results."""
+
+    def test_parallel_produces_all_sections(self) -> None:
+        """All sections should be transformed regardless of parallelism."""
+        sections = tuple(
+            Section(
+                title=f"Section {i}",
+                level=2,
+                start_page=i * 10,
+                end_page=(i + 1) * 10,
+                text=f"Content for section {i}. " * 40,
+            )
+            for i in range(5)
+        )
+        client = MockLLMClient()
+        chapter = _make_chapter(sections=sections)
+
+        module = transform_chapter(chapter, client, max_workers=4)
+
+        assert len(module.sections) == 5
+        # Each section has 2 elements (from mock)
+        assert len(module.all_elements) == 10
+
+    def test_parallel_preserves_section_order(self) -> None:
+        """Sections should be returned in input order despite parallel execution."""
+        sections = tuple(
+            Section(
+                title=f"Section {chr(65 + i)}",  # A, B, C, D
+                level=2,
+                start_page=i * 10,
+                end_page=(i + 1) * 10,
+                text=f"Content {chr(65 + i)}. " * 40,
+            )
+            for i in range(4)
+        )
+        client = MockLLMClient()
+        chapter = _make_chapter(sections=sections)
+
+        module = transform_chapter(chapter, client, max_workers=4)
+
+        titles = [s.title for s in module.sections]
+        assert titles == ["Section A", "Section B", "Section C", "Section D"]
+
+    def test_fallback_on_single_section_failure(self) -> None:
+        """If one section fails, others should still succeed."""
+
+        class SelectiveFailClient:
+            """Fails on sections containing 'FAIL', succeeds on others."""
+
+            def __init__(self) -> None:
+                self._lock = threading.Lock()
+                self.call_count = 0
+
+            def complete(self, system_prompt: str, user_prompt: str) -> str:
+                return "mock"
+
+            def complete_light(self, system_prompt: str, user_prompt: str) -> str:
+                return "mock"
+
+            def complete_structured(
+                self, system_prompt: str, user_prompt: str, response_model: type[T]
+            ) -> T:
+                with self._lock:
+                    self.call_count += 1
+                if "FAIL" in user_prompt:
+                    from src.transformation.llm_client import LLMError
+                    raise LLMError("Simulated failure")
+                from src.transformation.content_designer import SectionResponse
+                from src.transformation.types import ReinforcementTargetSet as RTS
+                if response_model is RTS:
+                    return RTS(targets=[])  # type: ignore[return-value]
+                return SectionResponse(elements=[
+                    SlideElement(
+                        bloom_level="understand",
+                        slide=Slide(title="OK", content="Content."),
+                    ),
+                    FlashcardElement(
+                        bloom_level="remember",
+                        flashcard=Flashcard(front="Q", back="A"),
+                    ),
+                ])  # type: ignore[return-value]
+
+            def complete_structured_light(
+                self, system_prompt: str, user_prompt: str, response_model: type[T]
+            ) -> T:
+                return self.complete_structured(system_prompt, user_prompt, response_model)
+
+        ok_section = Section(
+            title="OK Section", level=2, start_page=1, end_page=5, text="Good content. " * 40,
+        )
+        fail_section = Section(
+            title="FAIL Section", level=2, start_page=6, end_page=10, text="FAIL content. " * 40,
+        )
+        chapter = _make_chapter(sections=(ok_section, fail_section))
+        client = SelectiveFailClient()
+
+        module = transform_chapter(chapter, client, max_workers=2)
+
+        # Both sections present (one normal, one fallback)
+        assert len(module.sections) == 2
+        # The failing section should have a fallback slide with error note
+        fail_sec = [s for s in module.sections if "FAIL" in s.title][0]
+        assert any("[error]" in n for n in fail_sec.verification_notes)

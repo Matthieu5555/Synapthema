@@ -1,0 +1,10 @@
+{
+  "private": true,
+  "type": "module",
+  "description": "Node.js dependencies for mermaid diagram validation",
+  "dependencies": {
+    "isomorphic-dompurify": "^2.0.0",
+    "jsdom": "^26.0.0",
+    "mermaid": "^11.0.0"
+  }
+}

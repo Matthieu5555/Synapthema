@@ -2,8 +2,8 @@
 
 Pydantic models for structured LLM output (used by Instructor for
 schema-constrained generation). Includes all interactive element types:
-slides, quizzes, flashcards, fill-in-the-blank, matching exercises,
-self-explanation, and interactive essays.
+section intros, slides, quizzes, flashcards, fill-in-the-blank, matching
+exercises, and interactive essays.
 
 Each element type has a deterministic Bloom's Taxonomy cognitive level
 (see ELEMENT_BLOOM_MAP). The LLM does not choose bloom levels — they
@@ -36,15 +36,42 @@ BloomLevel = Literal[
 # Element type determines bloom level deterministically. The LLM does NOT
 # choose bloom levels — this mapping overrides whatever it outputs.
 ELEMENT_BLOOM_MAP: dict[str, BloomLevel] = {
+    "section_intro": "understand",
     "flashcard": "remember",
     "slide": "understand",
     "mermaid": "understand",
     "quiz": "apply",
     "matching": "apply",
-    "fill_in_the_blank": "apply",
-    "concept_map": "analyze",
-    "self_explain": "evaluate",
+    "ordering": "apply",
+    "fill_in_the_blank": "analyze",
+    "categorization": "analyze",
+    "analogy": "analyze",
+    "concept_map": "apply",
+    "error_detection": "evaluate",
     "interactive_essay": "evaluate",
+}
+
+# ── Canonical element ordering within a section ──────────────────────────────
+# Enforced as a post-processing stable sort so elements follow pedagogical flow:
+# motivate → teach → practice → reinforce → assess.
+# Practice elements share the same priority (3) so the LLM's chosen order is
+# preserved by the stable sort — this enables variety across sections.
+ELEMENT_ORDER: dict[str, int] = {
+    "section_intro": 0,
+    "slide": 1,
+    "mermaid": 2,
+    # ── practice zone (same priority → LLM order preserved) ──
+    "quiz": 3,
+    "ordering": 3,
+    "matching": 3,
+    "fill_in_the_blank": 3,
+    "categorization": 3,
+    "analogy": 3,
+    "error_detection": 3,
+    # ── reinforce / assess ──
+    "concept_map": 4,
+    "flashcard": 5,
+    "interactive_essay": 6,
 }
 
 # Angles for reinforcement target selection (Phase 1 of two-phase generation).
@@ -59,7 +86,8 @@ ReinforcementAngle = Literal[
 
 # Element types suitable for assessment (used in reinforcement target suggestions).
 AssessmentElementType = Literal[
-    "quiz", "flashcard", "fill_in_the_blank", "matching", "self_explain",
+    "quiz", "flashcard", "fill_in_the_blank", "matching", "ordering",
+    "categorization", "error_detection", "analogy", "interactive_essay",
 ]
 
 
@@ -93,6 +121,16 @@ class ReinforcementTargetSet(BaseModel):
 
 
 # ── Element types ────────────────────────────────────────────────────────────
+
+
+class SectionIntro(BaseModel):
+    """A brief motivational introduction to a section, derived from learning objectives."""
+
+    title: str = Field(description="Section intro heading")
+    content: str = Field(
+        description="2-3 sentence prose motivating the section and previewing what the learner will gain"
+    )
+    source_pages: str = Field(default="", description="Source attribution")
 
 
 class Slide(BaseModel):
@@ -254,9 +292,112 @@ class InteractiveEssay(BaseModel):
     )
 
 
+# ── Ordering exercise ─────────────────────────────────────────────────────────
+
+
+class OrderingExercise(BaseModel):
+    """An ordering exercise where learners arrange items in the correct sequence."""
+
+    title: str = Field(description="Exercise heading")
+    instruction: str = Field(
+        description="What the learner should do (e.g., 'Arrange these steps in the correct order')"
+    )
+    items: list[str] = Field(
+        description="Items in the CORRECT order (shuffled at render time)",
+        min_length=3,
+    )
+    explanation: str = Field(default="", description="Explanation shown after completion")
+    hint: str = Field(default="", description="Hint shown after first wrong attempt")
+
+
+# ── Categorization exercise ──────────────────────────────────────────────────
+
+
+class CategoryBucket(BaseModel):
+    """A named category with its correct items."""
+
+    name: str = Field(description="Category name")
+    items: list[str] = Field(description="Items that belong in this category", min_length=1)
+
+
+class CategorizationExercise(BaseModel):
+    """A categorization exercise where learners sort items into named categories."""
+
+    title: str = Field(description="Exercise heading")
+    instruction: str = Field(
+        description="What the learner should do (e.g., 'Sort these items into the correct categories')"
+    )
+    categories: list[CategoryBucket] = Field(
+        description="2-4 categories with their correct item assignments",
+        min_length=2,
+        max_length=4,
+    )
+    explanation: str = Field(default="", description="Explanation shown after completion")
+    hint: str = Field(default="", description="Hint shown after first wrong attempt")
+
+
+# ── Error detection exercise ─────────────────────────────────────────────────
+
+
+class ErrorItem(BaseModel):
+    """A statement containing an error for the learner to identify."""
+
+    statement: str = Field(description="Statement containing an error")
+    error_explanation: str = Field(description="Why the statement is wrong")
+    corrected_statement: str = Field(description="The corrected version of the statement")
+
+
+class ErrorDetectionExercise(BaseModel):
+    """An error detection exercise where learners identify and correct mistakes."""
+
+    title: str = Field(description="Exercise heading")
+    instruction: str = Field(
+        description="What the learner should do (e.g., 'Find and explain the error in each statement')"
+    )
+    items: list[ErrorItem] = Field(
+        description="Statements with errors for the learner to find",
+        min_length=1,
+    )
+    context: str = Field(default="", description="Background context for the statements")
+
+
+# ── Analogy completion exercise ──────────────────────────────────────────────
+
+
+class AnalogyItem(BaseModel):
+    """A single analogy question with multiple-choice options."""
+
+    stem: str = Field(description="The analogy stem (e.g., 'A is to B as C is to ___')")
+    answer: str = Field(description="The correct completion")
+    distractors: list[str] = Field(
+        description="Wrong options (2-3 plausible alternatives)",
+        min_length=2,
+        max_length=3,
+    )
+    explanation: str = Field(default="", description="Why this analogy works")
+
+
+class AnalogyExercise(BaseModel):
+    """An analogy completion exercise testing relational reasoning."""
+
+    title: str = Field(description="Exercise heading")
+    items: list[AnalogyItem] = Field(
+        description="Analogy questions",
+        min_length=1,
+    )
+
+
 # ── Training element (discriminated union) ───────────────────────────────────
 # Each variant is a concrete class with element_type as a Literal default.
 # Pydantic v2's Discriminator auto-selects the right class from JSON.
+
+
+class SectionIntroElement(BaseModel):
+    """A section introduction training element."""
+
+    element_type: Literal["section_intro"] = "section_intro"
+    bloom_level: BloomLevel = Field(description="Bloom's Taxonomy cognitive level")
+    section_intro: SectionIntro
 
 
 class SlideElement(BaseModel):
@@ -315,12 +456,36 @@ class ConceptMapElement(BaseModel):
     concept_map: ConceptMap
 
 
-class SelfExplainElement(BaseModel):
-    """A self-explanation training element."""
+class OrderingElement(BaseModel):
+    """An ordering exercise training element."""
 
-    element_type: Literal["self_explain"] = "self_explain"
+    element_type: Literal["ordering"] = "ordering"
     bloom_level: BloomLevel = Field(description="Bloom's Taxonomy cognitive level")
-    self_explain: SelfExplain
+    ordering: OrderingExercise
+
+
+class CategorizationElement(BaseModel):
+    """A categorization exercise training element."""
+
+    element_type: Literal["categorization"] = "categorization"
+    bloom_level: BloomLevel = Field(description="Bloom's Taxonomy cognitive level")
+    categorization: CategorizationExercise
+
+
+class ErrorDetectionElement(BaseModel):
+    """An error detection exercise training element."""
+
+    element_type: Literal["error_detection"] = "error_detection"
+    bloom_level: BloomLevel = Field(description="Bloom's Taxonomy cognitive level")
+    error_detection: ErrorDetectionExercise
+
+
+class AnalogyElement(BaseModel):
+    """An analogy completion exercise training element."""
+
+    element_type: Literal["analogy"] = "analogy"
+    bloom_level: BloomLevel = Field(description="Bloom's Taxonomy cognitive level")
+    analogy: AnalogyExercise
 
 
 class InteractiveEssayElement(BaseModel):
@@ -333,9 +498,10 @@ class InteractiveEssayElement(BaseModel):
 
 TrainingElement = Annotated[
     Union[
-        SlideElement, QuizElement, FlashcardElement, FillInBlankElement,
-        MatchingElement, MermaidElement, ConceptMapElement,
-        SelfExplainElement, InteractiveEssayElement,
+        SectionIntroElement, SlideElement, QuizElement, FlashcardElement,
+        FillInBlankElement, MatchingElement, OrderingElement, MermaidElement,
+        ConceptMapElement, CategorizationElement, ErrorDetectionElement,
+        AnalogyElement, InteractiveEssayElement,
     ],
     Discriminator("element_type"),
 ]
@@ -377,6 +543,12 @@ class SectionBlueprint(BaseModel):
     rationale: str = Field(
         default="",
         description="Why this section exists and why this template was chosen",
+    )
+    focus_concepts: list[str] = Field(
+        default_factory=list,
+        description="Concept names this learning unit focuses on. When non-empty, "
+        "the content designer generates elements ONLY for these concepts. "
+        "When empty, covers all concepts in the source section (backward compatible).",
     )
 
 
@@ -421,6 +593,12 @@ class TrainingSection(BaseModel):
     """A group of training elements corresponding to one book section."""
 
     title: str
+    source_section_title: str = Field(
+        default="",
+        description="Original extracted section title (for concept lookup). "
+        "When a source section is split into concept-focused units, the "
+        "title changes but source_section_title stays the same.",
+    )
     source_pages: str = Field(default="", description="Page range, e.g. 'pp. 42-48'")
     elements: list[TrainingElement]
     verification_notes: list[str] = Field(
