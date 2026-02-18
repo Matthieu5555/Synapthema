@@ -78,7 +78,14 @@
 
 <button class="sidebar-toggle" onclick="toggleSidebar()">&#9776;</button>
 
+<div class="mobile-progress-bar" id="mobileProgress">
+    <div class="mobile-progress-fill" id="mobileProgressFill"></div>
+</div>
+
 <div class="course-container">
+    <!-- Sidebar overlay (mobile backdrop) -->
+    <div class="sidebar-overlay" id="sidebarOverlay" onclick="toggleSidebar()"></div>
+
     <!-- Sidebar navigation -->
     <nav class="sidebar" id="sidebar">
         <div class="sidebar-header">{{ module_title }}</div>
@@ -94,6 +101,16 @@
                 <div class="sidebar-section-count">{{ section.element_count }}</div>
             </div>
             {% endfor %}
+        </div>
+        <div class="sidebar-footer">
+            {% if prev_chapter %}
+            <a href="{{ prev_chapter.filename }}" class="sidebar-chapter-link">&#8592; {{ prev_chapter.title }}</a>
+            {% endif %}
+            {% if next_chapter %}
+            <a href="{{ next_chapter.filename }}" class="sidebar-chapter-link">{{ next_chapter.title }} &#8594;</a>
+            {% endif %}
+            <a href="mixed_review.html" class="sidebar-chapter-link">Mixed Practice</a>
+            <a href="review.html" class="sidebar-chapter-link">Spaced Review</a>
         </div>
     </nav>
 
@@ -724,7 +741,10 @@ window.__lxpToggleTheme = function() {
         current = index;
         prevBtn.disabled = current === 0;
         progressText.textContent = (current + 1) + ' / ' + total;
-        progressFill.style.width = ((current + 1) / total * 100) + '%';
+        var pctDone = ((current + 1) / total * 100);
+        progressFill.style.width = pctDone + '%';
+        var mobileFill = document.getElementById('mobileProgressFill');
+        if (mobileFill) mobileFill.style.width = pctDone + '%';
         document.querySelector('.slide-viewport').scrollTop = 0;
         renderMath(slides[index]);
 
@@ -775,6 +795,8 @@ window.__lxpToggleTheme = function() {
         }
         if (startIndex >= 0 && startIndex < total) showSlide(startIndex);
         document.getElementById('sidebar').classList.remove('open');
+        var ov = document.getElementById('sidebarOverlay');
+        if (ov) ov.classList.remove('visible');
     };
 
     function showMasteryModal(sectionIdx, score) {
@@ -802,10 +824,14 @@ window.__lxpToggleTheme = function() {
             pendingNavTarget = -1;
         }
         document.getElementById('sidebar').classList.remove('open');
+        var ov = document.getElementById('sidebarOverlay');
+        if (ov) ov.classList.remove('visible');
     };
 
     window.toggleSidebar = function() {
         document.getElementById('sidebar').classList.toggle('open');
+        var overlay = document.getElementById('sidebarOverlay');
+        if (overlay) overlay.classList.toggle('visible');
     };
 
     document.addEventListener('keydown', function(e) {
@@ -813,6 +839,76 @@ window.__lxpToggleTheme = function() {
         if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); navigate(1); }
         if (e.key === 'ArrowLeft') { e.preventDefault(); navigate(-1); }
     });
+
+    // ── Swipe navigation (mobile) ──────────────────────────────────────
+    (function() {
+        var startX = 0, startY = 0, tracking = false;
+        var SWIPE_THRESHOLD = 50;
+        var SWIPE_MAX_Y = 80;
+        var viewport = document.querySelector('.slide-viewport');
+        if (!viewport) return;
+
+        viewport.addEventListener('touchstart', function(e) {
+            var tag = e.target.tagName;
+            if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+            if (e.target.closest('.ordering-item') || e.target.closest('.categorization-item')) return;
+            if (e.target.closest('.concept-map-container') || e.target.closest('pre')) return;
+            startX = e.touches[0].clientX;
+            startY = e.touches[0].clientY;
+            tracking = true;
+        }, { passive: true });
+
+        viewport.addEventListener('touchend', function(e) {
+            if (!tracking) return;
+            tracking = false;
+            var dx = e.changedTouches[0].clientX - startX;
+            var dy = e.changedTouches[0].clientY - startY;
+            if (Math.abs(dx) > SWIPE_THRESHOLD && Math.abs(dy) < SWIPE_MAX_Y) {
+                if (dx < 0) navigate(1);
+                else navigate(-1);
+            }
+        }, { passive: true });
+    })();
+
+    // ── Touch drag reorder for ordering exercises ──────────────────────
+    (function() {
+        var dragItem = null, startY = 0;
+
+        document.addEventListener('touchstart', function(e) {
+            var handle = e.target.closest('.ordering-handle');
+            if (!handle) return;
+            e.preventDefault();
+            dragItem = handle.closest('.ordering-item');
+            startY = e.touches[0].clientY;
+            dragItem.style.opacity = '0.6';
+            dragItem.style.zIndex = '10';
+        }, { passive: false });
+
+        document.addEventListener('touchmove', function(e) {
+            if (!dragItem) return;
+            e.preventDefault();
+            var currentY = e.touches[0].clientY;
+            var list = dragItem.closest('.ordering-list');
+            if (!list) return;
+            var items = Array.from(list.querySelectorAll('.ordering-item'));
+            for (var i = 0; i < items.length; i++) {
+                var rect = items[i].getBoundingClientRect();
+                var midY = rect.top + rect.height / 2;
+                if (currentY < midY) {
+                    list.insertBefore(dragItem, items[i]);
+                    return;
+                }
+            }
+            list.appendChild(dragItem);
+        }, { passive: false });
+
+        document.addEventListener('touchend', function() {
+            if (!dragItem) return;
+            dragItem.style.opacity = '';
+            dragItem.style.zIndex = '';
+            dragItem = null;
+        });
+    })();
 
     // ── Score tracking ─────────────────────────────────────────────────
     function recordScore(slideIndex, isCorrect, attempts, confidence, bloomLevel) {

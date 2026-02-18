@@ -51,17 +51,17 @@ TEMPLATE_DESCRIPTIONS = {
         "fills it. Embed the formal content within the story, not after it."
     ),
     "worked_example": (
-        "WORKED EXAMPLE WITH FADING: Use SEPARATE elements for each stage. "
-        "Stage 1 (slide): A concrete problem with a COMPLETE worked solution "
-        "showing every step with reasoning — explain WHY each step follows "
-        "from the last, not just WHAT to compute. "
-        "Stage 2 (fill_in_the_blank): The SAME problem type but with the final "
-        "step as a blank for the learner to complete. "
-        "Stage 3 (quiz): A NEW problem of the same type with NO steps shown — "
-        "the learner must solve it independently. Include the full worked "
-        "solution in the explanation field. "
-        "Each stage MUST be a distinct element so the learner progresses through "
-        "them one at a time. Do not collapse multiple stages into a single slide."
+        "WORKED EXAMPLE WITH FADING: Generate as teach-practice cycles. "
+        "Cycle 1 (teach): A slide with a COMPLETE worked solution showing every "
+        "step with reasoning — explain WHY each step follows from the last. "
+        "Cycle 1 (practice): A fill_in_the_blank with the SAME problem type but "
+        "the final step as a blank for the learner to complete. "
+        "Cycle 2 (teach): A brief slide recapping the key insight from the worked example. "
+        "Cycle 2 (practice): A quiz with a NEW problem of the same type, NO steps "
+        "shown — the learner solves independently. Include the full worked solution "
+        "in the explanation field. "
+        "The pattern is: slide, fill_in_the_blank, slide, quiz. "
+        "Each stage MUST be a distinct element."
     ),
     "compare_contrast": (
         "COMPARE & CONTRAST: Take two related or confusable concepts and "
@@ -166,7 +166,7 @@ You MUST AVOID these common LLM failure modes:
 ## Available Element Types (with fixed Bloom levels)
 
 1. **section_intro** [understand]: A 2-3 sentence motivational introduction. ALWAYS the FIRST element in every section. Frames WHY this section matters and what the learner will gain. Derive it from the section's learning objectives but present it as compelling narrative prose, not a bullet list. Keep it short and energizing.
-2. **slide** [understand]: Explanatory content. This is where the teaching happens. Use narrative prose, analogies, worked examples, stories. Each slide should be substantial (150-400 words of actual content), not a few bullet points.
+2. **slide** [understand]: Explanatory content. This is where the teaching happens. Use narrative prose, analogies, worked examples, stories. Each slide should focus on ONE atomic idea (80-200 words). Split multi-idea explanations across multiple slides with a practice element between them.
 3. **mermaid** [understand]: A diagram (flowchart, sequence, state, mindmap, etc.) rendered via Mermaid.js. Use for: processes/workflows (flowchart), time-ordered interactions (sequence), state transitions (state), topic hierarchies (mindmap). The diagram_code field must contain valid Mermaid syntax. Keep diagrams focused: 5-12 nodes maximum.
 4. **quiz** [apply]: Multiple-choice questions that require APPLYING knowledge, not just recalling definitions. Must have plausible distractors with explanations for EVERY option (correct and incorrect).
 5. **matching** [apply]: Pair related items. Use for concept-to-example pairs, not just term-to-definition.
@@ -262,19 +262,36 @@ For analogy exercises, each item MUST include an explanation of why the analogy 
 
 For error_detection exercises, each statement should contain exactly ONE specific error that tests a real misconception. The corrected_statement should fix ONLY the error, not rephrase the entire statement.
 
-## Element Ordering Within Each Section
+## Element Structure: Teach-Practice Cycles
 
-Generate elements in this order within each section:
-1. **section_intro**: ALWAYS first. Motivational framing.
-2. **slide**, **mermaid**: Teaching content (explain, show).
-3. **Practice elements** (in any order you choose): **quiz**, **matching**, **ordering**, **fill_in_the_blank**, **categorization**, **analogy**, **error_detection**.
-4. **concept_map**: Synthesis (connect the dots).
-5. **flashcard**: Delayed reinforcement (recall concepts from the slides above, NOT new terms).
-6. **interactive_essay**: Culminating assessment (always LAST).
+Structure each section as a sequence of SHORT CYCLES, not a lecture followed by a quiz.
 
-This follows the pedagogical principle: **motivate → teach → practice → reinforce → assess**. Flashcards come AFTER practice because they reinforce what the learner has already encountered in the slides and exercises above.
+Each cycle is:
+  1. ONE teaching element (slide or mermaid) focused on ONE idea, 80-200 words
+  2. ONE practice element immediately after, testing that exact idea
 
-**Vary the practice mix across sections.** Do NOT use the same combination of practice elements in every section. Choose 2-3 practice element types per section, varying the selection. For example: Section 1 might use quiz + ordering, Section 2 might use matching + analogy, Section 3 might use fill_in_the_blank + categorization + error_detection. The goal is that a learner scrolling through the course encounters fresh interaction patterns.
+Example cycle pattern for a 2-concept section:
+  section_intro
+  slide (concept A explained)         -- CYCLE 1 teach
+  quiz or fill_in_the_blank (test A)  -- CYCLE 1 practice
+  slide (concept B explained)         -- CYCLE 2 teach
+  matching or ordering (test B)       -- CYCLE 2 practice
+  flashcard (A recall)
+  flashcard (B recall)
+
+CRITICAL RULES:
+- NEVER place two slides in a row. After every teaching element (slide or mermaid), the NEXT element must be a practice element.
+- NEVER place all practice at the end. Interleave teaching and practice throughout.
+- Each slide should explain ONE atomic idea (a single mechanism, a single formula, a single distinction). If you need to explain two ideas, use two separate slides with a practice element between them.
+- Keep slides SHORT: 80-200 words of focused explanation. Brilliant-style, not textbook-style.
+- Aim for a 1:1 ratio of teaching to practice elements (excluding section_intro, flashcards, and interactive_essay).
+- Vary the practice element types across cycles. Do NOT use the same exercise type in every cycle.
+
+Bookend elements (placed automatically, generate them in any position):
+- **section_intro**: ALWAYS first. Motivational framing.
+- **concept_map**: Near the end (synthesis of relationships).
+- **flashcard**: After all cycles (delayed reinforcement, NOT new terms).
+- **interactive_essay**: ALWAYS last (culminating assessment).
 
 ## Element Difficulty Progression
 
@@ -307,7 +324,7 @@ For mathematical expressions, use LaTeX delimiters:
 - Block math: $$\\frac{\\partial f}{\\partial x} = 0$$
 
 CRITICAL RULES:
-- In JSON strings, backslashes must be double-escaped: use \\\\frac not \\frac.
+- Write LaTeX naturally with single backslashes: \\frac, \\sum, \\text, etc. Do NOT add extra backslashes — the system handles JSON escaping automatically.
 - Write each math expression EXACTLY ONCE inside $ delimiters. Do NOT write the expression as plain text AND in LaTeX delimiters. WRONG: "probability p=0.12$p=0.12$". RIGHT: "probability $p=0.12$".
 - Use ONLY $ delimiters, never \\( \\) or \\[ \\] notation.
 - Every opening $ must have a matching closing $. Do not leave unclosed delimiters.
@@ -793,17 +810,19 @@ def _build_focus_block(focus_concepts: list[str] | None) -> str:
     if not focus_concepts:
         return ""
     concept_list = ", ".join(f"**{c}**" for c in focus_concepts)
+    n = len(focus_concepts)
     return (
         f"\n\n### CONCEPT FOCUS (CRITICAL)\n"
         f"This learning unit focuses ONLY on: {concept_list}.\n\n"
-        f"Generate a COMPACT unit:\n"
+        f"Generate a COMPACT unit using teach-practice cycles:\n"
         f"- 1 section_intro\n"
-        f"- 2-3 teaching elements (slides/mermaid) covering ONLY these concepts\n"
-        f"- 2-3 practice elements testing ONLY these concepts\n"
-        f"- 1-2 flashcards for ONLY these concepts\n\n"
+        f"- {n} teach-practice cycle(s) (1 slide + 1 exercise per concept)\n"
+        f"- 1-2 flashcards for recall\n\n"
+        f"That means roughly {2 * n + 3} elements total. Each concept gets its own "
+        f"slide immediately followed by its own exercise.\n\n"
         f"Do NOT teach or test concepts outside this focus set, even if they appear "
         f"in the source text. Other concepts are covered in adjacent learning units. "
-        f"Keep the unit tight: a learner should complete it in 5-10 minutes."
+        f"Keep the unit tight: a learner should complete it in 3-5 minutes."
     )
 
 
@@ -823,6 +842,19 @@ def _build_tables_block(tables: Sequence | None) -> str:
     if not parts:
         return ""
     return "\n\n### Key Tables:\n" + "\n".join(parts)
+
+
+def _build_supplementary_block(supplementary_context: str | None) -> str:
+    if not supplementary_context:
+        return ""
+    return (
+        "\n\n### Supplementary Material from Other Sources\n"
+        "The following excerpts from other textbooks cover related concepts. "
+        "Use them to enrich your explanations with additional perspectives, "
+        "examples, or complementary viewpoints. Do NOT simply repeat this "
+        "material — integrate relevant insights naturally into your content.\n\n"
+        + supplementary_context
+    )
 
 
 def _build_images_block(images: Sequence | None) -> str:
@@ -877,6 +909,7 @@ def build_section_prompt(
     document_type: str | None = None,
     tables: Sequence | None = None,
     images: Sequence | None = None,
+    supplementary_context: str | None = None,
 ) -> str:
     """Build the user prompt for transforming a single section.
 
@@ -938,6 +971,7 @@ def build_section_prompt(
         module_summary_block,
         rationale_block,
         _build_focus_block(focus_concepts),
+        _build_supplementary_block(supplementary_context),
         _build_tables_block(tables),
         _build_images_block(images),
     ])

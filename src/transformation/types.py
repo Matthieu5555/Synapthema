@@ -51,27 +51,23 @@ ELEMENT_BLOOM_MAP: dict[str, BloomLevel] = {
     "interactive_essay": "evaluate",
 }
 
-# ── Canonical element ordering within a section ──────────────────────────────
-# Enforced as a post-processing stable sort so elements follow pedagogical flow:
-# motivate → teach → practice → reinforce → assess.
-# Practice elements share the same priority (3) so the LLM's chosen order is
-# preserved by the stable sort — this enables variety across sections.
-ELEMENT_ORDER: dict[str, int] = {
-    "section_intro": 0,
-    "slide": 1,
-    "mermaid": 2,
-    # ── practice zone (same priority → LLM order preserved) ──
-    "quiz": 3,
-    "ordering": 3,
-    "matching": 3,
-    "fill_in_the_blank": 3,
-    "categorization": 3,
-    "analogy": 3,
-    "error_detection": 3,
-    # ── reinforce / assess ──
-    "concept_map": 4,
-    "flashcard": 5,
-    "interactive_essay": 6,
+# ── Element role classification ──────────────────────────────────────────────
+# Used by the interleave-preserving validator to anchor bookend elements
+# while preserving the LLM's teach-practice cycle ordering for core elements.
+ELEMENT_ROLE: dict[str, str] = {
+    "section_intro": "intro",       # Always first
+    "slide": "teach",               # Core: LLM order preserved
+    "mermaid": "teach",             # Core: LLM order preserved
+    "quiz": "practice",             # Core: LLM order preserved
+    "ordering": "practice",         # Core: LLM order preserved
+    "matching": "practice",         # Core: LLM order preserved
+    "fill_in_the_blank": "practice",  # Core: LLM order preserved
+    "categorization": "practice",   # Core: LLM order preserved
+    "analogy": "practice",          # Core: LLM order preserved
+    "error_detection": "practice",  # Core: LLM order preserved
+    "concept_map": "synthesis",     # Anchored near end
+    "flashcard": "reinforce",       # Anchored after practice
+    "interactive_essay": "assess",  # Always last
 }
 
 # Angles for reinforcement target selection (Phase 1 of two-phase generation).
@@ -553,7 +549,7 @@ class SectionBlueprint(BaseModel):
 
 
 class ModuleBlueprint(BaseModel):
-    """Blueprint for a module (maps to one chapter)."""
+    """Blueprint for a module (maps to one or more source chapters)."""
 
     title: str = Field(description="Module title")
     source_chapter_number: int | None = Field(
@@ -568,6 +564,11 @@ class ModuleBlueprint(BaseModel):
     sections: list[SectionBlueprint] = Field(
         default_factory=list,
         description="Ordered sections within this module",
+    )
+    additional_source_chapters: list[dict] = Field(
+        default_factory=list,
+        description="Extra source chapters merged into this module (multi-doc). "
+        "Each dict has 'book_index' (int) and 'chapter_number' (int).",
     )
 
 

@@ -49,14 +49,14 @@ characterizations. Your output is a CurriculumBlueprint JSON.
 
 ## CURRICULUM DESIGN RULES
 
-1. **SPLIT dense sections into bite-size learning units** — when a source section \
-covers 3+ distinct concepts (listed in the section characterization), create \
+1. **SPLIT sections into atomic learning units** — when a source section \
+covers 2+ distinct concepts (listed in the section characterization), create \
 MULTIPLE blueprint sections from that single source section. Each sub-section \
-should focus on 1-2 closely related concepts, with its own learning objectives, \
+should focus on exactly 1 concept, with its own learning objectives, \
 template, and bloom_target. All sub-sections sharing a source section MUST use \
 the SAME `source_section_title`. Use `focus_concepts` to specify which concept \
-names each sub-section covers. For source sections with 1-2 concepts, keep them \
-as a single blueprint section (do not split trivially small sections).
+name each sub-section covers. Only keep a section as a single blueprint when it \
+covers just 1 concept.
 2. **REORGANIZE bad structure** — if topics are scattered or the document has no \
 clear chapters, group related topics logically and create a learning progression.
 3. **SCAFFOLD learning** — order topics from foundational → advanced within each module. \
@@ -229,25 +229,32 @@ documents and design a single unified learning path.
 
 Your input is a content summary covering N documents: their chapter titles, \
 section titles, page ranges, text snippets, and document stats. \
-Your output is a single CurriculumBlueprint JSON that interleaves content \
+Your output is a single CurriculumBlueprint JSON that MERGES content \
 from all documents into one coherent course.
 
 ## MULTI-DOCUMENT CURRICULUM DESIGN RULES
 
 1. **IDENTIFY ALL TOPICS** across all documents — build a complete topic inventory.
-2. **DETECT OVERLAP** — if the same concept appears in multiple documents, \
-pick the BEST explanation and reference supplementary material from others.
+2. **MERGE OVERLAPPING CONTENT** — when two or more chapters across documents \
+cover the SAME core concepts, MERGE them into a SINGLE unified module. \
+Set `source_book_index` and `source_chapter_number` to the PRIMARY source \
+(the one with the best or most complete explanation). List the other sources \
+in `additional_source_chapters` (each entry: `{"book_index": N, "chapter_number": M}`). \
+The module's sections should draw on BOTH sources — interleave the best explanations, \
+examples, and perspectives from each book. The total number of modules should \
+equal the number of UNIQUE TOPICS, NOT the number of source chapters.
 3. **DETECT PREREQUISITES** — for each topic, determine what must be understood \
 first. Build a DAG of prerequisites, then linearize it.
 4. **DIFFICULTY RAMP** — the first modules should cover foundational vocabulary \
 and concepts. Middle modules should build on these with applications. Final \
 modules should require synthesis across topics.
 5. **SOURCE ATTRIBUTION** — every module must set `source_book_index` to the \
-index of the book it primarily draws from (0-based). Every section must set \
-`source_section_title` to the EXACT title of the extracted section. Multiple \
-blueprint sections CAN share the same `source_section_title` when a source \
-section is split into concept-focused units.
-6. **source_chapter_number** must match the chapter number from the source book.
+index of the PRIMARY book it draws from (0-based). Every section must set \
+`source_section_title` to the EXACT title of an extracted section (from any book). \
+Sections within a merged module CAN reference sections from different books \
+via their `source_book_index`. Multiple blueprint sections CAN share the same \
+`source_section_title` when a source section is split into concept-focused units.
+6. **source_chapter_number** must match the chapter number from the primary source book.
 7. **Assign templates based on CONTENT TYPE**, not rotation:
    - Definitions/concepts → "analogy_first" or "narrative"
    - Formulas/calculations → "worked_example"
@@ -265,20 +272,20 @@ section is split into concept-focused units.
    - Judgment/evaluation → "evaluate"
 9. **Add 1-3 learning objectives** per section — measurable, verb-based.
 10. **Identify prerequisites** — list section titles that should be covered first.
-11. **SPLIT dense sections into bite-size learning units** — when a source section \
-covers 3+ distinct concepts, create MULTIPLE blueprint sections from that single \
-source section. Each sub-section should focus on 1-2 closely related concepts. \
-Use `focus_concepts` to specify which concept names each sub-section covers. \
-For source sections with 1-2 concepts, keep them as a single unit.
+11. **SPLIT sections into atomic learning units** — when a source section \
+covers 2+ distinct concepts, create MULTIPLE blueprint sections from that single \
+source section. Each sub-section should focus on exactly 1 concept. \
+Use `focus_concepts` to specify which concept name each sub-section covers. \
+Only keep a section as a single unit when it covers just 1 concept.
 12. **Set focus_concepts** — for each blueprint section, list the concept names \
 that this section should teach and practice. Use EXACT concept names from the \
 concept inventory. When a source section is split, each sub-section's \
 focus_concepts should be a disjoint subset covering all the section's concepts.
-13. **COVER ALL CHAPTERS FROM ALL DOCUMENTS** — you MUST include content from \
-EVERY chapter of EVERY document. Create at least one module per source chapter. \
-Do NOT skip, merge, or omit any chapters. If two chapters overlap, still create \
-separate modules for each but cross-reference the overlap. The total number of \
-modules should be >= the total number of chapters across all documents.
+13. **COVER ALL CONCEPTS** — you must cover ALL concepts from ALL documents. \
+No concept should be dropped. However, you SHOULD merge chapters that cover \
+the same concepts into unified modules. A single merged module can satisfy \
+coverage for chapters from multiple books. Every source chapter must appear \
+either as a module's primary source OR in some module's `additional_source_chapters`.
 
 ## OUTPUT FORMAT
 
@@ -290,21 +297,33 @@ Return ONLY a JSON object matching this schema (no markdown fences):
   "learner_journey": "Module A → Module B → ...",
   "modules": [
     {
-      "title": "...",
-      "source_chapter_number": 1,
+      "title": "Value at Risk: Concepts and Applications",
+      "source_chapter_number": 3,
       "source_book_index": 0,
-      "summary": "...",
+      "additional_source_chapters": [{"book_index": 1, "chapter_number": 5}],
+      "summary": "Unified treatment of VaR drawing on both sources.",
       "sections": [
         {
-          "title": "Basis and Span",
-          "source_section_title": "3.1 Vector Spaces",
+          "title": "VaR Definition and Intuition",
+          "source_section_title": "3.1 VaR Overview",
           "source_book_index": 0,
-          "learning_objectives": ["Define a basis and explain its relationship to span"],
+          "learning_objectives": ["Define VaR and explain its interpretation"],
           "template": "analogy_first",
           "bloom_target": "understand",
           "prerequisites": [],
-          "rationale": "Basis and span are tightly coupled concepts best taught together.",
-          "focus_concepts": ["basis", "span"]
+          "rationale": "Foundation concept — combine both books' perspectives.",
+          "focus_concepts": ["value at risk", "confidence level"]
+        },
+        {
+          "title": "VaR Calculation Methods",
+          "source_section_title": "5.2 Parametric VaR",
+          "source_book_index": 1,
+          "learning_objectives": ["Calculate VaR using parametric and historical methods"],
+          "template": "worked_example",
+          "bloom_target": "apply",
+          "prerequisites": ["VaR Definition and Intuition"],
+          "rationale": "Book 2 has better worked examples for calculations.",
+          "focus_concepts": ["parametric VaR", "historical simulation"]
         }
       ]
     }
@@ -816,17 +835,23 @@ def _ensure_all_chapters_covered_multi_doc(
     to design properly-titled modules with learning objectives and template
     assignments — not raw chapter dumps.
     """
-    # Build coverage set from both module-level AND section-level book indices
+    # Build coverage set from module-level, section-level, AND additional sources
     covered: set[tuple[int, int]] = set()
     for m in blueprint.modules:
         if m.source_chapter_number is not None:
             book_idx = m.source_book_index or 0
             covered.add((book_idx, m.source_chapter_number))
-        # Also check section-level: a module from book 0 may reference
+        # Check section-level: a module from book 0 may reference
         # sections from book 1 via source_book_index on sections
         for s in m.sections:
             if s.source_book_index is not None and m.source_chapter_number is not None:
                 covered.add((s.source_book_index, m.source_chapter_number))
+        # Check additional_source_chapters (merged modules)
+        for asc in m.additional_source_chapters:
+            asc_book = asc.get("book_index")
+            asc_ch = asc.get("chapter_number")
+            if asc_book is not None and asc_ch is not None:
+                covered.add((asc_book, asc_ch))
 
     # Find missing chapters across all books
     missing: list[tuple[int, Book, Chapter]] = []
@@ -944,10 +969,10 @@ def _ensure_all_chapters_covered_multi_doc(
 # ── Concept-level section splitting (deterministic safety net) ─────────────
 
 # Minimum number of core/supporting concepts to trigger automatic splitting.
-_MIN_CONCEPTS_TO_SPLIT = 4
+_MIN_CONCEPTS_TO_SPLIT = 3
 
 # Maximum concepts per learning unit when auto-splitting.
-_MAX_CONCEPTS_PER_UNIT = 2
+_MAX_CONCEPTS_PER_UNIT = 1
 
 
 def _split_overloaded_sections(

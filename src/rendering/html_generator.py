@@ -54,6 +54,7 @@ def render_course(
     modules: Sequence[TrainingModule],
     output_dir: Path,
     extracted_dir: Path | None = None,
+    per_module_extracted_dirs: Sequence[Path] | None = None,
     embed_images: bool = True,
     concept_graph: ConceptGraph | None = None,
     chapter_analyses: list[ChapterAnalysis] | None = None,
@@ -144,6 +145,13 @@ def render_course(
         prev_chapter = chapter_info[i - 1] if i > 0 else None
         next_chapter = chapter_info[i + 1] if i < len(modules) - 1 else None
 
+        # Use per-module extracted dir (multi-doc) or fall back to global
+        effective_extracted_dir = (
+            per_module_extracted_dirs[i]
+            if per_module_extracted_dirs and i < len(per_module_extracted_dirs)
+            else extracted_dir
+        )
+
         _render_chapter(
             module=module,
             env=env,
@@ -151,7 +159,7 @@ def render_course(
             graphlib_js=graphlib_js,
             dagre_js=dagre_js,
             output_path=html_path,
-            extracted_dir=extracted_dir,
+            extracted_dir=effective_extracted_dir,
             embed_images=embed_images,
             course_title=course_title,
             course_slug=course_slug,
@@ -1024,6 +1032,21 @@ _LATEX_INLINE_RE = re.compile(r"[$](?![$]).+?[$]")
 _LATEX_PAREN_RE = re.compile(r"\\\(.+?\\\)")
 _LATEX_BRACKET_RE = re.compile(r"\\\[.+?\\\]", re.DOTALL)
 
+# Pattern for double-escaped LaTeX commands inside math spans.
+# LLMs sometimes produce \\frac instead of \frac in JSON output, resulting
+# in literal double-backslashes in the parsed string.  We normalize these
+# back to single backslashes so KaTeX can render them.
+_DOUBLE_ESCAPED_CMD_RE = re.compile(r"\\\\([a-zA-Z]+)")
+
+
+def _fix_double_escaped_latex(math_span: str) -> str:
+    """Normalize \\\\cmd → \\cmd inside a math span.
+
+    Preserves intentional ``\\\\`` (LaTeX line break) by only replacing
+    ``\\\\`` when followed by a LaTeX command name (alphabetic chars).
+    """
+    return _DOUBLE_ESCAPED_CMD_RE.sub(r"\\\1", math_span)
+
 # ── Doubled-math deduplication ────────────────────────────────────────────────
 # LLMs sometimes emit each math expression twice: once rendered as plain text
 # and once in LaTeX delimiters, producing e.g. "p=0.12$p=0.12$" or
@@ -1194,7 +1217,8 @@ def _markdown_to_html(text: str) -> str:
 
     def _save_math(match: re.Match) -> str:
         idx = len(math_spans)
-        math_spans.append(_escape_latex_percent(match.group(0)))
+        span = _fix_double_escaped_latex(match.group(0))
+        math_spans.append(_escape_latex_percent(span))
         return f"\x00MATH{idx}\x00"
 
     protected = _LATEX_DISPLAY_RE.sub(_save_math, text)
@@ -1285,7 +1309,8 @@ def _render_fitb_statement(statement: str, answers: list[str] | None = None) -> 
 
     def _save_math(match: re.Match) -> str:
         idx = len(math_spans)
-        math_spans.append(_escape_latex_percent(match.group(0)))
+        span = _fix_double_escaped_latex(match.group(0))
+        math_spans.append(_escape_latex_percent(span))
         return f"\x00MATH{idx}\x00"
 
     protected = _LATEX_DISPLAY_RE.sub(_save_math, text)

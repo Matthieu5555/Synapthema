@@ -503,7 +503,7 @@ class TestSectionResponseValidators:
         from pydantic import ValidationError
         from src.transformation.content_designer import SectionResponse
 
-        with pytest.raises(ValidationError, match="at least 1 slide"):
+        with pytest.raises(ValidationError, match="at least 1 teaching element"):
             SectionResponse(elements=[
                 FlashcardElement(
                     bloom_level="remember",
@@ -516,7 +516,7 @@ class TestSectionResponseValidators:
         from pydantic import ValidationError
         from src.transformation.content_designer import SectionResponse
 
-        with pytest.raises(ValidationError, match="at least 1 assessment"):
+        with pytest.raises(ValidationError, match="at least 1 practice element"):
             SectionResponse(elements=[
                 SlideElement(
                     bloom_level="understand",

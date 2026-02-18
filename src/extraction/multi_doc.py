@@ -44,7 +44,7 @@ def extract_corpus(
     """
     books: list[Book] = []
     for idx, source in enumerate(sources):
-        slug = _source_slug(source, idx)
+        slug = source_slug(source, idx)
         book_output_dir = output_dir / slug
         logger.info(
             "Extracting document %d/%d: %s → %s",
@@ -65,7 +65,7 @@ def extract_corpus(
     return books
 
 
-def _source_slug(source: InputSource, index: int) -> str:
+def source_slug(source: InputSource, index: int) -> str:
     """Generate a unique subdirectory slug for a source document."""
     stem = source.path.stem.lower()
     slug = re.sub(r"[^a-z0-9]+", "-", stem).strip("-") or "unknown"

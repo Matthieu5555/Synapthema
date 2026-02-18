@@ -747,13 +747,11 @@ class TestSplitOverloadedSections:
         result = _split_overloaded_sections(blueprint, analyses)
 
         sections = result.modules[0].sections
-        assert len(sections) == 2
-        # Each sub-section has focus_concepts
-        assert len(sections[0].focus_concepts) == 2
-        assert len(sections[1].focus_concepts) == 2
-        # Both share the same source_section_title
-        assert sections[0].source_section_title == "Dense Section"
-        assert sections[1].source_section_title == "Dense Section"
+        assert len(sections) == 4  # 4 concepts, 1 per unit
+        # Each sub-section has exactly 1 focus concept
+        for s in sections:
+            assert len(s.focus_concepts) == 1
+            assert s.source_section_title == "Dense Section"
 
     def test_preserves_sections_with_focus_concepts(self) -> None:
         """Sections already specifying focus_concepts are not re-split."""
@@ -891,10 +889,11 @@ class TestSplitOverloadedSections:
         result = _split_overloaded_sections(blueprint, analyses, graph)
 
         sections = result.modules[0].sections
-        assert len(sections) == 2
-        # First unit should have the foundation concepts (Alpha, Beta)
-        assert "Alpha" in sections[0].focus_concepts
-        assert "Beta" in sections[0].focus_concepts
+        assert len(sections) == 4  # 4 concepts, 1 per unit
+        # First unit should have the first foundation concept (Alpha)
+        assert sections[0].focus_concepts == ["Alpha"]
+        # Topological order preserved: Alpha, Beta, Gamma, Delta
+        assert sections[1].focus_concepts == ["Beta"]
 
 
 class TestValidateProgressionWithSplits:

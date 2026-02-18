@@ -6,7 +6,7 @@ from pydantic import TypeAdapter, ValidationError
 from src.transformation.types import (
     CurriculumBlueprint,
     ELEMENT_BLOOM_MAP,
-    ELEMENT_ORDER,
+    ELEMENT_ROLE,
     ModuleBlueprint,
     SectionBlueprint,
     AnalogyElement,
@@ -340,26 +340,30 @@ class TestElementBloomMap:
         assert ELEMENT_BLOOM_MAP["interactive_essay"] == "evaluate"
 
 
-class TestElementOrder:
-    """Tests for the canonical ELEMENT_ORDER dict."""
+class TestElementRole:
+    """Tests for the ELEMENT_ROLE classification dict."""
 
-    def test_section_intro_is_first(self) -> None:
-        assert ELEMENT_ORDER["section_intro"] == 0
+    def test_section_intro_is_intro(self) -> None:
+        assert ELEMENT_ROLE["section_intro"] == "intro"
 
-    def test_slides_before_practice(self) -> None:
-        assert ELEMENT_ORDER["slide"] < ELEMENT_ORDER["quiz"]
-        assert ELEMENT_ORDER["mermaid"] < ELEMENT_ORDER["matching"]
+    def test_slides_are_teach(self) -> None:
+        assert ELEMENT_ROLE["slide"] == "teach"
+        assert ELEMENT_ROLE["mermaid"] == "teach"
 
-    def test_flashcard_after_practice(self) -> None:
-        assert ELEMENT_ORDER["flashcard"] > ELEMENT_ORDER["quiz"]
-        assert ELEMENT_ORDER["flashcard"] > ELEMENT_ORDER["fill_in_the_blank"]
+    def test_exercises_are_practice(self) -> None:
+        assert ELEMENT_ROLE["quiz"] == "practice"
+        assert ELEMENT_ROLE["matching"] == "practice"
+        assert ELEMENT_ROLE["fill_in_the_blank"] == "practice"
 
-    def test_interactive_essay_is_last(self) -> None:
-        assert ELEMENT_ORDER["interactive_essay"] == max(ELEMENT_ORDER.values())
+    def test_flashcard_is_reinforce(self) -> None:
+        assert ELEMENT_ROLE["flashcard"] == "reinforce"
 
-    def test_all_bloom_map_keys_have_order(self) -> None:
+    def test_interactive_essay_is_assess(self) -> None:
+        assert ELEMENT_ROLE["interactive_essay"] == "assess"
+
+    def test_all_bloom_map_keys_have_role(self) -> None:
         for key in ELEMENT_BLOOM_MAP:
-            assert key in ELEMENT_ORDER, f"{key} missing from ELEMENT_ORDER"
+            assert key in ELEMENT_ROLE, f"{key} missing from ELEMENT_ROLE"
 
 
 class TestSectionBlueprintFocusConcepts:

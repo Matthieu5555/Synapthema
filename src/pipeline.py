@@ -19,7 +19,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from src.config import Config, InputSource
-from src.extraction.multi_doc import extract_corpus
+from src.extraction.multi_doc import extract_corpus, source_slug
 from src.extraction.pdf_parser import extract_book
 from src.extraction.types import Book, Chapter, ImageRef, Section, Table
 from src.rendering.html_generator import render_course
@@ -38,6 +38,23 @@ from src.transformation.llm_client import LLMClient, create_llm_client
 from src.transformation.types import CurriculumBlueprint, ModuleBlueprint, TrainingModule
 
 logger = logging.getLogger(__name__)
+
+
+def _book_extracted_dirs(
+    extracted_dir: Path,
+    input_sources: list[InputSource],
+) -> list[Path]:
+    """Return per-book extraction directories.
+
+    Single-doc: returns [extracted_dir].
+    Multi-doc: returns [extracted_dir/00_slug, extracted_dir/01_slug, ...].
+    """
+    if len(input_sources) <= 1:
+        return [extracted_dir]
+    return [
+        extracted_dir / source_slug(src, idx)
+        for idx, src in enumerate(input_sources)
+    ]
 
 
 def _maybe_create_llm_client(config: Config) -> LLMClient | None:
@@ -275,12 +292,16 @@ def run_pipeline(
         for a in book_analyses
     }
 
+    # Compute per-book extraction directories for correct image path resolution
+    book_dirs = _book_extracted_dirs(config.extracted_dir, config.input_sources)
+
     modules = _load_or_transform(
         config.extracted_dir, config.vision_enabled,
         blueprint, books, client, analyses_by_book_chapter,
         chapter_number, resume, concept_graph=concept_graph,
         document_type=document_type,
         max_workers=config.max_concurrent_llm,
+        book_extracted_dirs=book_dirs,
     )
 
     # Build source book title list aligned with modules (index-based).
@@ -320,12 +341,32 @@ def run_pipeline(
                 # that covers this source chapter.
                 if global_ch not in chapter_to_module:
                     chapter_to_module[global_ch] = mod_idx + 1
+            # Also map additional source chapters to this module
+            for asc in bp.additional_source_chapters:
+                asc_bk = asc.get("book_index", 0)
+                asc_ch = asc.get("chapter_number")
+                if asc_ch is not None and asc_bk < len(books):
+                    asc_offset = sum(len(books[b].chapters) for b in range(asc_bk))
+                    asc_global = asc_offset + asc_ch
+                    if asc_global not in chapter_to_module:
+                        chapter_to_module[asc_global] = mod_idx + 1
+
+    # Build per-module extracted dirs for correct image resolution in rendering
+    per_module_dirs: list[Path] | None = None
+    if len(books) > 1:
+        per_module_dirs = [
+            book_dirs[bp.source_book_index or 0]
+            if (bp.source_book_index or 0) < len(book_dirs)
+            else config.extracted_dir
+            for bp in blueprint.modules
+        ]
 
     # Stage 3: Render (always re-run — it's instant)
     index_path = render_course(
         modules=modules,
         output_dir=config.html_dir,
         extracted_dir=config.extracted_dir,
+        per_module_extracted_dirs=per_module_dirs,
         embed_images=config.embed_images,
         concept_graph=concept_graph,
         chapter_analyses=global_flat,
@@ -597,6 +638,7 @@ def _load_or_transform(
     concept_graph: ConceptGraph | None = None,
     document_type: str | None = None,
     max_workers: int = 4,
+    book_extracted_dirs: list[Path] | None = None,
 ) -> list[TrainingModule]:
     """Load training modules checkpoint or run transformation.
 
@@ -636,7 +678,7 @@ def _load_or_transform(
                 training_path=training_path,
                 concept_graph=concept_graph,
                 document_type=document_type,
-                extracted_dir=extracted_dir,
+                book_extracted_dirs=book_extracted_dirs,
                 vision_enabled=vision_enabled,
                 max_workers=max_workers,
             )
@@ -653,7 +695,7 @@ def _load_or_transform(
         chapter_number, training_path=training_path,
         concept_graph=concept_graph,
         document_type=document_type,
-        extracted_dir=extracted_dir,
+        book_extracted_dirs=book_extracted_dirs,
         vision_enabled=vision_enabled,
         max_workers=max_workers,
     )
@@ -807,6 +849,109 @@ def _precompute_cumulative_concepts(
     return result
 
 
+# ── Cross-book enrichment ────────────────────────────────────────────────────
+
+_MAX_SNIPPET_LENGTH = 800
+_MAX_SUPPLEMENTARY_LENGTH = 3000
+
+
+def _build_cross_book_index(
+    books: list[Book],
+    analyses_by_book_chapter: dict[tuple[int, int], ChapterAnalysis],
+    concept_graph: ConceptGraph | None = None,
+) -> dict[str, list[tuple[int, int, str, str]]]:
+    """Map concept names to their source locations across all books.
+
+    Returns:
+        {canonical_concept_name: [(book_idx, ch_num, section_title, text_snippet), ...]}
+    """
+    # Build section text lookup: (book_idx, section_title) → text snippet
+    section_text: dict[tuple[int, str], str] = {}
+    for book_idx, book in enumerate(books):
+        for chapter in book.chapters:
+            for section in chapter.sections:
+                section_text[(book_idx, section.title)] = section.text[:_MAX_SNIPPET_LENGTH]
+
+    index: dict[str, list[tuple[int, int, str, str]]] = {}
+    for (book_idx, ch_num), analysis in analyses_by_book_chapter.items():
+        for concept in analysis.concepts:
+            canonical = concept_graph.resolve(concept.name) if concept_graph else concept.name
+            snippet = section_text.get((book_idx, concept.section_title), "")
+            entry = (book_idx, ch_num, concept.section_title, snippet)
+            index.setdefault(canonical, []).append(entry)
+
+    return index
+
+
+def _compute_supplementary_contexts(
+    work_items: list[tuple[int, ModuleBlueprint, Chapter, ChapterAnalysis | None]],
+    books: list[Book],
+    analyses_by_book_chapter: dict[tuple[int, int], ChapterAnalysis],
+    concept_graph: ConceptGraph | None = None,
+) -> dict[int, str]:
+    """Compute cross-book supplementary context for each work item.
+
+    For each module, finds related sections from OTHER books that cover
+    overlapping concepts and assembles text snippets.
+
+    Returns:
+        {work_item_index: supplementary_context_string}
+    """
+    if len(books) <= 1:
+        return {}
+
+    cross_index = _build_cross_book_index(books, analyses_by_book_chapter, concept_graph)
+    if not cross_index:
+        return {}
+
+    supplementary_by_idx: dict[int, str] = {}
+
+    for idx, module_bp, _chapter, chapter_analysis in work_items:
+        if not chapter_analysis:
+            continue
+
+        this_book_idx = module_bp.source_book_index or 0
+
+        # Resolve concept names for this module
+        module_concepts = {
+            concept_graph.resolve(c.name) if concept_graph else c.name
+            for c in chapter_analysis.concepts
+        }
+
+        # Collect related snippets from other books
+        related_snippets: list[str] = []
+        seen_sections: set[tuple[int, str]] = set()
+        total_len = 0
+
+        for concept_name in sorted(module_concepts):
+            if concept_name not in cross_index:
+                continue
+            for bk_idx, _ch_num, sec_title, snippet in cross_index[concept_name]:
+                if bk_idx == this_book_idx:
+                    continue  # Same book — skip
+                key = (bk_idx, sec_title)
+                if key in seen_sections:
+                    continue
+                seen_sections.add(key)
+
+                book_title = books[bk_idx].title if bk_idx < len(books) else f"Book {bk_idx}"
+                entry = f"**{book_title}, '{sec_title}'** (covers: {concept_name}):\n{snippet}"
+
+                if total_len + len(entry) > _MAX_SUPPLEMENTARY_LENGTH:
+                    break
+                related_snippets.append(entry)
+                total_len += len(entry)
+
+        if related_snippets:
+            supplementary_by_idx[idx] = "\n\n".join(related_snippets)
+
+    logger.info(
+        "Cross-book enrichment: %d/%d modules have supplementary context",
+        len(supplementary_by_idx), len(work_items),
+    )
+    return supplementary_by_idx
+
+
 def _transform_modules(
     blueprint: CurriculumBlueprint,
     books: list[Book],
@@ -817,7 +962,7 @@ def _transform_modules(
     training_path: Path | None = None,
     concept_graph: ConceptGraph | None = None,
     document_type: str | None = None,
-    extracted_dir: Path | None = None,
+    book_extracted_dirs: list[Path] | None = None,
     vision_enabled: bool = False,
     max_workers: int = 4,
 ) -> list[TrainingModule]:
@@ -865,6 +1010,11 @@ def _transform_modules(
     if not work_items:
         return []
 
+    # Compute cross-book supplementary context for multi-doc enrichment
+    supplementary_by_idx = _compute_supplementary_contexts(
+        work_items, books, analyses_by_book_chapter, concept_graph,
+    )
+
     # Thread-safe list + lock for incremental checkpoint saving
     completed_modules: list[TrainingModule] = []
     save_lock = threading.Lock()
@@ -880,15 +1030,44 @@ def _transform_modules(
         idx, module_bp, chapter, chapter_analysis = item
         cumulative_concepts = cumulative_by_idx.get(idx, [])
 
+        # Resolve per-book extracted_dir for correct image paths
+        book_idx = module_bp.source_book_index or 0
+        per_book_dir = (
+            book_extracted_dirs[book_idx]
+            if book_extracted_dirs and book_idx < len(book_extracted_dirs)
+            else None
+        )
+
+        # Collect additional source chapters for merged modules (multi-doc)
+        additional_chapters: list[tuple[int, Chapter]] = []
+        for asc in module_bp.additional_source_chapters:
+            asc_book_idx = asc.get("book_index", 0)
+            asc_ch_num = asc.get("chapter_number")
+            if asc_book_idx < len(books) and asc_ch_num is not None:
+                for ch in books[asc_book_idx].chapters:
+                    if ch.chapter_number == asc_ch_num:
+                        additional_chapters.append((asc_book_idx, ch))
+                        break
+
+        # Build per-book extracted dirs for additional chapters' images
+        additional_extracted_dirs: dict[int, Path] = {}
+        if additional_chapters and book_extracted_dirs:
+            for asc_bk_idx, _ in additional_chapters:
+                if asc_bk_idx < len(book_extracted_dirs):
+                    additional_extracted_dirs[asc_bk_idx] = book_extracted_dirs[asc_bk_idx]
+
         module = transform_chapter(
             chapter, client,
             blueprint=module_bp,
             chapter_analysis=chapter_analysis,
             prior_concepts=cumulative_concepts,
             document_type=document_type,
-            extracted_dir=extracted_dir,
+            extracted_dir=per_book_dir,
             vision_enabled=vision_enabled,
             max_workers=section_workers,
+            supplementary_context=supplementary_by_idx.get(idx),
+            additional_chapters=additional_chapters or None,
+            additional_extracted_dirs=additional_extracted_dirs or None,
         )
         logger.info(
             "Chapter %d transformed: %d elements",

@@ -16,6 +16,10 @@
     --warning: #f59e0b;
     --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+    --content-padding: 1rem;
+    --card-radius: 16px;
+    --touch-min: 48px;
+    --progress-height: 4px;
 }
 
 [data-theme="light"] {
@@ -39,26 +43,60 @@ body {
     background: var(--bg);
     color: var(--text);
     line-height: 1.6;
-    overflow: hidden;
-    height: 100vh;
+    overflow-x: hidden;
+    min-height: 100dvh;
+    min-height: 100vh; /* fallback for browsers without dvh */
 }
 
 /* ── Layout: sidebar + content ─────────────────────────────────────────── */
 
 .course-container {
     display: flex;
-    height: calc(100vh - 41px);
+    flex-direction: column;
+    min-height: calc(100dvh - 48px);
 }
 
 .sidebar {
-    width: 280px;
-    min-width: 280px;
+    position: fixed;
+    left: -100%;
+    top: 0;
+    width: 85%;
+    max-width: 320px;
+    height: 100dvh;
+    z-index: 50;
     background: var(--surface);
     border-right: 1px solid var(--border);
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    transition: left 0.3s ease;
 }
+.sidebar.open { left: 0; }
+
+.sidebar-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.5);
+    z-index: 49;
+}
+.sidebar-overlay.visible { display: block; }
+
+.sidebar-footer {
+    padding: 0.75rem 1rem;
+    border-top: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.sidebar-chapter-link {
+    color: var(--accent);
+    text-decoration: none;
+    font-size: 0.85rem;
+    padding: 0.5rem 0;
+}
+.sidebar-chapter-link:hover { text-decoration: underline; }
 
 .sidebar-header {
     padding: 1.25rem 1rem;
@@ -139,9 +177,9 @@ body {
 }
 
 .sidebar-toggle {
-    display: none;
+    display: block;
     position: fixed;
-    top: 0.75rem;
+    top: 0.55rem;
     left: 0.75rem;
     z-index: 100;
     background: var(--surface);
@@ -163,25 +201,29 @@ body {
 .slide-viewport {
     flex: 1;
     overflow-y: auto;
-    padding: 2rem 3rem;
+    padding: var(--content-padding);
+    padding-top: 0.5rem;
     scroll-behavior: smooth;
+    -webkit-overflow-scrolling: touch;
 }
 
 /* ── Section dividers in content ──────────────────────────────────────── */
 
 .section-divider {
     max-width: 900px;
-    margin: 0 auto 1.5rem auto;
-    padding: 0.75rem 0;
-    border-bottom: 2px solid var(--border);
+    margin: 0 auto 1rem auto;
+    padding: 1.25rem var(--content-padding);
+    background: linear-gradient(135deg, var(--accent), #818cf8);
+    border-radius: var(--card-radius);
+    text-align: center;
 }
 
 .section-divider-title {
-    font-size: 0.85rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--text-muted);
+    font-size: 1rem;
+    font-weight: 700;
+    color: white;
+    letter-spacing: normal;
+    text-transform: none;
 }
 
 .section-divider-pages {
@@ -204,8 +246,12 @@ body {
 
 .slide {
     display: none;
-    max-width: 900px;
+    max-width: 100%;
     margin: 0 auto;
+    background: var(--surface);
+    border-radius: var(--card-radius);
+    padding: 1.25rem;
+    border: 1px solid var(--border);
     animation: fadeIn 0.3s ease-in-out;
 }
 
@@ -219,12 +265,13 @@ body {
 /* ── Slide content ──────────────────────────────────────────────────────── */
 
 .slide h1 {
-    font-size: 2rem;
+    font-size: 1.35rem;
     font-weight: 700;
-    margin-bottom: 1.5rem;
+    margin-bottom: 1rem;
     color: var(--accent);
     border-bottom: 2px solid var(--border);
     padding-bottom: 0.75rem;
+    line-height: 1.3;
 }
 
 .slide h2 {
@@ -322,13 +369,15 @@ body {
     background: var(--bg);
     border: 2px solid var(--border);
     border-radius: 8px;
-    padding: 0.75rem 1rem;
+    padding: 1rem;
     margin-bottom: 0.5rem;
     cursor: pointer;
     transition: all 0.2s;
     display: flex;
     align-items: center;
     gap: 0.75rem;
+    min-height: var(--touch-min);
+    font-size: 1rem;
 }
 
 .quiz-option:hover {
@@ -461,24 +510,29 @@ body {
 .nav-bar {
     background: var(--surface);
     border-top: 1px solid var(--border);
-    padding: 1rem 2rem;
+    padding: 0.5rem var(--content-padding);
+    padding-bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px));
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 1rem;
+    gap: 0.5rem;
+    position: sticky;
+    bottom: 0;
+    z-index: 30;
 }
 
 .nav-btn {
     background: var(--accent);
     color: white;
     border: none;
-    padding: 0.6rem 1.5rem;
+    padding: 0.75rem 1.25rem;
     border-radius: 8px;
     font-size: 1rem;
     font-weight: 500;
     cursor: pointer;
     transition: background 0.2s;
-    min-width: 100px;
+    min-height: var(--touch-min);
+    flex: 1;
 }
 
 .nav-btn:hover { background: var(--accent-hover); }
@@ -627,11 +681,12 @@ body {
 }
 
 .matching-grid {
-    display: grid;
-    grid-template-columns: 1fr auto 1fr;
+    display: flex;
+    flex-direction: column;
     gap: 0.75rem;
-    align-items: center;
 }
+
+.matching-arrow { display: none; }
 
 .matching-left-item, .matching-right-item {
     background: var(--bg);
@@ -641,6 +696,10 @@ body {
     cursor: pointer;
     transition: all 0.2s;
     text-align: center;
+    min-height: var(--touch-min);
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .matching-left-item:hover, .matching-right-item:hover {
@@ -655,7 +714,7 @@ body {
 .matching-left-item.wrong { border-color: var(--error); animation: shake 0.3s; }
 .matching-right-item.wrong { border-color: var(--error); animation: shake 0.3s; }
 
-.matching-arrow { color: var(--text-muted); font-size: 1.2rem; text-align: center; }
+/* .matching-arrow hidden on mobile, restored on tablet+ via media query */
 
 @keyframes shake {
     0%, 100% { transform: translateX(0); }
@@ -737,11 +796,13 @@ body {
     background: none;
     border: 1px solid var(--border);
     border-radius: 4px;
-    padding: 0 6px;
-    font-size: 0.7rem;
+    padding: 0.25rem 0.5rem;
+    font-size: 0.9rem;
     cursor: pointer;
     color: var(--text-muted);
     line-height: 1.4;
+    min-width: var(--touch-min);
+    min-height: calc(var(--touch-min) / 2);
 }
 
 .ordering-arrow-btn:hover { border-color: #0ea5e9; color: #0ea5e9; }
@@ -786,7 +847,7 @@ body {
 
 .categorization-categories {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    grid-template-columns: 1fr;
     gap: 1rem;
     margin-bottom: 1rem;
 }
@@ -828,8 +889,11 @@ body {
     background: var(--bg);
     border: 2px solid var(--border);
     border-radius: 8px;
-    padding: 0.5rem 0.75rem;
+    padding: 0.75rem 1rem;
     cursor: pointer;
+    min-height: var(--touch-min);
+    display: flex;
+    align-items: center;
     transition: all 0.2s;
     font-size: 0.9rem;
 }
@@ -977,14 +1041,18 @@ body {
 .course-header {
     background: var(--surface);
     border-bottom: 1px solid var(--border);
-    padding: 0.5rem 1rem;
+    padding: 0 0.75rem;
+    padding-left: 3rem; /* space for hamburger toggle */
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 1rem;
+    gap: 0.5rem;
     font-size: 0.85rem;
-    height: 41px;
+    height: 48px;
     flex-shrink: 0;
+    position: sticky;
+    top: 0;
+    z-index: 40;
 }
 
 .course-header-left {
@@ -1021,6 +1089,7 @@ body {
 }
 
 .chapter-nav-btn {
+    display: none; /* shown on desktop via media query */
     color: var(--text);
     text-decoration: none;
     padding: 0.3rem 0.6rem;
@@ -1217,10 +1286,12 @@ body {
     margin: 1rem 0;
     border: 1px solid var(--border);
     border-radius: 12px;
-    padding: 2rem;
+    padding: 1rem;
     background: var(--surface);
     overflow: auto;
-    max-height: 600px;
+    max-height: 60vh;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-x pan-y pinch-zoom;
 }
 
 .concept-map-svg {
@@ -1798,14 +1869,14 @@ body {
 }
 
 .confidence-dot {
-    width: 40px;
-    height: 40px;
+    width: var(--touch-min);
+    height: var(--touch-min);
     border-radius: 50%;
     border: 2px solid var(--border);
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 1rem;
+    font-size: 1.1rem;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.2s;
@@ -2466,44 +2537,151 @@ body {
     margin-left: 0.5rem;
 }
 
-/* ── Responsive ─────────────────────────────────────────────────────────── */
+/* ── Responsive: Mobile-first with 3 breakpoints ──────────────────────── */
 
-@media (max-width: 900px) {
-    .sidebar {
-        position: fixed;
-        left: -290px;
-        top: 41px;
-        height: calc(100vh - 41px);
-        z-index: 50;
-        transition: left 0.3s ease;
+/* ── Mobile progress bar (visible on phone/tablet, hidden on desktop) ── */
+.mobile-progress-bar {
+    position: sticky;
+    top: 48px;
+    left: 0;
+    right: 0;
+    height: var(--progress-height);
+    background: var(--border);
+    z-index: 39;
+}
+
+.mobile-progress-fill {
+    height: 100%;
+    background: var(--accent);
+    transition: width 0.3s ease;
+    border-radius: 0 2px 2px 0;
+}
+
+/* ── Feedback animations ───────────────────────────────────────────────── */
+@keyframes correctPulse {
+    0% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.4); }
+    70% { box-shadow: 0 0 0 12px rgba(34, 197, 94, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
+}
+
+@keyframes wrongShake {
+    0%, 100% { transform: translateX(0); }
+    20%, 60% { transform: translateX(-8px); }
+    40%, 80% { transform: translateX(8px); }
+}
+
+.quiz-option.correct { animation: correctPulse 0.6s ease-out; }
+.quiz-option.incorrect { animation: wrongShake 0.4s ease-out; }
+
+/* Drop target highlight for categorization */
+.categorization-bucket.cat-highlight {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.3);
+}
+.categorization-item.cat-selected {
+    border-color: var(--accent);
+    background: rgba(59, 130, 246, 0.1);
+}
+
+/* ── Tablet (640px+) ───────────────────────────────────────────────────── */
+@media (min-width: 640px) {
+    :root { --content-padding: 1.5rem; }
+    .slide { max-width: 640px; }
+
+    .matching-grid {
+        display: grid;
+        grid-template-columns: 1fr auto 1fr;
     }
-    .sidebar.open { left: 0; }
-    .sidebar-toggle { display: block; }
-    .slide-viewport { padding: 1.5rem 1rem; padding-top: 3.5rem; }
-    .slide h1 { font-size: 1.5rem; }
-    .nav-bar { padding: 0.75rem 1rem; }
-    .nav-btn { min-width: 80px; padding: 0.5rem 1rem; font-size: 0.85rem; }
-    .course-header { font-size: 0.8rem; padding: 0.4rem 0.75rem; }
-    .breadcrumb-current { max-width: 150px; }
-    .chapter-nav-btn { padding: 0.2rem 0.4rem; font-size: 0.75rem; }
-    .essay-container { padding: 1rem; }
-    .explain-textarea { font-size: 0.95rem; }
-    .tutor-chat-history { max-height: 300px; }
-    .chat-message { max-width: 90%; }
-    .review-rating-buttons { flex-wrap: wrap; }
-    .review-btn { min-width: 70px; padding: 0.6rem 1rem; font-size: 0.9rem; }
-    .review-links { flex-direction: column; }
-    .review-link-card { min-width: auto; }
-    .confidence-dots { gap: 0.3rem; }
-    .confidence-dot { width: 34px; height: 34px; font-size: 0.9rem; }
-    .mastery-stats { flex-direction: column; }
-    .mastery-stat-card { min-width: auto; }
-    .concept-map-container { padding: 1rem; }
-    .concept-map-container { max-height: 450px; }
-    .concept-graph-container { height: 350px; }
-    .mindmap-tree { max-height: 500px; }
-    .review-nav-badge { font-size: 0.7rem; padding: 0.1rem 0.4rem; }
-    .mastery-nav-indicator { font-size: 0.65rem; }
+    .matching-arrow { display: block; color: var(--text-muted); font-size: 1.2rem; text-align: center; }
+
+    .categorization-categories {
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    }
+
+    .section-divider { max-width: 640px; }
+}
+
+/* ── Desktop (1024px+) ─────────────────────────────────────────────────── */
+@media (min-width: 1024px) {
+    :root { --content-padding: 2rem 3rem; }
+
+    body {
+        overflow: hidden;
+        height: 100dvh;
+    }
+
+    .course-container {
+        flex-direction: row;
+        height: calc(100dvh - 48px);
+    }
+
+    .sidebar {
+        position: static;
+        left: 0;
+        width: 280px;
+        min-width: 280px;
+        height: auto;
+        max-width: none;
+        transition: none;
+    }
+    .sidebar-overlay { display: none !important; }
+    .sidebar-toggle { display: none; }
+    .sidebar-footer { display: none; } /* nav links in header on desktop */
+
+    .course-header {
+        padding-left: 1rem; /* no hamburger on desktop */
+    }
+    .chapter-nav-btn { display: inline-flex; }
+
+    .slide {
+        max-width: 900px;
+        background: transparent;
+        border: none;
+        border-radius: 0;
+        padding: 0;
+    }
+    .slide h1 { font-size: 2rem; }
+    .section-divider { max-width: 900px; }
+
+    .nav-bar {
+        position: static;
+        padding: 1rem 2rem;
+    }
+    .nav-btn { flex: none; min-width: 100px; }
+    .progress-info { display: flex; }
+
+    .mobile-progress-bar { display: none; }
+
+    .concept-map-container { padding: 2rem; max-height: 600px; }
+}
+
+/* ── Hide progress info on mobile (shown in top bar instead) ─────────── */
+.progress-info { display: none; }
+
+/* ── Review & essay mobile tweaks ────────────────────────────────────── */
+.essay-container { padding: 1rem; }
+.explain-textarea { font-size: 1rem; min-height: 120px; }
+.tutor-chat-history { max-height: 300px; }
+.chat-message { max-width: 90%; }
+.review-rating-buttons { flex-wrap: wrap; }
+.review-btn { min-width: 70px; padding: 0.6rem 1rem; font-size: 0.9rem; }
+.review-links { flex-direction: column; }
+.review-link-card { min-width: auto; }
+.mastery-stats { flex-direction: column; }
+.mastery-stat-card { min-width: auto; }
+.concept-graph-container { height: 350px; }
+.mindmap-tree { max-height: 500px; }
+.review-nav-badge { font-size: 0.7rem; padding: 0.1rem 0.4rem; }
+.mastery-nav-indicator { font-size: 0.65rem; }
+
+@media (min-width: 1024px) {
+    .essay-container { padding: 2rem; }
+    .review-links { flex-direction: row; }
+    .review-link-card { min-width: 200px; }
+    .mastery-stats { flex-direction: row; }
+    .mastery-stat-card { min-width: 150px; }
+    .concept-graph-container { height: 500px; }
+    .progress-info { display: flex; }
 }
 
 /* ── Verification banner (Gap 2) ─────────────────────────────────────── */

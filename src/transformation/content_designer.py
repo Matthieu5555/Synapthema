@@ -25,7 +25,7 @@ from collections import Counter
 
 from pydantic import BaseModel, Field, model_validator
 
-from src.extraction.types import Chapter, Section
+from src.extraction.types import Chapter, ImageRef, Section
 from src.transformation.analysis_types import (
     ChapterAnalysis,
     ConceptEntry,
@@ -43,10 +43,11 @@ from src.transformation.prompts import (
 )
 from src.transformation.types import (
     ELEMENT_BLOOM_MAP,
-    ELEMENT_ORDER,
+    ELEMENT_ROLE,
     ModuleBlueprint,
     ReinforcementTarget,
     ReinforcementTargetSet,
+    SectionBlueprint,
     SlideElement,
     Slide,
     TrainingElement,
@@ -109,30 +110,71 @@ class SectionResponse(BaseModel):
 
     @model_validator(mode="after")
     def enforce_element_distribution(self) -> "SectionResponse":
-        """Enforce minimum/maximum element type counts per section."""
+        """Enforce Brilliant-style exercise density per section."""
         counts = Counter(e.element_type for e in self.elements)
 
-        if counts.get("slide", 0) < 1:
-            raise ValueError("Section must contain at least 1 slide element")
+        teach_types = {"slide", "mermaid"}
+        practice_types = {
+            "quiz", "flashcard", "fill_in_the_blank", "matching", "ordering",
+            "categorization", "error_detection", "analogy",
+        }
+
+        teach_count = sum(counts.get(t, 0) for t in teach_types)
+        practice_count = sum(counts.get(t, 0) for t in practice_types)
+
+        if teach_count < 1:
+            raise ValueError("Section must contain at least 1 teaching element (slide/mermaid)")
+        if practice_count < 1:
+            raise ValueError("Section must contain at least 1 practice element")
         if counts.get("interactive_essay", 0) > 2:
             raise ValueError("Section must contain at most 2 interactive_essay elements")
 
-        assessment_types = {
-            "quiz", "flashcard", "fill_in_the_blank", "matching", "ordering",
-            "categorization", "error_detection", "analogy", "interactive_essay",
-        }
-        assessment_count = sum(counts.get(t, 0) for t in assessment_types)
-        if assessment_count < 1:
-            raise ValueError("Section must contain at least 1 assessment element")
+        # Log weak exercise density — prompt engineering handles the ratio,
+        # hard validation here just causes brittle retries.
+        if teach_count > 1 and practice_count / teach_count < 0.75:
+            logger.warning(
+                "Low exercise density: %d practice for %d teaching (%.1f:1 ratio)",
+                practice_count, teach_count, practice_count / teach_count,
+            )
+
+        # Warn on 3+ consecutive teaching elements — weak interleaving.
+        consecutive = 0
+        for e in self.elements:
+            if e.element_type in teach_types:
+                consecutive += 1
+            elif e.element_type != "section_intro":
+                consecutive = 0
+            if consecutive >= 3:
+                logger.warning(
+                    "3+ consecutive teaching elements — interleaving may be weak"
+                )
+                break
 
         return self
 
     @model_validator(mode="after")
-    def sort_elements_by_canonical_order(self) -> "SectionResponse":
-        """Sort elements by canonical pedagogical order as a safety net."""
-        self.elements.sort(
-            key=lambda e: ELEMENT_ORDER.get(e.element_type, 99)
-        )
+    def enforce_interleaved_order(self) -> "SectionResponse":
+        """Preserve LLM's teach-practice interleaving while anchoring bookend elements.
+
+        Core elements (slides + practice) keep their LLM-generated order intact
+        so teach-practice cycles are not destroyed. Only bookend elements are
+        moved to fixed positions: section_intro first, concept_map/flashcard/
+        interactive_essay at the end.
+        """
+        if not self.elements:
+            return self
+
+        anchor_end_roles = {"synthesis", "reinforce", "assess"}
+        intro = [e for e in self.elements if e.element_type == "section_intro"]
+        core = [
+            e for e in self.elements
+            if ELEMENT_ROLE.get(e.element_type) not in ({"intro"} | anchor_end_roles)
+        ]
+        synthesis = [e for e in self.elements if e.element_type == "concept_map"]
+        flashcards = [e for e in self.elements if e.element_type == "flashcard"]
+        essays = [e for e in self.elements if e.element_type == "interactive_essay"]
+
+        self.elements = intro + core + synthesis + flashcards + essays
         return self
 
 
@@ -158,6 +200,9 @@ def transform_chapter(
     extracted_dir: Path | None = None,
     vision_enabled: bool = False,
     max_workers: int = 4,
+    supplementary_context: str | None = None,
+    additional_chapters: list[tuple[int, Chapter]] | None = None,
+    additional_extracted_dirs: dict[int, Path] | None = None,
 ) -> TrainingModule:
     """Transform a book chapter into an interactive training module.
 
@@ -181,23 +226,34 @@ def transform_chapter(
         vision_enabled: If True and images exist, send them to the LLM as
             vision content blocks.
         max_workers: Maximum parallel LLM calls for section processing.
+        additional_chapters: Extra chapters from other books merged into
+            this module. Each entry is (book_index, Chapter).
+        additional_extracted_dirs: Per-book extracted dirs for additional
+            chapters' image paths. Maps book_index → Path.
 
     Returns:
         A TrainingModule with sections containing training elements.
     """
     module_title = blueprint.title if blueprint else chapter.title
 
+    additional_count = len(additional_chapters) if additional_chapters else 0
     logger.info(
-        "Transforming chapter %d: '%s' (%d sections%s%s)",
+        "Transforming chapter %d: '%s' (%d sections%s%s%s)",
         chapter.chapter_number,
         module_title,
         len(chapter.sections),
         ", with blueprint" if blueprint else "",
         ", with analysis" if chapter_analysis else "",
+        f", +{additional_count} additional chapters" if additional_count else "",
     )
 
     # Build a list of section inputs, filtering out unmatched/short sections
-    section_inputs = _prepare_section_inputs(chapter, blueprint)
+    section_inputs = _prepare_section_inputs(
+        chapter, blueprint,
+        additional_chapters=additional_chapters,
+        additional_extracted_dirs=additional_extracted_dirs,
+        primary_extracted_dir=extracted_dir,
+    )
 
     # Transform each section (parallel when max_workers > 1)
     training_sections = _fold_transform_sections(
@@ -207,6 +263,7 @@ def transform_chapter(
         extracted_dir=extracted_dir,
         vision_enabled=vision_enabled,
         max_workers=max_workers,
+        supplementary_context=supplementary_context,
     )
 
     total_elements = sum(len(s.elements) for s in training_sections)
@@ -227,8 +284,14 @@ def transform_chapter(
 def _prepare_section_inputs(
     chapter: Chapter,
     blueprint: ModuleBlueprint | None,
+    additional_chapters: list[tuple[int, Chapter]] | None = None,
+    additional_extracted_dirs: dict[int, Path] | None = None,
+    primary_extracted_dir: Path | None = None,
 ) -> list[_SectionInput]:
     """Build the list of section inputs from blueprint or rotation fallback.
+
+    When additional_chapters are provided (multi-doc merged modules), also
+    searches them for matching sections and merges text from both sources.
 
     Filters out unmatched and short sections up front.
     """
@@ -236,13 +299,35 @@ def _prepare_section_inputs(
 
     if blueprint and blueprint.sections:
         for section_bp in blueprint.sections:
+            # Try primary chapter first
             section = find_matching_section(chapter, section_bp)
+
+            # If not found in primary, search additional chapters
+            if section is None and additional_chapters:
+                for _bk_idx, add_ch in additional_chapters:
+                    section = find_matching_section(add_ch, section_bp)
+                    if section is not None:
+                        # Resolve image paths to absolute if from another book
+                        section = _resolve_additional_images(
+                            section, _bk_idx, additional_extracted_dirs,
+                        )
+                        break
+
             if section is None:
                 logger.warning(
-                    "Blueprint section '%s' not found in chapter, skipping",
+                    "Blueprint section '%s' not found in chapter or additional sources, skipping",
                     section_bp.source_section_title or section_bp.title,
                 )
                 continue
+
+            # If found in primary, also check additional chapters for a
+            # matching section to merge content from both sources
+            if additional_chapters:
+                section = _merge_additional_sections(
+                    section, section_bp, additional_chapters,
+                    additional_extracted_dirs,
+                )
+
             if len(section.text.strip()) < MIN_SECTION_TEXT_LENGTH:
                 logger.debug("Skipping short section: '%s' (%d chars)", section.title, len(section.text))
                 continue
@@ -281,6 +366,117 @@ def _prepare_section_inputs(
             ))
 
     return inputs
+
+
+def _resolve_additional_images(
+    section: Section,
+    book_idx: int,
+    additional_extracted_dirs: dict[int, Path] | None,
+) -> Section:
+    """Convert relative image paths to absolute for sections from additional books.
+
+    When a section comes from an additional chapter (different book), its image
+    paths are relative to that book's extraction directory. We convert them to
+    absolute paths so they resolve correctly regardless of which extracted_dir
+    is used for the module.
+    """
+    if not section.images or not additional_extracted_dirs:
+        return section
+    book_dir = additional_extracted_dirs.get(book_idx)
+    if not book_dir:
+        return section
+
+    resolved_images = tuple(
+        ImageRef(
+            path=book_dir / img.path,
+            page=img.page,
+            caption=img.caption,
+            bbox=img.bbox,
+        )
+        for img in section.images
+    )
+    return Section(
+        title=section.title,
+        level=section.level,
+        start_page=section.start_page,
+        end_page=section.end_page,
+        text=section.text,
+        images=resolved_images,
+        tables=section.tables,
+        subsections=section.subsections,
+    )
+
+
+def _merge_additional_sections(
+    primary_section: Section,
+    section_bp: SectionBlueprint,
+    additional_chapters: list[tuple[int, Chapter]],
+    additional_extracted_dirs: dict[int, Path] | None,
+) -> Section:
+    """Merge content from additional chapters into the primary section.
+
+    Searches additional chapters for sections matching the same blueprint.
+    If found, merges their text (with source attribution) and combines
+    images and tables.
+    """
+    merged_texts: list[str] = []
+    merged_images: list[ImageRef] = list(primary_section.images)
+    merged_tables = list(primary_section.tables)
+    found_additional = False
+
+    for bk_idx, add_ch in additional_chapters:
+        add_section = find_matching_section(add_ch, section_bp)
+        if add_section is None:
+            continue
+
+        found_additional = True
+        merged_texts.append(add_section.text)
+
+        # Resolve additional images to absolute paths
+        if add_section.images and additional_extracted_dirs:
+            book_dir = additional_extracted_dirs.get(bk_idx)
+            if book_dir:
+                for img in add_section.images:
+                    merged_images.append(ImageRef(
+                        path=book_dir / img.path,
+                        page=img.page,
+                        caption=img.caption,
+                        bbox=img.bbox,
+                    ))
+            else:
+                merged_images.extend(add_section.images)
+        elif add_section.images:
+            merged_images.extend(add_section.images)
+
+        merged_tables.extend(add_section.tables)
+
+    if not found_additional:
+        return primary_section
+
+    # Build merged text with clear source attribution
+    combined_text = (
+        f"=== PRIMARY SOURCE ===\n{primary_section.text}\n\n"
+        f"=== ADDITIONAL SOURCE(S) ===\n" + "\n\n".join(merged_texts)
+    )
+
+    logger.info(
+        "Merged section '%s': primary (%d chars) + %d additional source(s) (%d chars total)",
+        primary_section.title,
+        len(primary_section.text),
+        len(merged_texts),
+        len(combined_text),
+    )
+
+    return Section(
+        title=primary_section.title,
+        level=primary_section.level,
+        start_page=primary_section.start_page,
+        end_page=primary_section.end_page,
+        text=combined_text,
+        images=tuple(merged_images),
+        tables=tuple(merged_tables),
+        subsections=primary_section.subsections,
+    )
 
 
 class _SectionContext(NamedTuple):
@@ -386,6 +582,7 @@ def _fold_transform_sections(
     extracted_dir: Path | None = None,
     vision_enabled: bool = False,
     max_workers: int = 4,
+    supplementary_context: str | None = None,
 ) -> list[TrainingSection]:
     """Transform sections with parallel LLM calls.
 
@@ -433,6 +630,7 @@ def _fold_transform_sections(
             document_type=document_type,
             extracted_dir=extracted_dir,
             vision_enabled=vision_enabled,
+            supplementary_context=supplementary_context,
         )
 
         _shuffle_quiz_options(elements)
@@ -636,6 +834,7 @@ def _transform_section(
     document_type: str | None = None,
     extracted_dir: Path | None = None,
     vision_enabled: bool = False,
+    supplementary_context: str | None = None,
 ) -> list[TrainingElement]:
     """Transform a single section into training elements via LLM.
 
@@ -676,6 +875,7 @@ def _transform_section(
         document_type=document_type,
         tables=list(section.tables) if section.tables else None,
         images=list(section.images) if section.images else None,
+        supplementary_context=supplementary_context,
     )
 
     # If vision is enabled and the section has images, build a multimodal prompt

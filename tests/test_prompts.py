@@ -146,7 +146,7 @@ class TestNewElementTypes:
         assert "interactive_essay" in SYSTEM_PROMPT
 
     def test_element_ordering_instruction_in_system_prompt(self) -> None:
-        assert "Element Ordering" in SYSTEM_PROMPT
+        assert "Teach-Practice Cycles" in SYSTEM_PROMPT
 
 
 class TestConceptContext:
@@ -439,7 +439,7 @@ class TestFocusConceptsPromptBlock:
         assert "**basis**" in result
         assert "**span**" in result
         assert "ONLY" in result
-        assert "5-10 minutes" in result
+        assert "3-5 minutes" in result
 
     def test_no_focus_block_when_none(self) -> None:
         result = build_section_prompt(
