@@ -1,0 +1,10 @@
+<span class="element-badge intro-badge">Introduction</span>
+<div class="section-intro-container">
+    <h1>{{ element.section_intro.title }}</h1>
+    <div class="section-intro-content">
+        {{ element.section_intro.content_html|safe }}
+    </div>
+    {% if element.section_intro.source_pages %}
+    <div class="source-attribution">{{ element.section_intro.source_pages }}</div>
+    {% endif %}
+</div>

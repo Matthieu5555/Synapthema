@@ -6,7 +6,6 @@ Launch with: streamlit run app.py
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 import os
 import tempfile
@@ -19,9 +18,7 @@ import streamlit as st
 from dotenv import load_dotenv
 
 from src.config import Config, ConfigError, InputSource, resolve_llm_provider
-from src.pipeline import run_pipeline
-from src.rendering.html_generator import render_course
-from src.transformation.types import TrainingModule
+from src.pipeline import rerender_from_json, run_pipeline
 
 # ── Load .env early ──────────────────────────────────────────────────────────
 
@@ -72,19 +69,6 @@ def _write_uploads_to_disk(
         target.write_bytes(uf.getbuffer())
         paths.append(target)
     return paths
-
-
-def _filter_modules(
-    modules: list[TrainingModule],
-    enabled_types: set[str],
-) -> list[TrainingModule]:
-    """Remove training elements whose type is not in the enabled set."""
-    for module in modules:
-        for section in module.sections:
-            section.elements = [
-                e for e in section.elements if e.element_type in enabled_types
-            ]
-    return modules
 
 
 def _deterministic_temp_dir(pdf_paths: list[Path]) -> Path:
@@ -257,16 +241,10 @@ if st.button(
         # Post-filter: remove disabled exercise types
         all_types_enabled = enabled_types == set(ELEMENT_TYPES.keys())
         if not all_types_enabled:
-            training_json = extracted_dir / "training_modules.json"
-            data = json.loads(training_json.read_text(encoding="utf-8"))
-            modules = [TrainingModule.model_validate(m) for m in data]
-            modules = _filter_modules(modules, enabled_types)
-
-            index_path = render_course(
-                modules=modules,
-                output_dir=output_dir,
-                extracted_dir=extracted_dir,
-                embed_images=config.embed_images,
+            excluded = set(ELEMENT_TYPES.keys()) - enabled_types
+            index_path = rerender_from_json(
+                config,
+                exclude_element_types=excluded,
             )
 
         # Success output

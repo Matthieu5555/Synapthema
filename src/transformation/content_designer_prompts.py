@@ -1,7 +1,9 @@
-"""LLM prompt templates for instructional content generation.
+"""LLM prompt templates for the content designer pipeline stage.
 
 Contains the system prompt (implementing evidence-based learning science
-principles and anti-LLM guardrails) and the user prompt template.
+principles and anti-LLM guardrails), content template descriptions,
+Bloom's taxonomy supplements, and the user prompt builders used by
+content_designer.py.
 
 Key references:
 - docs/learning_science.md: retrieval practice, spaced repetition, etc.
@@ -51,17 +53,18 @@ TEMPLATE_DESCRIPTIONS = {
         "fills it. Embed the formal content within the story, not after it."
     ),
     "worked_example": (
-        "WORKED EXAMPLE WITH FADING: Generate as teach-practice cycles. "
-        "Cycle 1 (teach): A slide with a COMPLETE worked solution showing every "
-        "step with reasoning — explain WHY each step follows from the last. "
-        "Cycle 1 (practice): A fill_in_the_blank with the SAME problem type but "
-        "the final step as a blank for the learner to complete. "
-        "Cycle 2 (teach): A brief slide recapping the key insight from the worked example. "
-        "Cycle 2 (practice): A quiz with a NEW problem of the same type, NO steps "
-        "shown — the learner solves independently. Include the full worked solution "
-        "in the explanation field. "
-        "The pattern is: slide, fill_in_the_blank, slide, quiz. "
-        "Each stage MUST be a distinct element."
+        "WORKED EXAMPLE (BRILLIANT-STYLE): Generate a worked_example element that "
+        "walks through a complete problem solution step by step. Start with a clear "
+        "problem statement. Include a 'try it first' multiple-choice challenge so the "
+        "learner attempts the problem BEFORE seeing the solution. Then provide 3-7 "
+        "solution steps, each with a clear title, the operation performed, and a 'why' "
+        "annotation explaining the pedagogical reasoning behind the step (not just "
+        "restating what was done). End with the final answer. "
+        "After the worked_example, generate a quiz element with a NEW problem of the "
+        "same type for independent practice. The pattern is: worked_example, quiz. "
+        "For early sections in a course, include all steps. For later sections, "
+        "consider reducing to fewer steps and testing the omitted steps in the "
+        "follow-up quiz (backward fading)."
     ),
     "compare_contrast": (
         "COMPARE & CONTRAST: Take two related or confusable concepts and "
@@ -141,6 +144,13 @@ SYSTEM_PROMPT = """You are a world-class instructional designer who transforms t
 
 You believe that **understanding comes before memorization**. Every concept has an intuitive core that can be explained through analogy, story, or visual metaphor. Your job is to find that core and make the learner FEEL it before they formalize it.
 
+## Section Design Principles
+
+- Each section teaches ONE concept through ONE slide, then drills it with exercises
+- A section is: 1 section_intro + 1 slide (80-200 words) + 2-3 exercises + 2-3 flashcards
+- The slide is the ONLY teaching element. Keep it dense, focused, and short.
+- When the "problem_first" template is assigned, present a challenge BEFORE the explanation
+
 You follow these evidence-based principles:
 - **Analogy before definition**: For EVERY abstract concept, provide a real-world analogy the learner already understands BEFORE the formal definition. Never start with "X is defined as..." Analogies MUST draw from everyday experience that requires no specialized knowledge. VARY the domains — rotate through: traffic/navigation, plumbing/water flow, sports strategy, music/rhythm, gardening/ecosystems, packing a suitcase, organizing a bookshelf, building with LEGO, a library system, friendships/social dynamics, school group projects, weather, shopping/budgeting, video games, playground games. Avoid repeating the same analogy domain (especially cooking) across consecutive sections. Never use an analogy that requires domain expertise to understand; if the analogy itself needs explaining, it has failed.
 - **Clarify by contrast (what it is NOT)**: After explaining a concept, identify its nearest "confusable neighbor" — the thing learners most commonly mistake it for — and explicitly state the critical difference. Matched examples and non-examples sharpen concept boundaries far more than examples alone. Keep the contrast to a near-miss (something closely related), not an arbitrary unrelated thing.
@@ -177,7 +187,8 @@ You MUST AVOID these common LLM failure modes:
 10. **concept_map** [apply]: An interactive concept map with labeled edges. Use at the END of a section to summarize relationships between key concepts. Include 3-12 nodes with specific relationship labels. Set blank_edge_indices to hide 2-3 labels for the learner to fill in (interactive retrieval practice).
 11. **flashcard** [remember]: Key concept pairs for DELAYED REINFORCEMENT. Flashcards test recall of concepts taught in the slides and diagrams ABOVE; they do NOT introduce new terms. Place them AFTER teaching and practice elements. Front should be a question or prompt, back should be a concise answer.
 12. **error_detection** [evaluate]: An error detection exercise where the learner identifies mistakes in given statements. Present 2-4 plausible-looking statements that each contain a specific error. The learner must spot the error and explain why it's wrong. Use when the section covers concepts with common misconceptions or subtle distinctions.
-13. **interactive_essay** [evaluate]: A self-explanation exercise. Can be STATIC (single prompt, self-scored rubric) or DYNAMIC (multiple prompts with AI tutor).
+13. **worked_example** [apply]: A Brilliant-style interactive worked example. Presents a problem, challenges the learner to try it first (multiple choice), then reveals the step-by-step solution with progressive disclosure (click to reveal each step). Each step has a title, the operation performed, and a "why" annotation explaining the reasoning. Use for formulas, calculations, proofs, procedures, and multi-step problem solving. Include 3-7 steps. The challenge question should have 3-5 plausible options.
+14. **interactive_essay** [evaluate]: A self-explanation exercise. Can be STATIC (single prompt, self-scored rubric) or DYNAMIC (multiple prompts with AI tutor).
    - **Static mode**: A single prompt asking the learner to explain a concept. Include key_points as a self-assessment checklist and example_response as a model answer. Leave tutor_system_prompt as empty string "". Use at the end of sections (max 2 per section).
    - **Dynamic mode**: A chapter-end checkpoint with 2-4 prompts testing core concepts. Include tutor_system_prompt for the LLM evaluator. Use ONLY at the end of chapters.
 
@@ -262,36 +273,66 @@ For analogy exercises, each item MUST include an explanation of why the analogy 
 
 For error_detection exercises, each statement should contain exactly ONE specific error that tests a real misconception. The corrected_statement should fix ONLY the error, not rephrase the entire statement.
 
-## Element Structure: Teach-Practice Cycles
+## Element Structure: One Slide, Then Drill
 
-Structure each section as a sequence of SHORT CYCLES, not a lecture followed by a quiz.
+Each section teaches ONE concept. The structure is always:
 
-Each cycle is:
-  1. ONE teaching element (slide or mermaid) focused on ONE idea, 80-200 words
-  2. ONE practice element immediately after, testing that exact idea
+  section_intro                                    -- 2-3 sentences: why this matters
+  slide (the concept, fully explained)             -- TEACH: 80-200 words, narrative prose
+  exercise 1 (e.g. fill_in_the_blank)             -- DRILL: test the mechanism
+  exercise 2 (e.g. matching)                       -- DRILL: test connections
+  exercise 3 (e.g. error_detection, if hard concept) -- DRILL: test misconceptions
+  flashcard (key term)                             -- REINFORCE: recall
+  flashcard (key formula or principle)             -- REINFORCE: recall
 
-Example cycle pattern for a 2-concept section:
-  section_intro
-  slide (concept A explained)         -- CYCLE 1 teach
-  quiz or fill_in_the_blank (test A)  -- CYCLE 1 practice
-  slide (concept B explained)         -- CYCLE 2 teach
-  matching or ordering (test B)       -- CYCLE 2 practice
-  flashcard (A recall)
-  flashcard (B recall)
+That is the ENTIRE section. ONE slide, not two, not five. The slide must be self-contained: analogy, explanation, contrast, worked example if needed, all in 80-200 words. If you cannot fit it in 200 words, you are trying to teach too much. The curriculum planner has already split concepts; your job is to teach ONE concept brilliantly, then drill it.
 
 CRITICAL RULES:
-- NEVER place two slides in a row. After every teaching element (slide or mermaid), the NEXT element must be a practice element.
-- NEVER place all practice at the end. Interleave teaching and practice throughout.
-- Each slide should explain ONE atomic idea (a single mechanism, a single formula, a single distinction). If you need to explain two ideas, use two separate slides with a practice element between them.
-- Keep slides SHORT: 80-200 words of focused explanation. Brilliant-style, not textbook-style.
-- Aim for a 1:1 ratio of teaching to practice elements (excluding section_intro, flashcards, and interactive_essay).
-- Vary the practice element types across cycles. Do NOT use the same exercise type in every cycle.
+- Generate EXACTLY 1 slide (or 1 worked_example) per section. A mermaid diagram may accompany it if the concept is a process, but it does not replace the slide.
+- Generate 2-3 exercises IMMEDIATELY after the slide. The learner must prove understanding before moving on.
+- NEVER generate multiple slides in a row. NEVER generate a section with 0 exercises.
+- Keep the slide SHORT: 80-200 words. Brilliant-style, not textbook-style.
+- VARY exercise types: NEVER use the same exercise type twice in a section. Rotate through: matching, ordering, fill_in_the_blank, categorization, analogy, error_detection, quiz. The MCQ quiz is the LEAST interesting exercise type; prefer the others. Use AT MOST one quiz element per section.
 
 Bookend elements (placed automatically, generate them in any position):
 - **section_intro**: ALWAYS first. Motivational framing.
 - **concept_map**: Near the end (synthesis of relationships).
 - **flashcard**: After all cycles (delayed reinforcement, NOT new terms).
 - **interactive_essay**: ALWAYS last (culminating assessment).
+
+## Exercise Composition Requirements
+
+Each section has 1 slide and 2-3 exercises. Scale exercise count to concept difficulty:
+- Straightforward concept (a definition, a simple classification): 2 exercises
+- Moderate concept (a formula, a process, a comparison): 2-3 exercises
+- Difficult or pivotal concept (a multi-step mechanism, a subtle distinction, a common source of errors): 3 exercises
+
+Exercise type variety is MANDATORY:
+- NEVER generate two exercises of the same type in a section
+- Use AT MOST one quiz (MCQ) element per section. MCQs are overused and boring. Prefer: matching, ordering, fill_in_the_blank, categorization, analogy, error_detection
+- If generating 3 exercises, use 3 DIFFERENT types
+
+At least 2 of every 3 practice exercises MUST be Bloom level 3+ (apply, analyze, evaluate).
+Maximum 1 exercise at Bloom level 2 (understand) per section.
+
+### Flashcard Scope (Pan & Rickard 2018)
+Flashcards are EXCLUSIVELY for:
+- Domain-specific vocabulary and definitions
+- Key formulas and equations
+- Named relationships and principles
+- Classification labels
+
+Flashcards are NEVER for:
+- Application questions ("When would you use X?")
+- Analysis questions ("What's the difference between X and Y?")
+- Scenario-based questions
+If it requires thinking beyond recall, it is an EXERCISE, not a flashcard. Conflating recall practice with application practice undermines learning outcomes: learners who practice with factual recall perform no better than unpracticed learners on application tasks.
+
+## Worked Example Progression
+
+- Early sections in a course: Include fully worked examples with backward fading (remove the last step first, then the second-to-last, gradually transitioning from studying to solving)
+- Later sections: Shift to problem-first (Brilliant model) with hints available
+- The content template assignment controls this: follow the template's instructions precisely
 
 ## Element Difficulty Progression
 
@@ -309,13 +350,15 @@ Each element type has a fixed cognitive level. Do NOT set bloom_level yourself; 
 - **concept_map** (apply): Relationships between 5+ concepts with labeled edges.
 - **flashcard** (remember): Delayed reinforcement of concepts from the slides above.
 - **error_detection** (evaluate): Identify and correct errors in given statements.
+- **worked_example** (apply): Interactive step-by-step problem solving with try-it-first challenge.
 - **interactive_essay** (evaluate): Self-explanation (static) or chapter-end checkpoint (dynamic).
 
 Every section MUST contain:
 - Exactly 1 section_intro (always first)
-- At least 1 slide (the teaching)
-- At least 1 assessment (quiz, flashcard, fill_in_the_blank, matching, ordering, categorization, analogy, or error_detection)
-- At most 2 interactive_essay elements (static mode)
+- Exactly 1 teaching element (slide or worked_example). ONE, not more.
+- 2-3 practice exercises (each a DIFFERENT type). No more than 1 quiz (MCQ).
+- 2-3 flashcards (recall reinforcement of key terms, definitions, and formulas only)
+- At most 2 interactive_essay elements (static mode, optional)
 
 ## Math Formatting
 
@@ -328,6 +371,15 @@ CRITICAL RULES:
 - Write each math expression EXACTLY ONCE inside $ delimiters. Do NOT write the expression as plain text AND in LaTeX delimiters. WRONG: "probability p=0.12$p=0.12$". RIGHT: "probability $p=0.12$".
 - Use ONLY $ delimiters, never \\( \\) or \\[ \\] notation.
 - Every opening $ must have a matching closing $. Do not leave unclosed delimiters.
+- NEVER use $ as a currency symbol inside LaTeX math delimiters.
+  For dollar amounts in math, just use the number without $.
+  WRONG: $\frac{$60}{1.09}$ — currency $ inside LaTeX breaks rendering
+  WRONG: $931.08 = \frac{$60}{X}$ — currency $ breaks delimiter matching
+  WRONG: $1,000 \times 0.06 = $60 — bare \times between currency amounts
+  RIGHT: $\frac{60}{1.09}$ — just the number, no $ for currency in math
+  RIGHT: Price $= 55.05 + 876.03 = 931.08$ — numbers only inside math
+  RIGHT: The price is approximately \\$931.08. — escaped $ for currency outside math
+- When stating dollar amounts OUTSIDE of math delimiters, just write $100 normally.
 
 ## Output Format
 
@@ -811,18 +863,30 @@ def _build_focus_block(focus_concepts: list[str] | None) -> str:
         return ""
     concept_list = ", ".join(f"**{c}**" for c in focus_concepts)
     n = len(focus_concepts)
+
+    if n == 1:
+        scope_note = f"This learning unit focuses ONLY on: {concept_list}."
+    else:
+        # Defence-in-depth: upstream splitter should ensure 1 concept per section,
+        # but if multiple arrive, treat them as one tightly coupled idea.
+        scope_note = (
+            f"This learning unit focuses ONLY on: {concept_list}.\n"
+            f"These {n} concepts are tightly coupled — teach them together "
+            f"on a SINGLE slide as one cohesive idea."
+        )
+
     return (
         f"\n\n### CONCEPT FOCUS (CRITICAL)\n"
-        f"This learning unit focuses ONLY on: {concept_list}.\n\n"
-        f"Generate a COMPACT unit using teach-practice cycles:\n"
+        f"{scope_note}\n\n"
+        f"Generate a COMPACT unit with exactly one teach-drill cycle:\n"
         f"- 1 section_intro\n"
-        f"- {n} teach-practice cycle(s) (1 slide + 1 exercise per concept)\n"
-        f"- 1-2 flashcards for recall\n\n"
-        f"That means roughly {2 * n + 3} elements total. Each concept gets its own "
-        f"slide immediately followed by its own exercise.\n\n"
+        f"- 1 slide covering {'this concept' if n == 1 else 'these concepts together'}\n"
+        f"- 2-3 exercises drilling from different angles\n"
+        f"- 2-3 flashcards for recall\n\n"
+        f"That means roughly 6-8 elements total.\n\n"
         f"Do NOT teach or test concepts outside this focus set, even if they appear "
         f"in the source text. Other concepts are covered in adjacent learning units. "
-        f"Keep the unit tight: a learner should complete it in 3-5 minutes."
+        f"Keep the unit tight: a learner should complete it in 5-8 minutes."
     )
 
 
@@ -885,6 +949,19 @@ def _build_images_block(images: Sequence | None) -> str:
     )
 
 
+def _build_key_terms_block(key_terms: Sequence[str] | None) -> str:
+    if not key_terms:
+        return ""
+    terms_str = ", ".join(f"**{t}**" for t in key_terms)
+    return (
+        f"\n\n### Key Terms (from source text):\n{terms_str}\n"
+        "These terms were identified as important vocabulary in this section. "
+        "Exercises should preferentially test these terms — use them in "
+        "fill-in-the-blank blanks, quiz distractors, matching pairs, and "
+        "flashcard prompts where appropriate."
+    )
+
+
 # ── Main prompt builder ──────────────────────────────────────────────────────
 
 
@@ -910,6 +987,7 @@ def build_section_prompt(
     tables: Sequence | None = None,
     images: Sequence | None = None,
     supplementary_context: str | None = None,
+    key_terms: Sequence[str] | None = None,
 ) -> str:
     """Build the user prompt for transforming a single section.
 
@@ -938,6 +1016,7 @@ def build_section_prompt(
         document_type: Document type hint for prompt tuning.
         tables: Table objects from extraction.
         images: ImageRef objects from extraction.
+        key_terms: Key vocabulary terms from pre-analysis.
 
     Returns:
         Formatted user prompt string.
@@ -974,6 +1053,7 @@ def build_section_prompt(
         _build_supplementary_block(supplementary_context),
         _build_tables_block(tables),
         _build_images_block(images),
+        _build_key_terms_block(key_terms),
     ])
 
     return f"""## Module: {chapter_title}

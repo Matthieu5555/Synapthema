@@ -4,7 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Spaced Review — {{ course_title }}</title>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.25/dist/katex.min.css">
+    <link rel="preload" href="https://cdn.jsdelivr.net/npm/katex@0.16.25/dist/fonts/KaTeX_Main-Regular.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="preload" href="https://cdn.jsdelivr.net/npm/katex@0.16.25/dist/fonts/KaTeX_Math-Italic.woff2" as="font" type="font/woff2" crossorigin>
     <style>
 {{ css|safe }}
     </style>
@@ -20,7 +22,9 @@
 </head>
 <body style="overflow-y: auto; height: auto;">
 
-<nav class="course-header">
+<a class="skip-link" href="#main-content">Skip to content</a>
+
+<nav class="course-header" aria-label="Course navigation">
     <div class="course-header-left">
         <a href="index.html" class="breadcrumb-home" title="Back to course index">{{ course_title }}</a>
         <span class="breadcrumb-sep">/</span>
@@ -33,7 +37,7 @@
     </div>
 </nav>
 
-<div class="index-container">
+<main class="index-container" id="main-content">
     <h1 class="index-title">Spaced Review</h1>
     <p class="index-subtitle" id="reviewSubtitle">Loading flashcards…</p>
 
@@ -48,7 +52,7 @@
                 performance — items you find difficult come back sooner, easy ones are
                 spaced further apart.
             </p>
-            <p style="color:var(--text-muted); font-size:0.85rem; margin-top:0.5rem;">
+            <p style="color:var(--color-fg-muted); font-size:var(--text-sm); margin-top:0.5rem;">
                 Based on: Cepeda et al. (2006) meta-analysis of 184 studies;
                 Rowland (2014) testing effect meta-analysis showing g&nbsp;=&nbsp;0.50
                 effect size.
@@ -63,15 +67,15 @@
     </div>
 
     <div id="emptyState" style="display:none; text-align:center; margin-top:3rem;">
-        <p style="font-size:1.2rem; color:var(--text-muted);">No review items available yet.</p>
-        <p style="color:var(--text-muted); margin-top:0.5rem;">Visit chapter pages to build your review deck.</p>
+        <p style="font-size:var(--text-xl); color:var(--color-fg-muted);">No review items available yet.</p>
+        <p style="color:var(--color-fg-muted); margin-top:0.5rem;">Visit chapter pages to build your review deck.</p>
         <a href="index.html" class="nav-btn" style="display:inline-block; margin-top:1.5rem; text-decoration:none;">Back to Course</a>
     </div>
 
     <div id="doneState" style="display:none; text-align:center; margin-top:3rem;">
-        <p style="font-size:1.5rem; color:var(--success); font-weight:700;">All caught up!</p>
-        <p style="color:var(--text-muted); margin-top:0.5rem;">No items due for review. Come back later.</p>
-        <p style="color:var(--text-muted); margin-top:0.25rem;" id="nextDueText"></p>
+        <p style="font-size:var(--text-3xl); color:var(--color-success); font-weight:700;">All caught up!</p>
+        <p style="color:var(--color-fg-muted); margin-top:0.5rem;">No items due for review. Come back later.</p>
+        <p style="color:var(--color-fg-muted); margin-top:0.25rem;" id="nextDueText"></p>
         <a href="index.html" class="nav-btn" style="display:inline-block; margin-top:1.5rem; text-decoration:none;">Back to Course</a>
     </div>
 
@@ -106,7 +110,7 @@
 
         <div class="review-progress" id="reviewProgress"></div>
     </div>
-</div>
+</main>
 
 <script>
 // ── Learner Model ─────────────────────────────────────────────────────────
@@ -116,8 +120,6 @@ function renderMath(el) {
     if (typeof renderMathInElement === 'function') {
         renderMathInElement(el, {
             delimiters: [
-                {left: '$$', right: '$$', display: true},
-                {left: '$', right: '$', display: false},
                 {left: '\\(', right: '\\)', display: false},
                 {left: '\\[', right: '\\]', display: true}
             ],
@@ -177,17 +179,29 @@ window.__lxpToggleTheme = function() {
     var REVIEW_LOG_KEY = 'lxp_' + COURSE_SLUG + '_review_log';
     var learnerModel = __lxpCreateLearnerModel(COURSE_SLUG);
 
+    // ── Named constants ──────────────────────────────────────────────────
+    var MAX_NEW_ITEMS_PER_SESSION = 20;
+    var MAX_EXERCISE_ATTEMPTS = 3;
+    var MIN_EXPLAIN_WORDS = 3;
+
     // Load both flashcards and exercises
     var allCards = {};
     try { allCards = JSON.parse(localStorage.getItem(FLASHCARD_KEY) || '{}'); } catch(e) {}
     var allExercises = [];
     try { allExercises = JSON.parse(localStorage.getItem(EXERCISES_KEY) || '[]'); } catch(e) {}
 
-    // Filter exercises to those with FSRS fields
-    var fsrsExercises = allExercises.filter(function(ex) { return ex.reps !== undefined; });
+    // Filter exercises to those with FSRS fields and that the user has engaged with
+    var fsrsExercises = allExercises.filter(function(ex) {
+        return ex.reps !== undefined && (ex.addedToReview || ex.reps > 0);
+    });
 
     var cardKeys = Object.keys(allCards);
-    var totalItems = cardKeys.length + fsrsExercises.length;
+    // Count only intentional items (not auto-cached unreviewed)
+    var intentionalCards = cardKeys.filter(function(key) {
+        var c = allCards[key];
+        return !(c.autoCache && !c.addedToReview && c.reps === 0);
+    });
+    var totalItems = intentionalCards.length + fsrsExercises.length;
 
     if (totalItems === 0) {
         document.getElementById('emptyState').style.display = 'block';
@@ -203,6 +217,8 @@ window.__lxpToggleTheme = function() {
 
     cardKeys.forEach(function(key) {
         var c = allCards[key];
+        // Skip auto-cached items that user never engaged with
+        if (c.autoCache && !c.addedToReview && c.reps === 0) return;
         var entry = { source: 'flashcard', key: key, item: c, concepts: c.concepts || [] };
         if (c.reps === 0) {
             newItems.push(entry);
@@ -247,7 +263,7 @@ window.__lxpToggleTheme = function() {
     dueItems.sort(function(a, b) { return itemPriority(a) - itemPriority(b); });
     newItems.sort(function(a, b) { return itemPriority(a) - itemPriority(b); });
 
-    var sessionQueue = dueItems.concat(newItems.slice(0, 20));
+    var sessionQueue = dueItems.concat(newItems.slice(0, MAX_NEW_ITEMS_PER_SESSION));
 
     // Filter by concept if ?concept= query parameter is set
     var urlParams = new URLSearchParams(window.location.search);
@@ -545,7 +561,7 @@ window.__lxpToggleTheme = function() {
         for (var i = 0; i < left.length; i++) {
             html += '<div style="display:flex;gap:0.5rem;align-items:center;padding:0.5rem 0;">' +
                     '<strong>' + (left[i] || '') + '</strong>' +
-                    ' <span style="color:var(--text-muted);">&rarr;</span> ' +
+                    ' <span style="color:var(--color-fg-muted);">&rarr;</span> ' +
                     '<span>' + (right[i] || '') + '</span></div>';
         }
         html += '</div><button class="quiz-check-btn" onclick="checkReviewMatching()">I reviewed these matches</button></div>';
@@ -572,7 +588,7 @@ window.__lxpToggleTheme = function() {
         var textarea = container.querySelector('.self-explain-input');
         textarea.addEventListener('input', function() {
             var words = textarea.value.trim().split(/\s+/).filter(function(w) { return w.length > 0; });
-            container.querySelector('.quiz-check-btn').disabled = words.length < 3;
+            container.querySelector('.quiz-check-btn').disabled = words.length < MIN_EXPLAIN_WORDS;
         });
     }
 
@@ -639,7 +655,7 @@ window.__lxpToggleTheme = function() {
             else { item.classList.remove('ordering-correct'); item.classList.add('ordering-wrong'); allCorrect = false; }
         });
         var btn = container.querySelector('.quiz-check-btn');
-        if (allCorrect || attempts >= 3) {
+        if (allCorrect || attempts >= MAX_EXERCISE_ATTEMPTS) {
             btn.style.display = 'none';
             if (!allCorrect) {
                 var list = container.querySelector('.ordering-list');
@@ -725,7 +741,7 @@ window.__lxpToggleTheme = function() {
         var poolItems = container.querySelectorAll('.categorization-pool .categorization-item');
         if (poolItems.length > 0) allCorrect = false;
         var btn = container.querySelector('.quiz-check-btn');
-        if (allCorrect || attempts >= 3) {
+        if (allCorrect || attempts >= MAX_EXERCISE_ATTEMPTS) {
             btn.style.display = 'none';
             if (!allCorrect) {
                 container.querySelectorAll('.categorization-item.cat-wrong').forEach(function(item) {
@@ -841,7 +857,7 @@ window.__lxpToggleTheme = function() {
                 var correctIdx = parseInt(qDiv.dataset.correct);
                 var att = parseInt(qDiv.dataset.attempts) + 1;
                 qDiv.dataset.attempts = att;
-                if (selIdx === correctIdx || att >= 3) {
+                if (selIdx === correctIdx || att >= MAX_EXERCISE_ATTEMPTS) {
                     qDiv.classList.add('analogy-answered');
                     qDiv.querySelectorAll('.analogy-option')[correctIdx].classList.add('analogy-correct');
                     if (selIdx !== correctIdx) selected.classList.add('analogy-wrong');
@@ -877,8 +893,8 @@ window.__lxpToggleTheme = function() {
 
 {% include '_help_modal.html' %}
 
-<script src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/contrib/auto-render.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.25/dist/katex.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.25/dist/contrib/auto-render.min.js"></script>
 
 </body>
 </html>

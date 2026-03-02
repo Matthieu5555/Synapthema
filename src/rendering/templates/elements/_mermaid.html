@@ -1,0 +1,9 @@
+<span class="element-badge mermaid-badge">Diagram</span>
+{% if element.bloom_level %}<span class="bloom-badge bloom-{{ element.bloom_level }}">{{ element.bloom_level }}</span>{% endif %}
+<h2>{{ element.mermaid.title }}</h2>
+<div class="mermaid-container">
+    <pre class="mermaid">{{ element.mermaid.diagram_code|safe }}</pre>
+</div>
+{% if element.mermaid.caption %}
+<p class="diagram-caption">{{ element.mermaid.caption|safe }}</p>
+{% endif %}

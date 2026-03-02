@@ -13,33 +13,17 @@ Usage patterns:
 """
 
 import argparse
-import json
 import logging
 import sys
 from pathlib import Path
 
 from src.config import load_config, load_render_config
 from src.pipeline import rerender_from_json, run_pipeline
-from src.rendering.html_generator import render_course
-from src.transformation.types import TrainingModule
 
 ELEMENT_TYPES = [
     "slide", "quiz", "flashcard", "fill_in_the_blank",
     "matching", "mermaid", "concept_map", "self_explain", "interactive_essay",
 ]
-
-
-def _filter_modules(
-    modules: list[TrainingModule],
-    enabled_types: set[str],
-) -> list[TrainingModule]:
-    """Remove training elements whose type is not in the enabled set."""
-    for module in modules:
-        for section in module.sections:
-            section.elements = [
-                e for e in section.elements if e.element_type in enabled_types
-            ]
-    return modules
 
 
 def main() -> None:
@@ -104,59 +88,10 @@ def main() -> None:
 
     # Post-filter: re-render with excluded element types removed
     if args.exclude:
-        enabled_types = set(ELEMENT_TYPES) - set(args.exclude)
-        training_json = config.extracted_dir / "training_modules.json"
-        data = json.loads(training_json.read_text(encoding="utf-8"))
-        modules = [TrainingModule.model_validate(m) for m in data]
-        modules = _filter_modules(modules, enabled_types)
-        excluded = ", ".join(args.exclude)
-        logging.getLogger(__name__).info("Re-rendering without: %s", excluded)
-
-        # Load concept graph and analyses for the filtered re-render
-        from pydantic import ValidationError
-        from src.transformation.analysis_types import ChapterAnalysis, ConceptGraph
-        from src.transformation.types import CurriculumBlueprint
-        concept_graph = None
-        chapter_analyses = None
-        course_title = course_summary = learner_journey = None
-        analyses_json = config.extracted_dir / "chapter_analyses.json"
-        if analyses_json.exists():
-            try:
-                a_data = json.loads(analyses_json.read_text(encoding="utf-8"))
-                chapter_analyses = [ChapterAnalysis.model_validate(a) for a in a_data.get("chapter_analyses", [])]
-                concept_graph = ConceptGraph.model_validate(a_data.get("concept_graph", {}))
-            except (json.JSONDecodeError, ValidationError):
-                pass
-        blueprint_json = config.extracted_dir / "curriculum_blueprint.json"
-        if blueprint_json.exists():
-            try:
-                bp = CurriculumBlueprint.model_validate(json.loads(blueprint_json.read_text(encoding="utf-8")))
-                course_title = bp.course_title
-                course_summary = bp.course_summary
-                learner_journey = bp.learner_journey
-            except (json.JSONDecodeError, ValidationError):
-                pass
-        # course_meta.json override (takes priority over blueprint)
-        meta_path = config.output_dir / "course_meta.json"
-        if meta_path.exists():
-            try:
-                meta = json.loads(meta_path.read_text(encoding="utf-8"))
-                course_title = meta.get("course_title", course_title)
-                course_summary = meta.get("course_summary", course_summary)
-                learner_journey = meta.get("learner_journey", learner_journey)
-            except json.JSONDecodeError:
-                pass
-
-        index = render_course(
-            modules=modules,
-            output_dir=config.output_dir,
-            extracted_dir=config.extracted_dir,
-            embed_images=config.embed_images,
-            concept_graph=concept_graph,
-            chapter_analyses=chapter_analyses,
-            course_title=course_title,
-            course_summary=course_summary,
-            learner_journey=learner_journey,
+        render_config = load_render_config(**config_kwargs)
+        index = rerender_from_json(
+            render_config,
+            exclude_element_types=set(args.exclude),
         )
 
     print(f"\nDone. Open {index}")

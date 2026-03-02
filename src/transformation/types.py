@@ -15,9 +15,9 @@ a concrete class, and Pydantic auto-dispatches on the element_type field.
 
 from __future__ import annotations
 
-from typing import Annotated, Literal, Union
+from typing import Annotated, Literal, TypedDict, Union
 
-from pydantic import BaseModel, Discriminator, Field
+from pydantic import BaseModel, Discriminator, Field, model_validator
 
 
 # ── Bloom's Taxonomy cognitive levels ────────────────────────────────────────
@@ -49,6 +49,7 @@ ELEMENT_BLOOM_MAP: dict[str, BloomLevel] = {
     "concept_map": "apply",
     "error_detection": "evaluate",
     "interactive_essay": "evaluate",
+    "worked_example": "apply",
 }
 
 # ── Element role classification ──────────────────────────────────────────────
@@ -66,6 +67,7 @@ ELEMENT_ROLE: dict[str, str] = {
     "analogy": "practice",          # Core: LLM order preserved
     "error_detection": "practice",  # Core: LLM order preserved
     "concept_map": "synthesis",     # Anchored near end
+    "worked_example": "teach",      # Core: LLM order preserved
     "flashcard": "reinforce",       # Anchored after practice
     "interactive_essay": "assess",  # Always last
 }
@@ -160,6 +162,18 @@ class QuizQuestion(BaseModel):
         description="Index of a distractor to visually eliminate on hint level 2 (-1 = none)",
     )
 
+    @model_validator(mode="after")
+    def _validate_indices(self) -> QuizQuestion:
+        n = len(self.options)
+        if self.correct_index < 0 or self.correct_index >= n:
+            self.correct_index = 0
+        if self.hint_eliminate_index >= 0:
+            if self.hint_eliminate_index >= n:
+                self.hint_eliminate_index = -1
+            elif self.hint_eliminate_index == self.correct_index:
+                self.hint_eliminate_index = -1
+        return self
+
 
 class Quiz(BaseModel):
     """A set of related quiz questions testing a section's content."""
@@ -186,6 +200,17 @@ class FillInTheBlank(BaseModel):
         description="On second failure, reveal first letter of each answer",
     )
 
+    @model_validator(mode="after")
+    def _validate_blank_count(self) -> FillInTheBlank:
+        blank_count = self.statement.count("_____")
+        if blank_count > 0 and blank_count != len(self.answers):
+            # Pad or truncate answers to match blank count
+            if len(self.answers) < blank_count:
+                self.answers = self.answers + [""] * (blank_count - len(self.answers))
+            else:
+                self.answers = self.answers[:blank_count]
+        return self
+
 
 class MatchingExercise(BaseModel):
     """A matching exercise where learners pair related items."""
@@ -197,6 +222,18 @@ class MatchingExercise(BaseModel):
         default_factory=list,
         description="Explanation for each correct pair (same order as left/right items)",
     )
+
+    @model_validator(mode="after")
+    def _validate_matching_lengths(self) -> MatchingExercise:
+        # Truncate to the shorter list so pairs always align
+        min_len = min(len(self.left_items), len(self.right_items))
+        if len(self.left_items) != len(self.right_items):
+            self.left_items = self.left_items[:min_len]
+            self.right_items = self.right_items[:min_len]
+        if self.pair_explanations and len(self.pair_explanations) != min_len:
+            # Pad with empty strings or truncate
+            self.pair_explanations = (self.pair_explanations + [""] * min_len)[:min_len]
+        return self
 
 
 class MermaidDiagram(BaseModel):
@@ -244,6 +281,12 @@ class ConceptMap(BaseModel):
         description="Indices into edges list where label should be hidden for learner to fill in",
     )
 
+    @model_validator(mode="after")
+    def _validate_blank_edge_indices(self) -> ConceptMap:
+        n = len(self.edges)
+        self.blank_edge_indices = [i for i in self.blank_edge_indices if 0 <= i < n]
+        return self
+
 
 class SelfExplain(BaseModel):
     """A self-explanation exercise where the learner explains a concept in their own words."""
@@ -281,6 +324,8 @@ class InteractiveEssay(BaseModel):
     passing_threshold: float = Field(
         default=0.7,
         description="Fraction of key points the learner must self-check to pass (0.0-1.0)",
+        ge=0.0,
+        le=1.0,
     )
     tutor_system_prompt: str = Field(
         default="",
@@ -381,6 +426,70 @@ class AnalogyExercise(BaseModel):
         description="Analogy questions",
         min_length=1,
     )
+
+
+# ── Worked example (Brilliant-style) ─────────────────────────────────────────
+
+
+class WorkedExampleChallengeOption(BaseModel):
+    """A single option in the try-it-first challenge."""
+
+    text: str = Field(description="Option text")
+
+
+class WorkedExampleStep(BaseModel):
+    """A single step in the worked solution."""
+
+    title: str = Field(description="Short step label (e.g., 'Identify the variables')")
+    content: str = Field(
+        description="What this step does: the mathematical or logical operation"
+    )
+    why: str = Field(
+        description="WHY this step is necessary: the intuition behind it, "
+        "not just a restatement of what was done"
+    )
+
+
+class WorkedExample(BaseModel):
+    """A Brilliant-style worked example with try-it-first challenge and step reveal."""
+
+    title: str = Field(description="Worked example heading")
+    problem_statement: str = Field(
+        description="The problem to be solved, presented clearly with all given information"
+    )
+    challenge_question: str = Field(
+        description="Try-it-first question posed before the solution is revealed"
+    )
+    challenge_options: list[WorkedExampleChallengeOption] = Field(
+        description="Multiple-choice options for the challenge (3-5 options)",
+        min_length=3,
+        max_length=5,
+    )
+    challenge_correct_index: int = Field(
+        description="0-based index of the correct challenge option"
+    )
+    challenge_explanation: str = Field(
+        default="",
+        description="Brief explanation shown after the challenge attempt",
+    )
+    steps: list[WorkedExampleStep] = Field(
+        description="Ordered solution steps (3-7 recommended)",
+        min_length=2,
+        max_length=8,
+    )
+    final_answer: str = Field(
+        description="The final answer or conclusion, stated clearly"
+    )
+    source_pages: str = Field(default="", description="Source attribution")
+
+    @model_validator(mode="after")
+    def validate_challenge_index(self) -> "WorkedExample":
+        if self.challenge_correct_index < 0 or self.challenge_correct_index >= len(self.challenge_options):
+            raise ValueError(
+                f"challenge_correct_index {self.challenge_correct_index} out of range "
+                f"for {len(self.challenge_options)} options"
+            )
+        return self
 
 
 # ── Training element (discriminated union) ───────────────────────────────────
@@ -484,6 +593,14 @@ class AnalogyElement(BaseModel):
     analogy: AnalogyExercise
 
 
+class WorkedExampleElement(BaseModel):
+    """A Brilliant-style worked example training element."""
+
+    element_type: Literal["worked_example"] = "worked_example"
+    bloom_level: BloomLevel = Field(description="Bloom's Taxonomy cognitive level")
+    worked_example: WorkedExample
+
+
 class InteractiveEssayElement(BaseModel):
     """An interactive essay training element."""
 
@@ -497,7 +614,7 @@ TrainingElement = Annotated[
         SectionIntroElement, SlideElement, QuizElement, FlashcardElement,
         FillInBlankElement, MatchingElement, OrderingElement, MermaidElement,
         ConceptMapElement, CategorizationElement, ErrorDetectionElement,
-        AnalogyElement, InteractiveEssayElement,
+        AnalogyElement, WorkedExampleElement, InteractiveEssayElement,
     ],
     Discriminator("element_type"),
 ]
@@ -627,3 +744,24 @@ class TrainingModule(BaseModel):
     def all_elements(self) -> list[TrainingElement]:
         """Flat list of all elements across all sections."""
         return [e for s in self.sections for e in s.elements]
+
+
+# ── Course capabilities declaration ──────────────────────────────────────────
+
+
+class CourseCapabilities(TypedDict):
+    """Declares what features are available in a generated course.
+
+    Computed by the pipeline after all stages complete, before rendering.
+    The renderer uses this to explicitly enable/disable UI sections instead
+    of silently degrading.
+    """
+
+    has_concept_graph: bool
+    has_mastery_tracking: bool
+    has_chapter_review: bool
+    has_mixed_review: bool
+    has_course_metadata: bool
+    has_learning_objectives: bool
+    chapter_count: int
+    element_types_present: list[str]

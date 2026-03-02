@@ -26,14 +26,19 @@ from collections import Counter
 from pydantic import BaseModel, Field, model_validator
 
 from src.extraction.types import Chapter, ImageRef, Section
+from src.transformation.content_pre_analyzer import (
+    analyze_section as pre_analyze_section,
+    classify_section_quality,
+)
 from src.transformation.analysis_types import (
     ChapterAnalysis,
     ConceptEntry,
     SectionCharacterization,
+    resolve_concept,
 )
 from src.transformation.curriculum_planner import find_matching_section
 from src.transformation.llm_client import LLMClient, LLMError
-from src.transformation.prompts import (
+from src.transformation.content_designer_prompts import (
     BLOOM_PROMPT_SUPPLEMENTS,
     SYSTEM_PROMPT,
     TARGET_SELECTION_PROMPT,
@@ -110,45 +115,98 @@ class SectionResponse(BaseModel):
 
     @model_validator(mode="after")
     def enforce_element_distribution(self) -> "SectionResponse":
-        """Enforce Brilliant-style exercise density per section."""
+        """Enforce 1-slide-then-drill section structure.
+
+        Architecture: each section = 1 concept = 1 slide + 2-3 exercises + 2-3 flashcards.
+        Hard errors catch truly bad outputs (triggers Instructor retry).
+        Warnings flag aspirational targets that are not worth a retry.
+        """
         counts = Counter(e.element_type for e in self.elements)
 
-        teach_types = {"slide", "mermaid"}
-        practice_types = {
-            "quiz", "flashcard", "fill_in_the_blank", "matching", "ordering",
+        teach_types = {"slide", "mermaid", "worked_example"}
+        # Exercise types (excludes flashcard — flashcard is reinforcement, not practice)
+        exercise_types = {
+            "quiz", "fill_in_the_blank", "matching", "ordering",
             "categorization", "error_detection", "analogy",
         }
 
         teach_count = sum(counts.get(t, 0) for t in teach_types)
-        practice_count = sum(counts.get(t, 0) for t in practice_types)
+        exercise_count = sum(counts.get(t, 0) for t in exercise_types)
+        flashcard_count = counts.get("flashcard", 0)
+
+        # Count distinct exercise types used
+        exercise_types_used = {
+            t for t in exercise_types if counts.get(t, 0) > 0
+        }
+
+        # ── Hard constraints (trigger Instructor retry) ──────────────────
 
         if teach_count < 1:
             raise ValueError("Section must contain at least 1 teaching element (slide/mermaid)")
-        if practice_count < 1:
-            raise ValueError("Section must contain at least 1 practice element")
+
+        # Max 1 slide per section (mermaid may accompany it for processes).
+        # Allow slide + mermaid (2) but not slide + slide (2 slides).
+        slide_count = counts.get("slide", 0) + counts.get("worked_example", 0)
+        if slide_count > 1:
+            raise ValueError(
+                f"Section has {slide_count} slides/worked_examples (maximum: 1). "
+                f"Each section teaches ONE concept with ONE slide. "
+                f"The curriculum planner has already split concepts."
+            )
+
+        # Minimum 2 exercises per section
+        if exercise_count < 2:
+            raise ValueError(
+                f"Section has {exercise_count} exercise(s) (minimum: 2). "
+                f"Generate 2-3 exercises after the slide."
+            )
+
         if counts.get("interactive_essay", 0) > 2:
             raise ValueError("Section must contain at most 2 interactive_essay elements")
 
-        # Log weak exercise density — prompt engineering handles the ratio,
-        # hard validation here just causes brittle retries.
-        if teach_count > 1 and practice_count / teach_count < 0.75:
-            logger.warning(
-                "Low exercise density: %d practice for %d teaching (%.1f:1 ratio)",
-                practice_count, teach_count, practice_count / teach_count,
+        # Reject if all exercises are the same type (no variety)
+        if exercise_count >= 2 and len(exercise_types_used) < 2:
+            raise ValueError(
+                f"All {exercise_count} exercises are the same type "
+                f"({next(iter(exercise_types_used))}). Use at least 2 different exercise types."
             )
 
-        # Warn on 3+ consecutive teaching elements — weak interleaving.
-        consecutive = 0
-        for e in self.elements:
-            if e.element_type in teach_types:
-                consecutive += 1
-            elif e.element_type != "section_intro":
-                consecutive = 0
-            if consecutive >= 3:
-                logger.warning(
-                    "3+ consecutive teaching elements — interleaving may be weak"
-                )
-                break
+        # Reject if more than 1 quiz (MCQ) — overused, boring
+        quiz_count = counts.get("quiz", 0)
+        if quiz_count > 1:
+            raise ValueError(
+                f"Section has {quiz_count} quiz (MCQ) elements (maximum: 1). "
+                f"Replace extra quizzes with: matching, ordering, fill_in_the_blank, "
+                f"categorization, analogy, or error_detection."
+            )
+
+        # ── Warnings (aspirational targets, not worth a retry) ───────────
+
+        # Target: 3 exercises for hard concepts
+        if exercise_count < 3:
+            logger.warning(
+                "Section has %d exercises (target: 3 for difficult concepts)",
+                exercise_count,
+            )
+
+        # Target: 3 different exercise types when 3+ exercises
+        if exercise_count >= 3 and len(exercise_types_used) < 3:
+            logger.warning(
+                "Low exercise variety: %d types used (target: all different types)",
+                len(exercise_types_used),
+            )
+
+        # Warn on flashcard count (target: 2-3 per section)
+        if flashcard_count < 2:
+            logger.warning(
+                "Low flashcard count: %d (target: 2-3 per section)",
+                flashcard_count,
+            )
+        elif flashcard_count > 4:
+            logger.warning(
+                "High flashcard count: %d (target: 2-3 per section)",
+                flashcard_count,
+            )
 
         return self
 
@@ -203,6 +261,7 @@ def transform_chapter(
     supplementary_context: str | None = None,
     additional_chapters: list[tuple[int, Chapter]] | None = None,
     additional_extracted_dirs: dict[int, Path] | None = None,
+    canonical_map: dict[str, str] | None = None,
 ) -> TrainingModule:
     """Transform a book chapter into an interactive training module.
 
@@ -264,6 +323,7 @@ def transform_chapter(
         vision_enabled=vision_enabled,
         max_workers=max_workers,
         supplementary_context=supplementary_context,
+        canonical_map=canonical_map,
     )
 
     total_elements = sum(len(s.elements) for s in training_sections)
@@ -331,6 +391,10 @@ def _prepare_section_inputs(
             if len(section.text.strip()) < MIN_SECTION_TEXT_LENGTH:
                 logger.debug("Skipping short section: '%s' (%d chars)", section.title, len(section.text))
                 continue
+            quality = classify_section_quality(section.title, section.text)
+            if quality != "content":
+                logger.info("Skipping %s section: '%s'", quality, section.title)
+                continue
             inputs.append(_SectionInput(
                 section=section,
                 title=section_bp.title,
@@ -354,6 +418,10 @@ def _prepare_section_inputs(
         for section in chapter.sections:
             if len(section.text.strip()) < MIN_SECTION_TEXT_LENGTH:
                 logger.debug("Skipping short section: '%s' (%d chars)", section.title, len(section.text))
+                continue
+            quality = classify_section_quality(section.title, section.text)
+            if quality != "content":
+                logger.info("Skipping %s section: '%s'", quality, section.title)
                 continue
             template = TEMPLATE_ROTATION[template_idx % len(TEMPLATE_ROTATION)]
             template_idx += 1
@@ -492,12 +560,17 @@ def _precompute_section_contexts(
     section_inputs: list[_SectionInput],
     chapter_analysis: ChapterAnalysis | None,
     prior_concepts: list[str | dict] | None,
+    canonical_map: dict[str, str] | None = None,
 ) -> list[_SectionContext]:
     """Precompute all context needed for each section transformation.
 
     Looks up section analysis once per section and threads cumulative state
     through the list. Everything here is derived from the chapter analysis
     (available before any LLM call), so sections can then run in parallel.
+
+    When canonical_map is provided, concept names are resolved to their
+    canonical forms so that within-chapter cumulative concepts and LLM
+    prompts use consistent naming.
     """
     contexts: list[_SectionContext] = []
     prior_titles: list[str] = []
@@ -506,6 +579,7 @@ def _precompute_section_contexts(
     for inp in section_inputs:
         section_concepts, section_char = _lookup_section_analysis(
             inp.section.title, chapter_analysis,
+            canonical_map=canonical_map,
         )
         filtered = _filter_by_focus(section_concepts, inp.focus_concepts)
 
@@ -583,6 +657,7 @@ def _fold_transform_sections(
     vision_enabled: bool = False,
     max_workers: int = 4,
     supplementary_context: str | None = None,
+    canonical_map: dict[str, str] | None = None,
 ) -> list[TrainingSection]:
     """Transform sections with parallel LLM calls.
 
@@ -596,6 +671,7 @@ def _fold_transform_sections(
     # Precompute all section contexts from analysis (no LLM needed)
     contexts = _precompute_section_contexts(
         section_inputs, chapter_analysis, prior_concepts,
+        canonical_map=canonical_map,
     )
 
     # Phase 1: Run target selection in parallel for sections that need it
@@ -611,6 +687,18 @@ def _fold_transform_sections(
         section_char = ctx.section_char
 
         targets = targets_list[idx]
+
+        if inp.focus_concepts and len(inp.focus_concepts) > 1:
+            logger.warning(
+                "Section '%s' arrived at content designer with %d focus_concepts "
+                "(%s) — expected max 1. The curriculum planner should have split this.",
+                inp.title, len(inp.focus_concepts),
+                ", ".join(inp.focus_concepts),
+            )
+
+        # Extract key terms via regex pre-analyzer (zero LLM cost)
+        signals = pre_analyze_section(inp.section.title, inp.section.text)
+        section_key_terms = list(signals.key_terms) if signals.key_terms else None
 
         elements = _transform_section(
             section=inp.section,
@@ -631,6 +719,7 @@ def _fold_transform_sections(
             extracted_dir=extracted_dir,
             vision_enabled=vision_enabled,
             supplementary_context=supplementary_context,
+            key_terms=section_key_terms,
         )
 
         _shuffle_quiz_options(elements)
@@ -835,6 +924,7 @@ def _transform_section(
     extracted_dir: Path | None = None,
     vision_enabled: bool = False,
     supplementary_context: str | None = None,
+    key_terms: list[str] | None = None,
 ) -> list[TrainingElement]:
     """Transform a single section into training elements via LLM.
 
@@ -847,6 +937,8 @@ def _transform_section(
     """
     # Phase 1: Identify what's worth testing (cheap, short output)
     if precomputed_targets is not None:
+        # precomputed_targets=[] means Phase 1 ran and found nothing — use None
+        # for the prompt builder (no targets), but do NOT re-run Phase 1.
         targets = precomputed_targets if precomputed_targets else None
     else:
         targets = _select_reinforcement_targets(
@@ -876,6 +968,7 @@ def _transform_section(
         tables=list(section.tables) if section.tables else None,
         images=list(section.images) if section.images else None,
         supplementary_context=supplementary_context,
+        key_terms=key_terms,
     )
 
     # If vision is enabled and the section has images, build a multimodal prompt
@@ -902,8 +995,13 @@ def _transform_section(
 def _lookup_section_analysis(
     section_title: str,
     chapter_analysis: ChapterAnalysis | None,
+    canonical_map: dict[str, str] | None = None,
 ) -> tuple[list[ConceptEntry], SectionCharacterization | None]:
     """Look up concepts and characterization for a section from deep reading analysis.
+
+    When canonical_map is provided, resolves each concept's name to its
+    canonical form so downstream consumers (prompts, cumulative lists)
+    use consistent naming.
 
     Returns:
         Tuple of (concepts for this section, section characterization or None).
@@ -916,6 +1014,13 @@ def _lookup_section_analysis(
         c for c in chapter_analysis.concepts
         if c.section_title.lower().strip() == section_title.lower().strip()
     ]
+
+    # Resolve concept names to canonical forms
+    if canonical_map and section_concepts:
+        section_concepts = [
+            c.model_copy(update={"name": resolve_concept(c.name, canonical_map)})
+            for c in section_concepts
+        ]
 
     # Find matching section characterization
     section_char = None

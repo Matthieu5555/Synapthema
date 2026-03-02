@@ -10,12 +10,14 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar
 
 import fitz
 import pdfplumber
+import pymupdf4llm
 
 if TYPE_CHECKING:
     from src.transformation.llm_client import LLMClient
@@ -138,6 +140,123 @@ def _extract_metadata(doc: fitz.Document) -> tuple[str, str]:
     return title, author
 
 
+# ── Internal: Unicode math → LaTeX normalization ────────────────────────────
+
+# Maps isolated Unicode math symbols to LaTeX wrapped in $ delimiters.
+# Applied after text extraction so the LLM sees LaTeX notation.
+_UNICODE_TO_LATEX: dict[str, str] = {
+    # Greek lowercase
+    "α": r"\alpha", "β": r"\beta", "γ": r"\gamma", "δ": r"\delta",
+    "ε": r"\epsilon", "ζ": r"\zeta", "η": r"\eta", "θ": r"\theta",
+    "ι": r"\iota", "κ": r"\kappa", "λ": r"\lambda", "μ": r"\mu",
+    "ν": r"\nu", "ξ": r"\xi", "π": r"\pi", "ρ": r"\rho",
+    "σ": r"\sigma", "τ": r"\tau", "υ": r"\upsilon", "φ": r"\phi",
+    "χ": r"\chi", "ψ": r"\psi", "ω": r"\omega",
+    # Greek uppercase
+    "Γ": r"\Gamma", "Δ": r"\Delta", "Θ": r"\Theta", "Λ": r"\Lambda",
+    "Ξ": r"\Xi", "Π": r"\Pi", "Σ": r"\Sigma", "Φ": r"\Phi",
+    "Ψ": r"\Psi", "Ω": r"\Omega",
+    # Operators
+    "∑": r"\sum", "∏": r"\prod", "∫": r"\int", "∂": r"\partial",
+    "∇": r"\nabla", "√": r"\sqrt{}",
+    # Relations
+    "≤": r"\leq", "≥": r"\geq", "≠": r"\neq", "≈": r"\approx",
+    "∈": r"\in", "∉": r"\notin", "⊂": r"\subset", "⊃": r"\supset",
+    "⊆": r"\subseteq", "⊇": r"\supseteq", "∀": r"\forall", "∃": r"\exists",
+    "≡": r"\equiv", "∝": r"\propto", "≪": r"\ll", "≫": r"\gg",
+    # Arrows
+    "→": r"\to", "←": r"\leftarrow", "↔": r"\leftrightarrow",
+    "⇒": r"\Rightarrow", "⇐": r"\Leftarrow", "⇔": r"\Leftrightarrow",
+    "↦": r"\mapsto",
+    # Special
+    "∞": r"\infty", "×": r"\times", "÷": r"\div", "±": r"\pm",
+    "∓": r"\mp", "·": r"\cdot", "⊕": r"\oplus", "⊗": r"\otimes",
+    "†": r"\dagger",
+    # Set / logic
+    "∅": r"\emptyset", "∪": r"\cup", "∩": r"\cap",
+    "¬": r"\neg", "∧": r"\land", "∨": r"\lor",
+    # Miscellaneous
+    "ℝ": r"\mathbb{R}", "ℤ": r"\mathbb{Z}", "ℕ": r"\mathbb{N}",
+    "ℂ": r"\mathbb{C}", "ℚ": r"\mathbb{Q}",
+}
+
+# Superscript and subscript digits/letters → LaTeX
+_SUPERSCRIPTS: dict[str, str] = {
+    "⁰": "0", "¹": "1", "²": "2", "³": "3", "⁴": "4",
+    "⁵": "5", "⁶": "6", "⁷": "7", "⁸": "8", "⁹": "9",
+    "⁺": "+", "⁻": "-", "⁼": "=", "ⁿ": "n", "ⁱ": "i",
+}
+_SUBSCRIPTS: dict[str, str] = {
+    "₀": "0", "₁": "1", "₂": "2", "₃": "3", "₄": "4",
+    "₅": "5", "₆": "6", "₇": "7", "₈": "8", "₉": "9",
+    "₊": "+", "₋": "-", "₌": "=", "ₙ": "n", "ᵢ": "i",
+    "ⱼ": "j", "ₖ": "k",
+}
+
+# Precompiled regex: matches any Unicode math symbol from the map.
+_UNICODE_MATH_RE = re.compile(
+    "|".join(re.escape(ch) for ch in _UNICODE_TO_LATEX)
+)
+_SUPERSCRIPT_RE = re.compile(
+    "([" + "".join(re.escape(ch) for ch in _SUPERSCRIPTS) + "]+)"
+)
+_SUBSCRIPT_RE = re.compile(
+    "([" + "".join(re.escape(ch) for ch in _SUBSCRIPTS) + "]+)"
+)
+
+# Matches regions already inside $ delimiters (to skip them).
+_MATH_SPAN_RE = re.compile(r"\$\$.*?\$\$|\$[^$]+?\$", re.DOTALL)
+
+
+def _normalize_unicode_math(text: str) -> str:
+    """Convert Unicode math symbols to LaTeX notation.
+
+    Replaces isolated Unicode math characters (Greek letters, operators,
+    relations, etc.) with their LaTeX equivalents wrapped in $ delimiters.
+    Symbols already inside $...$ or $$...$$ are left untouched.
+    """
+    if not text:
+        return text
+
+    # Find all math spans so we can skip them
+    protected: set[int] = set()
+    for m in _MATH_SPAN_RE.finditer(text):
+        protected.update(range(m.start(), m.end()))
+
+    # Replace Unicode symbols with LaTeX
+    result = list(text)
+    # Process in reverse order to preserve indices during replacement
+    replacements: list[tuple[int, int, str]] = []
+
+    for m in _UNICODE_MATH_RE.finditer(text):
+        if m.start() in protected:
+            continue
+        latex = _UNICODE_TO_LATEX[m.group()]
+        replacements.append((m.start(), m.end(), f"${latex}$"))
+
+    # Superscripts (group consecutive superscript chars)
+    for m in _SUPERSCRIPT_RE.finditer(text):
+        if m.start() in protected:
+            continue
+        digits = "".join(_SUPERSCRIPTS.get(ch, ch) for ch in m.group())
+        replacements.append((m.start(), m.end(), f"$^{{{digits}}}$"))
+
+    # Subscripts (group consecutive subscript chars)
+    for m in _SUBSCRIPT_RE.finditer(text):
+        if m.start() in protected:
+            continue
+        digits = "".join(_SUBSCRIPTS.get(ch, ch) for ch in m.group())
+        replacements.append((m.start(), m.end(), f"$_{{{digits}}}$"))
+
+    # Apply replacements in reverse order to preserve positions
+    replacements.sort(key=lambda r: r[0], reverse=True)
+    chars = list(text)
+    for start, end, replacement in replacements:
+        chars[start:end] = list(replacement)
+
+    return "".join(chars)
+
+
 # ── Internal: text extraction ────────────────────────────────────────────────
 
 
@@ -146,22 +265,38 @@ def _extract_text_for_page_range(
 ) -> str:
     """Extract and concatenate text from a range of pages.
 
+    Uses pymupdf4llm for markdown-formatted extraction (preserves structure,
+    headings, tables). Falls back to plain PyMuPDF text if pymupdf4llm fails.
+    Unicode math symbols are normalized to LaTeX on both paths.
+
     Args:
         doc: Open PyMuPDF document.
         start_page: 1-indexed first page (inclusive).
         end_page: 1-indexed last page (inclusive).
 
     Returns:
-        Concatenated text from all pages in range, with page breaks preserved.
+        Extracted text with Unicode math normalized to LaTeX.
     """
+    pages = list(range(max(0, start_page - 1), min(end_page, len(doc))))
+    if not pages:
+        return ""
+
+    # Primary path: pymupdf4llm markdown extraction
+    try:
+        md_text: str = pymupdf4llm.to_markdown(doc, pages=pages)
+        if md_text.strip():
+            return _normalize_unicode_math(md_text)
+    except Exception:
+        logger.warning("pymupdf4llm extraction failed, falling back to plain text")
+
+    # Fallback: original plain text extraction
     pages_text: list[str] = []
-    # Clamp to valid page range (0-indexed internally)
-    for page_idx in range(max(0, start_page - 1), min(end_page, len(doc))):
-        page_text: str = doc[page_idx].get_text()  # pyright: ignore[reportAssignmentType] -- PyMuPDF untyped
+    for page_idx in pages:
+        page_text: str = doc[page_idx].get_text()  # pyright: ignore[reportAssignmentType]
         if page_text.strip():
             pages_text.append(page_text)
 
-    return "\n\n".join(pages_text)
+    return _normalize_unicode_math("\n\n".join(pages_text))
 
 
 # ── Internal: image extraction ───────────────────────────────────────────────
@@ -198,8 +333,8 @@ def _extract_all_images(
                 if pix.width < MIN_IMAGE_DIMENSION or pix.height < MIN_IMAGE_DIMENSION:
                     continue
 
-                # Convert CMYK to RGB if needed
-                if pix.n > 4:
+                # Convert non-RGB (e.g. CMYK, grayscale+alpha) to RGB
+                if pix.n - pix.alpha != 3:
                     pix = fitz.Pixmap(fitz.csRGB, pix)
 
                 image_counter += 1

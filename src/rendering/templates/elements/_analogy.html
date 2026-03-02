@@ -1,0 +1,7 @@
+<span class="element-badge analogy-badge">Analogy</span>
+{% if element.bloom_level %}<span class="bloom-badge bloom-{{ element.bloom_level }}">{{ element.bloom_level }}</span>{% endif %}
+<div class="analogy-container" data-items='{{ element.analogy.items_json|safe }}' data-attempts="0">
+    <div class="analogy-title">{{ element.analogy.title }}</div>
+    <div class="analogy-items"></div>
+    <button class="add-review-btn" onclick="addToReview(this)" title="Add to spaced review">+ Review</button>
+</div>

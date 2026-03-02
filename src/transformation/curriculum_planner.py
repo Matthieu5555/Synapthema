@@ -119,14 +119,24 @@ Return ONLY a JSON object matching this schema (no markdown fences):
       "summary": "...",
       "sections": [
         {
-          "title": "Basis and Span",
+          "title": "Understanding Basis",
           "source_section_title": "3.1 Vector Spaces",
-          "learning_objectives": ["Define a basis and explain its relationship to span"],
+          "learning_objectives": ["Define a basis and explain its uniqueness property"],
           "template": "analogy_first",
           "bloom_target": "understand",
           "prerequisites": [],
-          "rationale": "Basis and span are tightly coupled concepts best taught together.",
-          "focus_concepts": ["basis", "span"]
+          "rationale": "Basis is a foundational concept that must be understood before span.",
+          "focus_concepts": ["basis"]
+        },
+        {
+          "title": "Span and Its Relationship to Basis",
+          "source_section_title": "3.1 Vector Spaces",
+          "learning_objectives": ["Explain span and how it relates to basis"],
+          "template": "analogy_first",
+          "bloom_target": "understand",
+          "prerequisites": ["Understanding Basis"],
+          "rationale": "Span builds directly on the concept of basis.",
+          "focus_concepts": ["span"]
         }
       ]
     }
@@ -312,18 +322,40 @@ Return ONLY a JSON object matching this schema (no markdown fences):
           "bloom_target": "understand",
           "prerequisites": [],
           "rationale": "Foundation concept — combine both books' perspectives.",
-          "focus_concepts": ["value at risk", "confidence level"]
+          "focus_concepts": ["value at risk"]
         },
         {
-          "title": "VaR Calculation Methods",
+          "title": "Confidence Levels in VaR",
+          "source_section_title": "3.1 VaR Overview",
+          "source_book_index": 0,
+          "learning_objectives": ["Explain how confidence level affects VaR estimates"],
+          "template": "analogy_first",
+          "bloom_target": "understand",
+          "prerequisites": ["VaR Definition and Intuition"],
+          "rationale": "Confidence level is a separate concept that builds on VaR definition.",
+          "focus_concepts": ["confidence level"]
+        },
+        {
+          "title": "Parametric VaR Calculation",
           "source_section_title": "5.2 Parametric VaR",
           "source_book_index": 1,
-          "learning_objectives": ["Calculate VaR using parametric and historical methods"],
+          "learning_objectives": ["Calculate VaR using the parametric method"],
           "template": "worked_example",
           "bloom_target": "apply",
-          "prerequisites": ["VaR Definition and Intuition"],
+          "prerequisites": ["Confidence Levels in VaR"],
           "rationale": "Book 2 has better worked examples for calculations.",
-          "focus_concepts": ["parametric VaR", "historical simulation"]
+          "focus_concepts": ["parametric VaR"]
+        },
+        {
+          "title": "Historical Simulation for VaR",
+          "source_section_title": "5.2 Parametric VaR",
+          "source_book_index": 1,
+          "learning_objectives": ["Calculate VaR using historical simulation"],
+          "template": "compare_contrast",
+          "bloom_target": "apply",
+          "prerequisites": ["Parametric VaR Calculation"],
+          "rationale": "Contrast with parametric approach to deepen understanding.",
+          "focus_concepts": ["historical simulation"]
         }
       ]
     }
@@ -406,13 +438,9 @@ def plan_multi_document_curriculum(
     )
 
     # Split sections that cover too many concepts into bite-size units
-    flat_analyses = (
-        [a for book_analyses in chapter_analyses_per_book for a in book_analyses]
-        if chapter_analyses_per_book
-        else None
-    )
     blueprint = _split_overloaded_sections(
-        blueprint, flat_analyses, concept_graph,
+        blueprint, None, concept_graph,
+        chapter_analyses_per_book=chapter_analyses_per_book,
     )
 
     progression_warnings = validate_progression(blueprint)
@@ -565,7 +593,7 @@ def _format_section_characterization(
 
     section_concepts = [
         concept_graph.resolve(c.name) if concept_graph else c.name
-        for c in analysis.concepts if c.section_title == sc.section_title
+        for c in analysis.concepts if c.section_title.lower().strip() == sc.section_title.lower().strip()
     ]
     concepts_str = f" concepts=[{', '.join(section_concepts)}]" if section_concepts else ""
 
@@ -686,7 +714,7 @@ def _build_rich_multi_doc_content_summary(
         parts.append(f"Author: {book.author} | Pages: {book.total_pages} | Chapters: {len(book.chapters)}")
         parts.append("")
 
-        rich = _build_rich_content_summary(book, analyses, None)
+        rich = _build_rich_content_summary(book, analyses, concept_graph)
         # Skip the header lines (already added), take the chapter details
         for line in rich.split("\n"):
             if line.startswith("## Chapter") or line.startswith("  "):
@@ -695,8 +723,9 @@ def _build_rich_multi_doc_content_summary(
         parts.append("")
 
     result = "\n".join(parts)
-    if len(result) > _MAX_MULTI_DOC_SUMMARY_LENGTH * 2:
-        result = result[:_MAX_MULTI_DOC_SUMMARY_LENGTH * 2] + "\n\n[... truncated ...]"
+    max_len = _MAX_MULTI_DOC_SUMMARY_LENGTH * max(len(books), 1)
+    if len(result) > max_len:
+        result = result[:max_len] + "\n\n[... truncated ...]"
 
     return result
 
@@ -969,7 +998,7 @@ def _ensure_all_chapters_covered_multi_doc(
 # ── Concept-level section splitting (deterministic safety net) ─────────────
 
 # Minimum number of core/supporting concepts to trigger automatic splitting.
-_MIN_CONCEPTS_TO_SPLIT = 3
+_MIN_CONCEPTS_TO_SPLIT = 2
 
 # Maximum concepts per learning unit when auto-splitting.
 _MAX_CONCEPTS_PER_UNIT = 1
@@ -979,41 +1008,91 @@ def _split_overloaded_sections(
     blueprint: CurriculumBlueprint,
     chapter_analyses: list[ChapterAnalysis] | None,
     concept_graph: ConceptGraph | None = None,
+    chapter_analyses_per_book: list[list[ChapterAnalysis]] | None = None,
 ) -> CurriculumBlueprint:
     """Deterministically split sections that cover too many concepts.
 
     Safety net for when the LLM planner doesn't split dense sections itself.
-    Only splits sections that:
-    1. Have no focus_concepts specified (LLM didn't split)
-    2. Map to a source section with 4+ core/supporting concepts
-    3. Have deep reading analysis available
+    Splits sections that:
+    1. Have focus_concepts with 2+ items (LLM bundled multiple concepts), OR
+    2. Have no focus_concepts but map to a source section with 2+ core/supporting
+       concepts (requires deep reading analysis).
 
     Args:
         blueprint: The curriculum blueprint to post-process.
-        chapter_analyses: Deep reading analyses per chapter.
+        chapter_analyses: Deep reading analyses per chapter (single-doc).
         concept_graph: Consolidated concept dependency graph.
+        chapter_analyses_per_book: Per-book analyses (multi-doc). When provided,
+            uses (book_index, chapter_number) keys to avoid collisions.
 
     Returns:
         Blueprint with overloaded sections split into focused units.
     """
-    if not chapter_analyses:
-        return blueprint
+    # Multi-doc: key by (book_index, chapter_number) to avoid collisions
+    if chapter_analyses_per_book:
+        analyses_by_book_ch: dict[tuple[int, int], ChapterAnalysis] = {}
+        for book_idx, book_analyses in enumerate(chapter_analyses_per_book):
+            for a in book_analyses:
+                analyses_by_book_ch[(book_idx, a.chapter_number)] = a
+    else:
+        analyses_by_book_ch = None
 
-    analyses_by_num = {a.chapter_number: a for a in chapter_analyses}
+    # Single-doc fallback: key by chapter_number only
+    analyses_by_num = (
+        {a.chapter_number: a for a in chapter_analyses}
+        if chapter_analyses else {}
+    )
 
     new_modules = []
     any_split = False
 
     for module in blueprint.modules:
-        analysis = analyses_by_num.get(module.source_chapter_number) if module.source_chapter_number is not None else None
-        if not analysis:
-            new_modules.append(module)
-            continue
+        # Multi-doc: look up by (book_index, chapter_number) tuple
+        if analyses_by_book_ch is not None and module.source_book_index is not None and module.source_chapter_number is not None:
+            analysis = analyses_by_book_ch.get((module.source_book_index, module.source_chapter_number))
+        elif module.source_chapter_number is not None:
+            analysis = analyses_by_num.get(module.source_chapter_number)
+        else:
+            analysis = None
 
         new_sections: list[SectionBlueprint] = []
         for section_bp in module.sections:
-            if section_bp.focus_concepts:
-                # LLM already specified focus — keep as-is
+            # Path A: already focused on exactly 1 concept — keep as-is
+            if section_bp.focus_concepts and len(section_bp.focus_concepts) == 1:
+                new_sections.append(section_bp)
+                continue
+
+            # Path B: LLM bundled 2+ concepts in focus_concepts — re-split
+            if section_bp.focus_concepts and len(section_bp.focus_concepts) >= 2:
+                any_split = True
+                logger.info(
+                    "Re-splitting section '%s' with %d focus_concepts into %d units",
+                    section_bp.title, len(section_bp.focus_concepts),
+                    len(section_bp.focus_concepts),
+                )
+                for i, concept_name in enumerate(section_bp.focus_concepts):
+                    base_title = section_bp.source_section_title or section_bp.title
+                    sub_title = f"{base_title}: {concept_name}"
+                    objectives = [f"Explain {concept_name} and its role"]
+                    prerequisites = (
+                        list(section_bp.prerequisites) if i == 0
+                        else [new_sections[-1].title]
+                    )
+                    new_sections.append(SectionBlueprint(
+                        title=sub_title,
+                        source_section_title=section_bp.source_section_title,
+                        source_book_index=section_bp.source_book_index,
+                        learning_objectives=objectives,
+                        template=section_bp.template,
+                        bloom_target=section_bp.bloom_target,
+                        prerequisites=prerequisites,
+                        rationale=f"Auto-split: focusing on {concept_name} from multi-concept section.",
+                        focus_concepts=[concept_name],
+                    ))
+                continue
+
+            # Path C: no focus_concepts — need analysis to determine concept count
+            if not analysis:
                 new_sections.append(section_bp)
                 continue
 
@@ -1116,11 +1195,11 @@ def _bloom_from_concept_position(
         if canonical in concept_graph.advanced_concepts:
             return "analyze"
 
-    # Default based on how many dependencies the concepts have
+    # Default based on how many prerequisites the concepts have
     max_deps = 0
     for c in concepts:
         canonical = concept_graph.resolve(c.name)
-        deps = sum(1 for e in concept_graph.edges if e.target == canonical)
+        deps = sum(1 for e in concept_graph.edges if e.source == canonical)
         max_deps = max(max_deps, deps)
 
     if max_deps == 0:

@@ -29,8 +29,13 @@ package-lock.json
 .pytest_cache/
 .DS_Store
 
-# Claude Code
+# AI tooling
 .claude/
+CLAUDE.md
+
+# BMAD framework (development tooling)
+_bmad/
+_bmad-output/
 
 # Personal notes / roadmap (not for firm delivery)
 PERSONAL*

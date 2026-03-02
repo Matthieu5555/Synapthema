@@ -4,7 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ module_title }}</title>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.25/dist/katex.min.css">
+    <link rel="preload" href="https://cdn.jsdelivr.net/npm/katex@0.16.25/dist/fonts/KaTeX_Main-Regular.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="preload" href="https://cdn.jsdelivr.net/npm/katex@0.16.25/dist/fonts/KaTeX_Math-Italic.woff2" as="font" type="font/woff2" crossorigin>
     <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"
             onload="__mermaidLoaded()" onerror="__mermaidFailed()"></script>
     <script>{{ graphlib_js|safe }}</script>
@@ -49,7 +51,9 @@
 </head>
 <body>
 
-<nav class="course-header">
+<a class="skip-link" href="#main-content">Skip to content</a>
+
+<nav class="course-header" aria-label="Course navigation">
     <div class="course-header-left">
         <a href="index.html" class="breadcrumb-home" title="Back to course index">{{ course_title }}</a>
         <span class="breadcrumb-sep">/</span>
@@ -70,13 +74,13 @@
         {% if next_chapter %}
         <a href="{{ next_chapter.filename }}" class="chapter-nav-btn" title="Next: {{ next_chapter.title }}">Next &#8594;</a>
         {% endif %}
-        <button class="theme-toggle" onclick="__lxpToggleTheme()" title="Toggle theme">&#9788;</button>
-        <button class="settings-btn" onclick="openSettings()" title="AI Tutor Settings"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></button>
-        <button class="help-btn" onclick="openHelp()" title="How this course works"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg></button>
+        <button class="theme-toggle" onclick="__lxpToggleTheme()" title="Toggle theme" aria-label="Toggle theme">&#9788;</button>
+        <button class="settings-btn" onclick="openSettings()" title="AI Tutor Settings" aria-label="AI Tutor Settings"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></button>
+        <button class="help-btn" onclick="openHelp()" title="How this course works" aria-label="Help"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg></button>
     </div>
 </nav>
 
-<button class="sidebar-toggle" onclick="toggleSidebar()">&#9776;</button>
+<button class="sidebar-toggle" onclick="toggleSidebar()" aria-label="Toggle section navigation">&#9776;</button>
 
 <div class="mobile-progress-bar" id="mobileProgress">
     <div class="mobile-progress-fill" id="mobileProgressFill"></div>
@@ -87,7 +91,7 @@
     <div class="sidebar-overlay" id="sidebarOverlay" onclick="toggleSidebar()"></div>
 
     <!-- Sidebar navigation -->
-    <nav class="sidebar" id="sidebar">
+    <nav class="sidebar" id="sidebar" aria-label="Section navigation">
         <div class="sidebar-header">{{ module_title }}</div>
         <div class="sidebar-sections">
             {% for section in sections %}
@@ -115,7 +119,7 @@
     </nav>
 
     <!-- Main content area -->
-    <div class="main-content">
+    <main class="main-content" id="main-content">
         <div class="slide-viewport">
             {% set ns = namespace(section_idx=0) %}
             {% for element in elements %}
@@ -143,329 +147,7 @@
             {% endif %}
 
             <div class="slide" data-index="{{ loop.index0 }}" data-element-id="{{ element.element_id }}" data-concepts='{{ element.concepts_tested | tojson }}' {% if loop.first %}style="display:block"{% endif %}>
-
-                {% if element.element_type == "section_intro" %}
-                <span class="element-badge intro-badge">Introduction</span>
-                <div class="section-intro-container">
-                    <h1>{{ element.section_intro.title }}</h1>
-                    <div class="section-intro-content">
-                        {{ element.section_intro.content_html|safe }}
-                    </div>
-                    {% if element.section_intro.source_pages %}
-                    <div class="source-attribution">{{ element.section_intro.source_pages }}</div>
-                    {% endif %}
-                </div>
-
-                {% elif element.element_type == "slide" %}
-                <span class="element-badge slide-badge">Slide</span>
-                {% if element.bloom_level %}<span class="bloom-badge bloom-{{ element.bloom_level }}">{{ element.bloom_level }}</span>{% endif %}
-                <h1>{{ element.slide.title }}</h1>
-                <div class="slide-content">
-                    {{ element.slide.content_html|safe }}
-                </div>
-                {% if element.slide.image_data %}
-                <img class="slide-image" src="{{ element.slide.image_data }}" alt="{{ element.slide.title }}">
-                {% endif %}
-                {% if element.slide.source_pages %}
-                <div class="source-attribution">{{ element.slide.source_pages }}</div>
-                {% endif %}
-
-                {% elif element.element_type == "quiz" %}
-                <span class="element-badge quiz-badge">Quiz</span>
-                {% if element.bloom_level %}<span class="bloom-badge bloom-{{ element.bloom_level }}">{{ element.bloom_level }}</span>{% endif %}
-                <div class="quiz-container">
-                    <div class="quiz-title">{{ element.quiz.title }}</div>
-                    {% for q in element.quiz.questions %}
-                    <div class="quiz-question" data-correct="{{ q.correct_index }}"
-                         data-hint-meta="{{ q.hint_metacognitive|safe }}"
-                         data-hint-strategic="{{ q.hint_strategic|safe }}"
-                         data-hint-eliminate="{{ q.hint_eliminate_index }}"
-                         data-attempts="0">
-                        <div class="quiz-question-text">{{ loop.index }}. {{ q.question|safe }}</div>
-                        <ul class="quiz-options">
-                            {% for option in q.options %}
-                            <li class="quiz-option" data-option-index="{{ loop.index0 }}" onclick="selectOption(this)">
-                                <span class="quiz-option-marker">{{ ['A','B','C','D','E'][loop.index0] }}</span>
-                                <span>{{ option|safe }}</span>
-                            </li>
-                            {% endfor %}
-                        </ul>
-                        <button class="quiz-check-btn" onclick="checkAnswer(this)" disabled>Check Answer</button>
-                        <div class="quiz-hint hint-metacognitive"></div>
-                        <div class="quiz-hint hint-strategic"></div>
-                        <div class="quiz-confidence" style="display:none;">
-                            <div class="confidence-prompt">How confident are you?</div>
-                            <div class="confidence-dots">
-                                <span class="confidence-dot" data-value="1" onclick="selectConfidence(this)">1</span>
-                                <span class="confidence-dot" data-value="2" onclick="selectConfidence(this)">2</span>
-                                <span class="confidence-dot" data-value="3" onclick="selectConfidence(this)">3</span>
-                                <span class="confidence-dot" data-value="4" onclick="selectConfidence(this)">4</span>
-                                <span class="confidence-dot" data-value="5" onclick="selectConfidence(this)">5</span>
-                            </div>
-                            <button class="quiz-check-btn confidence-confirm-btn" onclick="confirmWithConfidence(this)" disabled>Confirm</button>
-                        </div>
-                        <div class="quiz-explanation">{{ q.explanation|safe }}</div>
-                        <div class="quiz-hypercorrection" style="display:none;"></div>
-                    </div>
-                    {% endfor %}
-                    <button class="add-review-btn" onclick="addToReview(this)" title="Add to spaced review">+ Review</button>
-                </div>
-
-                {% elif element.element_type == "flashcard" %}
-                <span class="element-badge flashcard-badge">Flashcard</span>
-                {% if element.bloom_level %}<span class="bloom-badge bloom-{{ element.bloom_level }}">{{ element.bloom_level }}</span>{% endif %}
-                <div class="flashcard-container">
-                    <div class="flashcard" onclick="this.classList.toggle('flipped')">
-                        <div class="flashcard-front">
-                            {{ element.flashcard.front|safe }}
-                            <div class="flashcard-hint">Click to reveal</div>
-                        </div>
-                        <div class="flashcard-back">
-                            {{ element.flashcard.back|safe }}
-                        </div>
-                    </div>
-                </div>
-                <button class="add-review-btn" onclick="addToReview(this)" title="Add to spaced review">+ Review</button>
-
-                {% elif element.element_type == "fill_in_the_blank" %}
-                <span class="element-badge fill-badge">Fill in the Blank</span>
-                {% if element.bloom_level %}<span class="bloom-badge bloom-{{ element.bloom_level }}">{{ element.bloom_level }}</span>{% endif %}
-                <div class="fitb-container" data-answers='{{ element.fill_in_the_blank.answers_json }}' data-hint-first-letter="{{ element.fill_in_the_blank.hint_first_letter|lower }}" data-attempts="0">
-                    {% if element.fill_in_the_blank.hint %}
-                    <div class="fitb-hint" style="display:none;">Hint: {{ element.fill_in_the_blank.hint|safe }}</div>
-                    {% endif %}
-                    <div class="fitb-statement">{{ element.fill_in_the_blank.statement_html|safe }}</div>
-                    <button class="quiz-check-btn" onclick="checkFillBlanks(this)">Check Answers</button>
-                    <button class="add-review-btn" onclick="addToReview(this)" title="Add to spaced review">+ Review</button>
-                </div>
-
-                {% elif element.element_type == "matching" %}
-                <span class="element-badge matching-badge">Matching</span>
-                {% if element.bloom_level %}<span class="bloom-badge bloom-{{ element.bloom_level }}">{{ element.bloom_level }}</span>{% endif %}
-                <div class="matching-container" data-correct='{{ element.matching.correct_json }}' data-pair-explanations='{{ element.matching.pair_explanations_json|safe }}'>
-                    <div class="matching-title">{{ element.matching.title }}</div>
-                    <div class="matching-grid">
-                        {% for item in element.matching.left_items %}
-                        <div class="matching-left-item" data-idx="{{ loop.index0 }}" onclick="selectMatchItem(this, 'left')">{{ item|safe }}</div>
-                        <div class="matching-arrow">&#8594;</div>
-                        <div class="matching-right-item" data-idx="{{ loop.index0 }}" onclick="selectMatchItem(this, 'right')">{{ element.matching.shuffled_right[loop.index0]|safe }}</div>
-                        {% endfor %}
-                    </div>
-                    <div class="matching-explanations" style="display:none;"></div>
-                    <div class="matching-confidence" style="display:none;">
-                        <div class="confidence-prompt">How confident were you?</div>
-                        <div class="confidence-dots">
-                            <span class="confidence-dot" data-value="1" onclick="selectMatchConfidence(this)">1</span>
-                            <span class="confidence-dot" data-value="2" onclick="selectMatchConfidence(this)">2</span>
-                            <span class="confidence-dot" data-value="3" onclick="selectMatchConfidence(this)">3</span>
-                            <span class="confidence-dot" data-value="4" onclick="selectMatchConfidence(this)">4</span>
-                            <span class="confidence-dot" data-value="5" onclick="selectMatchConfidence(this)">5</span>
-                        </div>
-                        <button class="quiz-check-btn confidence-confirm-btn" onclick="confirmMatchConfidence(this)" disabled>Confirm</button>
-                    </div>
-                </div>
-
-                {% elif element.element_type == "ordering" %}
-                <span class="element-badge ordering-badge">Ordering</span>
-                {% if element.bloom_level %}<span class="bloom-badge bloom-{{ element.bloom_level }}">{{ element.bloom_level }}</span>{% endif %}
-                <div class="ordering-container" data-correct-order='{{ element.ordering.correct_order_json }}' data-attempts="0">
-                    <div class="ordering-title">{{ element.ordering.title }}</div>
-                    <p class="ordering-instruction">{{ element.ordering.instruction|safe }}</p>
-                    <ol class="ordering-list">
-                        {% for item in element.ordering.shuffled_items %}
-                        <li class="ordering-item" data-idx="{{ loop.index0 }}">
-                            <span class="ordering-handle">&#9776;</span>
-                            <span class="ordering-text">{{ item|safe }}</span>
-                            <span class="ordering-arrows">
-                                <button class="ordering-arrow-btn" onclick="moveOrderingItem(this, -1)" title="Move up">&#9650;</button>
-                                <button class="ordering-arrow-btn" onclick="moveOrderingItem(this, 1)" title="Move down">&#9660;</button>
-                            </span>
-                        </li>
-                        {% endfor %}
-                    </ol>
-                    {% if element.ordering.hint %}
-                    <div class="ordering-hint" style="display:none;">Hint: {{ element.ordering.hint|safe }}</div>
-                    {% endif %}
-                    <div class="ordering-explanation" style="display:none;">{{ element.ordering.explanation|safe }}</div>
-                    <button class="quiz-check-btn" onclick="checkOrdering(this)">Check Order</button>
-                    <button class="add-review-btn" onclick="addToReview(this)" title="Add to spaced review">+ Review</button>
-                </div>
-
-                {% elif element.element_type == "categorization" %}
-                <span class="element-badge categorization-badge">Categorize</span>
-                {% if element.bloom_level %}<span class="bloom-badge bloom-{{ element.bloom_level }}">{{ element.bloom_level }}</span>{% endif %}
-                <div class="categorization-container" data-items='{{ element.categorization.items_json }}' data-attempts="0">
-                    <div class="categorization-title">{{ element.categorization.title }}</div>
-                    <p class="categorization-instruction">{{ element.categorization.instruction|safe }}</p>
-                    <div class="categorization-categories">
-                        {% for name in element.categorization.category_names %}
-                        <div class="categorization-bucket" data-cat-idx="{{ loop.index0 }}">
-                            <div class="categorization-bucket-title">{{ name|safe }}</div>
-                            <div class="categorization-bucket-items"></div>
-                        </div>
-                        {% endfor %}
-                    </div>
-                    <div class="categorization-pool"></div>
-                    {% if element.categorization.hint %}
-                    <div class="categorization-hint" style="display:none;">Hint: {{ element.categorization.hint|safe }}</div>
-                    {% endif %}
-                    <div class="categorization-explanation" style="display:none;">{{ element.categorization.explanation|safe }}</div>
-                    <button class="quiz-check-btn" onclick="checkCategorization(this)">Check Categories</button>
-                    <button class="add-review-btn" onclick="addToReview(this)" title="Add to spaced review">+ Review</button>
-                </div>
-
-                {% elif element.element_type == "error_detection" %}
-                <span class="element-badge error-detect-badge">Spot the Error</span>
-                {% if element.bloom_level %}<span class="bloom-badge bloom-{{ element.bloom_level }}">{{ element.bloom_level }}</span>{% endif %}
-                <div class="error-detection-container">
-                    <div class="error-detection-title">{{ element.error_detection.title }}</div>
-                    <p class="error-detection-instruction">{{ element.error_detection.instruction|safe }}</p>
-                    {% if element.error_detection.context %}
-                    <p class="error-detection-context">{{ element.error_detection.context|safe }}</p>
-                    {% endif %}
-                    {% for item in element.error_detection.error_items %}
-                    <div class="error-item" data-idx="{{ loop.index0 }}">
-                        <div class="error-statement">{{ loop.index }}. {{ item.statement|safe }}</div>
-                        <button class="quiz-check-btn error-reveal-btn" onclick="revealError(this)">Reveal Error</button>
-                        <div class="error-feedback" style="display:none;">
-                            <div class="error-explanation"><strong>Error:</strong> {{ item.error_explanation|safe }}</div>
-                            <div class="error-corrected"><strong>Corrected:</strong> {{ item.corrected_statement|safe }}</div>
-                        </div>
-                    </div>
-                    {% endfor %}
-                    <button class="add-review-btn" onclick="addToReview(this)" title="Add to spaced review">+ Review</button>
-                </div>
-
-                {% elif element.element_type == "analogy" %}
-                <span class="element-badge analogy-badge">Analogy</span>
-                {% if element.bloom_level %}<span class="bloom-badge bloom-{{ element.bloom_level }}">{{ element.bloom_level }}</span>{% endif %}
-                <div class="analogy-container" data-items='{{ element.analogy.items_json }}' data-attempts="0">
-                    <div class="analogy-title">{{ element.analogy.title }}</div>
-                    <div class="analogy-items"></div>
-                    <button class="add-review-btn" onclick="addToReview(this)" title="Add to spaced review">+ Review</button>
-                </div>
-
-                {% elif element.element_type == "mermaid" %}
-                <span class="element-badge mermaid-badge">Diagram</span>
-                {% if element.bloom_level %}<span class="bloom-badge bloom-{{ element.bloom_level }}">{{ element.bloom_level }}</span>{% endif %}
-                <h2>{{ element.mermaid.title }}</h2>
-                <div class="mermaid-container">
-                    <pre class="mermaid">{{ element.mermaid.diagram_code|safe }}</pre>
-                </div>
-                {% if element.mermaid.caption %}
-                <p class="diagram-caption">{{ element.mermaid.caption|safe }}</p>
-                {% endif %}
-
-                {% elif element.element_type == "concept_map" %}
-                <span class="element-badge cmap-badge">Concept Map</span>
-                {% if element.bloom_level %}<span class="bloom-badge bloom-{{ element.bloom_level }}">{{ element.bloom_level }}</span>{% endif %}
-                <h2>{{ element.concept_map.title }}</h2>
-                <div class="concept-map-container"
-                     id="cmap-{{ loop.index0 }}"
-                     data-nodes='{{ element.concept_map.nodes_json }}'
-                     data-edges='{{ element.concept_map.edges_json }}'
-                     data-blanks='{{ element.concept_map.blank_indices_json }}'>
-                    <svg class="concept-map-svg"></svg>
-                    <div class="cmap-controls">
-                        <button class="quiz-check-btn" onclick="checkConceptMap({{ loop.index0 }})">Check Answers</button>
-                    </div>
-                </div>
-
-                {% elif element.element_type == "interactive_essay" %}
-                {% if element.interactive_essay.is_static %}
-                {# ── Static mode: single-prompt self-explanation ── #}
-                <span class="element-badge explain-badge">Explain</span>
-                {% if element.bloom_level %}<span class="bloom-badge bloom-{{ element.bloom_level }}">{{ element.bloom_level }}</span>{% endif %}
-                <div class="self-explain-container" data-key-points='{{ element.interactive_essay.prompts[0].key_points_json }}' data-min-words="{{ element.interactive_essay.prompts[0].minimum_words }}">
-                    <div class="explain-prompt">
-                        <h2>Explain in Your Own Words</h2>
-                        <div class="explain-prompt-text">{{ element.interactive_essay.prompts[0].prompt|safe }}</div>
-                    </div>
-                    <textarea class="explain-textarea"
-                              placeholder="Type your explanation here (minimum {{ element.interactive_essay.prompts[0].minimum_words }} words)..."
-                              rows="8"
-                              oninput="updateWordCount(this)"></textarea>
-                    <div class="explain-word-count">
-                        <span class="word-count">0</span> / {{ element.interactive_essay.prompts[0].minimum_words }} words minimum
-                    </div>
-                    <button class="explain-submit-btn" onclick="submitExplanation(this)" disabled>
-                        Submit My Explanation
-                    </button>
-                    <div class="explain-rubric" style="display:none;">
-                        <h3>Self-Assessment</h3>
-                        <p>Check each point your explanation covered:</p>
-                        <div class="rubric-checklist"></div>
-                        <div class="rubric-score" style="display:none;">
-                            <p>You covered <span class="score-count">0</span> out of <span class="score-total">0</span> key points.</p>
-                        </div>
-                        <button class="show-model-btn" onclick="showModelResponse(this)">See Model Response</button>
-                        <div class="model-response" style="display:none;">
-                            {{ element.interactive_essay.prompts[0].example_response|safe }}
-                        </div>
-                    </div>
-                    {% if element.interactive_essay.prompts[0].source_pages %}
-                    <div class="source-attribution">{{ element.interactive_essay.prompts[0].source_pages }}</div>
-                    {% endif %}
-                </div>
-                {% else %}
-                {# ── Dynamic mode: multi-prompt essay with optional tutor ── #}
-                <span class="element-badge essay-badge">Interactive Essay</span>
-                {% if element.bloom_level %}<span class="bloom-badge bloom-{{ element.bloom_level }}">{{ element.bloom_level }}</span>{% endif %}
-                <div class="essay-container"
-                     data-threshold="{{ element.interactive_essay.passing_threshold }}"
-                     data-tutor-prompt='{{ element.interactive_essay.tutor_system_prompt_json }}'>
-                    <div class="essay-header">
-                        <h2>{{ element.interactive_essay.title }}</h2>
-                        <p class="essay-subtitle">Synthesize and explain what you've learned</p>
-                        <div class="concepts-tested">
-                            <strong>Concepts tested:</strong>
-                            {% for concept in element.interactive_essay.concepts_tested %}
-                            <span class="concept-tag">{{ concept }}</span>
-                            {% endfor %}
-                        </div>
-                    </div>
-
-                    {% for prompt in element.interactive_essay.prompts %}
-                    <div class="essay-prompt" data-prompt-index="{{ loop.index0 }}"
-                         data-key-points='{{ prompt.key_points_json }}' data-min-words="{{ prompt.minimum_words }}">
-                        <h3>Question {{ loop.index }}</h3>
-                        <div class="essay-prompt-text">{{ prompt.prompt|safe }}</div>
-                        <textarea class="explain-textarea" rows="6"
-                                  placeholder="Minimum {{ prompt.minimum_words }} words..."
-                                  oninput="updateWordCount(this)"></textarea>
-                        <div class="explain-word-count">
-                            <span class="word-count">0</span> / {{ prompt.minimum_words }} words minimum
-                        </div>
-                        <div class="model-response" style="display:none;">
-                            {{ prompt.example_response|safe }}
-                        </div>
-                    </div>
-                    {% endfor %}
-
-                    <button class="essay-submit-btn" onclick="submitEssay(this)" disabled>
-                        Submit All Answers
-                    </button>
-
-                    <div class="essay-results" style="display:none;">
-                        <div class="essay-rubric"></div>
-                        <div class="essay-verdict" style="display:none;"></div>
-                    </div>
-
-                    <div class="llm-tutor-panel" style="display:none;">
-                        <h3>AI Tutor Review</h3>
-                        <p>Get personalized feedback from an AI tutor:</p>
-                        <div class="tutor-chat-history"></div>
-                        <div class="tutor-input-area">
-                            <input type="text" class="tutor-input" placeholder="Ask a follow-up or respond to feedback..."
-                                   onkeydown="if(event.key==='Enter')sendToTutor(this.closest('.llm-tutor-panel').querySelector('.tutor-send-btn'))">
-                            <button class="tutor-send-btn" onclick="sendToTutor(this)">Send</button>
-                        </div>
-                        <div class="tutor-verdict" style="display:none;"></div>
-                    </div>
-                </div>
-                {% endif %}
-
-                {% endif %}
+                {{ element.element_html|safe }}
             </div>
             {% endfor %}
         </div>
@@ -473,14 +155,14 @@
         <div class="nav-bar">
             <button class="nav-btn" id="prevBtn" onclick="navigate(-1)" disabled>Previous</button>
             <div class="progress-info">
-                <span class="progress-text" id="progressText">1 / {{ elements | length }}</span>
+                <span class="progress-text" id="progressText" aria-live="polite">1 / {{ elements | length }}</span>
                 <div class="progress-bar-track">
                     <div class="progress-bar-fill" id="progressFill" style="width: {{ (1 / (elements|length or 1) * 100)|round(1) }}%"></div>
                 </div>
             </div>
             <button class="nav-btn" id="nextBtn" onclick="navigate(1)">Next</button>
         </div>
-    </div>
+    </main>
 </div>
 
 <!-- Mastery gating modal -->
@@ -495,8 +177,8 @@
     </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/contrib/auto-render.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.25/dist/katex.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.25/dist/contrib/auto-render.min.js"></script>
 <script>
 // ── Learner Model ─────────────────────────────────────────────────────────
 {% include '_learner_model.js' %}
@@ -541,6 +223,20 @@ window.__lxpToggleTheme = function() {
     var CHAPTER_NUM = '{{ chapter_number }}';
     var PROGRESS_KEY = 'lxp_' + COURSE_SLUG + '_progress';
     var nextChapterUrl = {{ ("'" + next_chapter.filename + "'")|safe if next_chapter else 'null' }};
+
+    // ── Named constants ───────────────────────────────────────────────────
+    var MASTERY_THRESHOLD = 0.8;          // Score >= this means concept "mastered"; affects mastery checks and progress gating
+    var MASTERY_GOOD_PCT = 80;            // Percentage displayed as mastery threshold; must match MASTERY_THRESHOLD * 100
+    var MASTERY_PARTIAL_PCT = 50;         // Score below this shows red in mastery bar; between this and MASTERY_GOOD_PCT shows yellow
+    var MAX_EXERCISE_ATTEMPTS = 3;        // Max wrong attempts before revealing the answer; applies to quiz, matching, ordering, etc.
+    var MIN_SCORE_FLOOR = 0.2;            // Minimum score awarded for a correct answer on late attempts; prevents 0 scores
+    var ESSAY_PASS_THRESHOLD = 0.7;       // Fraction of key points needed to pass a static essay; 0.7 = 70%
+    var TUTOR_TEMPERATURE = 0.7;          // LLM temperature for dynamic essay tutor responses; higher = more creative
+    var MASTERY_UPDATE_DELAY_MS = 600;    // Delay before updating mastery indicator after answer; lets animation settle
+    var CONFIDENCE_HYPER_THRESHOLD = 4;   // Confidence level at which a wrong answer triggers hypercorrection tagging
+    var FSRS_EASY_THRESHOLD = 0.85;       // Score >= this maps to FSRS Easy (grade 4)
+    var FSRS_GOOD_THRESHOLD = 0.6;        // Score >= this maps to FSRS Good (grade 3)
+    var FSRS_HARD_THRESHOLD = 0.3;        // Score >= this maps to FSRS Hard (grade 2); below = Again (grade 1)
 
     // ── Learner model instance ───────────────────────────────────────────
     var learnerModel = __lxpCreateLearnerModel(COURSE_SLUG);
@@ -594,8 +290,6 @@ window.__lxpToggleTheme = function() {
     function renderMath(el) {
         renderMathInElement(el, {
             delimiters: [
-                {left: '$$', right: '$$', display: true},
-                {left: '$', right: '$', display: false},
                 {left: '\\(', right: '\\)', display: false},
                 {left: '\\[', right: '\\]', display: true}
             ],
@@ -787,7 +481,7 @@ window.__lxpToggleTheme = function() {
         var targetSectionIdx = findCurrentSection(startIndex);
         if (targetSectionIdx > currentSectionIdx) {
             var mastery = getSectionMasteryScore(currentSectionIdx);
-            if (mastery >= 0 && mastery < 0.8) {
+            if (mastery >= 0 && mastery < MASTERY_THRESHOLD) {
                 pendingNavTarget = startIndex;
                 showMasteryModal(currentSectionIdx, mastery);
                 return;
@@ -804,7 +498,7 @@ window.__lxpToggleTheme = function() {
         var modal = document.getElementById('masteryModal');
         var text = document.getElementById('masteryModalText');
         text.textContent = 'You scored ' + pct + '% on this section. ' +
-            'Mastery requires 80%. Would you like to review before continuing?';
+            'Mastery requires ' + MASTERY_GOOD_PCT + '%. Would you like to review before continuing?';
         modal.style.display = 'flex';
     }
 
@@ -852,7 +546,7 @@ window.__lxpToggleTheme = function() {
             var tag = e.target.tagName;
             if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
             if (e.target.closest('.ordering-item') || e.target.closest('.categorization-item')) return;
-            if (e.target.closest('.concept-map-container') || e.target.closest('pre')) return;
+            if (e.target.closest('.flashcard') || e.target.closest('.concept-map-container') || e.target.closest('pre')) return;
             startX = e.touches[0].clientX;
             startY = e.touches[0].clientY;
             tracking = true;
@@ -867,6 +561,25 @@ window.__lxpToggleTheme = function() {
                 if (dx < 0) navigate(1);
                 else navigate(-1);
             }
+        }, { passive: true });
+    })();
+
+    // ── Flashcard swipe-to-flip (mobile) ───────────────────────────────
+    (function() {
+        var SWIPE_THRESHOLD = 40;
+        document.addEventListener('touchstart', function(e) {
+            var card = e.target.closest('.flashcard');
+            if (!card) return;
+            card._swipeX = e.touches[0].clientX;
+        }, { passive: true });
+        document.addEventListener('touchend', function(e) {
+            var card = e.target.closest('.flashcard');
+            if (!card || card._swipeX === undefined) return;
+            var dx = e.changedTouches[0].clientX - card._swipeX;
+            if (Math.abs(dx) > SWIPE_THRESHOLD) {
+                card.classList.toggle('flipped');
+            }
+            delete card._swipeX;
         }, { passive: true });
     })();
 
@@ -910,14 +623,14 @@ window.__lxpToggleTheme = function() {
         });
     })();
 
-    // ── Score tracking ─────────────────────────────────────────────────
-    function recordScore(slideIndex, isCorrect, attempts, confidence, bloomLevel) {
-        // Record in learner model (concept-level tracking)
+    // ── Score tracking (continuous scoring) ──────────────────────────
+    // score: float 0.0–1.0 (e.g. 3/5 matching correct = 0.6)
+    // confidence: optional 0-5 from confidence prompt
+    function recordScore(slideIndex, score, confidence, bloomLevel) {
+        var isCorrect = score >= 0.5;
         var slideEl = slides[slideIndex];
         if (slideEl) {
             var info = getSlideConceptsAndBloom(slideEl);
-            // Compute continuous score: 1.0 for correct first try, scaled down by attempts
-            var score = isCorrect ? Math.max(0.2, 1.0 / Math.max(1, attempts)) : 0.0;
             learnerModel.recordAnswer(
                 info.concepts, info.bloom || bloomLevel, isCorrect,
                 typeof confidence === 'number' ? confidence : undefined,
@@ -925,13 +638,15 @@ window.__lxpToggleTheme = function() {
             );
             updateMasteryNavIndicator();
 
-            // Gap 4: Update FSRS card if it exists in localStorage
+            // Update FSRS card — grade derived from continuous score
             var flashcardKey = 'lxp_' + COURSE_SLUG + '_flashcards';
             try {
                 var flashcards = JSON.parse(localStorage.getItem(flashcardKey) || '{}');
                 var elemId = slideEl.getAttribute('data-element-id');
                 if (elemId && flashcards[elemId] && typeof FSRS !== 'undefined') {
-                    var grade = isCorrect ? (attempts <= 1 ? 4 : 3) : 1;
+                    var grade = score >= FSRS_EASY_THRESHOLD ? 4 :
+                                score >= FSRS_GOOD_THRESHOLD ? 3 :
+                                score >= FSRS_HARD_THRESHOLD ? 2 : 1;
                     flashcards[elemId] = FSRS.scheduleCard(flashcards[elemId], grade);
                     localStorage.setItem(flashcardKey, JSON.stringify(flashcards));
                 }
@@ -943,29 +658,28 @@ window.__lxpToggleTheme = function() {
         if (!ch.scores) ch.scores = {};
         if (!ch.scores[slideIndex]) {
             ch.scores[slideIndex] = {
-                correct: isCorrect,
-                attempts: attempts,
+                score: score,
                 confidence: confidence || 0,
                 bloom: bloomLevel || ''
             };
         }
-        // Update section mastery
+        // Update section mastery (continuous average)
         if (!ch.sectionMastery) ch.sectionMastery = {};
         var sectionIdx = findCurrentSection(slideIndex);
         var range = sectionRanges[sectionIdx];
         if (range) {
             var attempted = 0;
-            var correctCount = 0;
+            var totalScore = 0;
             for (var i = range.start; i < range.start + range.count; i++) {
                 if (ch.scores[i]) {
                     attempted++;
-                    if (ch.scores[i].correct) correctCount++;
+                    totalScore += ch.scores[i].score;
                 }
             }
             ch.sectionMastery[sectionIdx] = {
-                score: attempted > 0 ? correctCount / attempted : -1,
+                score: attempted > 0 ? totalScore / attempted : -1,
                 attempted: attempted,
-                correct: correctCount
+                total_score: totalScore
             };
         }
         chapters[CHAPTER_NUM] = ch;
@@ -1088,7 +802,7 @@ window.__lxpToggleTheme = function() {
         question.querySelector('.quiz-explanation').classList.add('visible');
 
         // Hypercorrection: high confidence + wrong
-        if (confidence >= 4 && !isCorrect) {
+        if (confidence >= CONFIDENCE_HYPER_THRESHOLD && !isCorrect) {
             var hyperEl = question.querySelector('.quiz-hypercorrection');
             hyperEl.textContent = 'You were quite confident, but this is a common misconception. ' +
                 'Research shows that high-confidence errors, once corrected, are remembered ' +
@@ -1096,11 +810,12 @@ window.__lxpToggleTheme = function() {
             hyperEl.style.display = 'block';
         }
 
-        // Record score
+        // Record score (continuous: 1.0 first try, scaled by attempts)
         var slideIdx = parseInt(question.closest('.slide').dataset.index);
         var bloomBadge = question.closest('.slide').querySelector('.bloom-badge');
         var bloom = bloomBadge ? bloomBadge.textContent.trim() : '';
-        recordScore(slideIdx, isCorrect, attempts, confidence, bloom);
+        var quizScore = isCorrect ? Math.max(MIN_SCORE_FLOOR, 1.0 / Math.max(1, attempts)) : 0.0;
+        recordScore(slideIdx, quizScore, confidence, bloom);
     };
 
     // ── Fill-in-the-blank interaction (multi-attempt) ────────────────────
@@ -1125,20 +840,23 @@ window.__lxpToggleTheme = function() {
             }
         });
 
-        if (allCorrect || attempts >= 3) {
+        if (allCorrect || attempts >= MAX_EXERCISE_ATTEMPTS) {
             btn.disabled = true;
             btn.textContent = allCorrect ? 'Correct!' : 'Showing answers';
-            if (!allCorrect) {
-                inputs.forEach(function(input, i) {
-                    if (!input.classList.contains('correct')) {
-                        input.value = answers[i];
-                        input.classList.remove('incorrect');
-                        input.classList.add('revealed');
-                    }
-                });
-            }
+            var correctBlanks = 0;
+            inputs.forEach(function(input, i) {
+                if (input.classList.contains('correct')) {
+                    correctBlanks++;
+                } else if (!allCorrect) {
+                    input.value = answers[i];
+                    input.classList.remove('incorrect');
+                    input.classList.add('revealed');
+                }
+            });
             var slideIdx = parseInt(container.closest('.slide').dataset.index);
-            recordScore(slideIdx, allCorrect, attempts, 0, '');
+            var fraction = inputs.length > 0 ? correctBlanks / inputs.length : 0;
+            var fitbScore = fraction * Math.max(MIN_SCORE_FLOOR, 1.0 / Math.max(1, attempts));
+            recordScore(slideIdx, fitbScore, 0, '');
         } else if (attempts === 1) {
             var hintEl = container.querySelector('.fitb-hint');
             if (hintEl) { hintEl.style.display = 'block'; renderMath(hintEl); }
@@ -1167,12 +885,12 @@ window.__lxpToggleTheme = function() {
 
         // ── Resolve CSS variables to actual colors (SVG markers can't use var()) ──
         var cs = getComputedStyle(document.documentElement);
-        var colorAccent = cs.getPropertyValue('--accent').trim();
-        var colorBorder = cs.getPropertyValue('--border').trim();
-        var colorSurface = cs.getPropertyValue('--surface').trim();
-        var colorText = cs.getPropertyValue('--text').trim();
-        var colorTextMuted = cs.getPropertyValue('--text-muted').trim();
-        var colorBg = cs.getPropertyValue('--bg').trim();
+        var colorAccent = cs.getPropertyValue('--color-accent').trim();
+        var colorBorder = cs.getPropertyValue('--color-border').trim();
+        var colorSurface = cs.getPropertyValue('--color-surface').trim();
+        var colorText = cs.getPropertyValue('--color-fg').trim();
+        var colorTextMuted = cs.getPropertyValue('--color-fg-muted').trim();
+        var colorBg = cs.getPropertyValue('--color-bg').trim();
 
         // ── Text measurement ──
         var FONT_FAMILY = 'system-ui,-apple-system,BlinkMacSystemFont,sans-serif';
@@ -1521,19 +1239,19 @@ window.__lxpToggleTheme = function() {
             var userAnswer = input.value.trim().toLowerCase();
             var correct = input.dataset.correctLabel.toLowerCase();
             if (userAnswer === correct) {
-                input.style.borderColor = 'var(--success)';
-                input.style.color = 'var(--success)';
+                input.style.borderColor = 'var(--color-success)';
+                input.style.color = 'var(--color-success)';
                 input.classList.add('cmap-correct');
             } else {
-                input.style.borderColor = 'var(--error)';
-                input.style.color = 'var(--error)';
+                input.style.borderColor = 'var(--color-error)';
+                input.style.color = 'var(--color-error)';
                 input.classList.remove('cmap-correct');
                 allCorrect = false;
             }
         });
 
         var btn = container.querySelector('.quiz-check-btn');
-        if (allCorrect || attempts >= 3) {
+        if (allCorrect || attempts >= MAX_EXERCISE_ATTEMPTS) {
             // Final state: reveal answers if wrong, disable
             if (btn) {
                 btn.disabled = true;
@@ -1543,14 +1261,18 @@ window.__lxpToggleTheme = function() {
                 inputs.forEach(function(input) {
                     if (!input.classList.contains('cmap-correct')) {
                         input.value = input.dataset.correctLabel;
-                        input.style.borderColor = 'var(--warning)';
-                        input.style.color = 'var(--warning)';
+                        input.style.borderColor = 'var(--color-warning)';
+                        input.style.color = 'var(--color-warning)';
                         input.classList.add('cmap-revealed');
                     }
                 });
             }
             var slideIdx = parseInt(container.closest('.slide').dataset.index);
-            recordScore(slideIdx, allCorrect, attempts, 0, '');
+            var cmapCorrect = 0;
+            inputs.forEach(function(input) { if (input.classList.contains('cmap-correct')) cmapCorrect++; });
+            var cmapFraction = inputs.length > 0 ? cmapCorrect / inputs.length : 0;
+            var cmapScore = cmapFraction * Math.max(MIN_SCORE_FLOOR, 1.0 / Math.max(1, attempts));
+            recordScore(slideIdx, cmapScore, 0, '');
         } else if (attempts === 1) {
             if (btn) btn.textContent = 'Try Again';
         } else if (attempts === 2) {
@@ -1630,7 +1352,7 @@ window.__lxpToggleTheme = function() {
                     matchState.left = null;
                     matchState.right = null;
                     matchState.animating = false;
-                }, 600);
+                }, MASTERY_UPDATE_DELAY_MS);
                 return;
             }
             matchState.left = null;
@@ -1658,9 +1380,11 @@ window.__lxpToggleTheme = function() {
 
         var slideIdx = parseInt(container.closest('.slide').dataset.index);
         var wrongAttempts = parseInt(container.dataset.matchWrongAttempts || '0');
+        var totalPairs = container.querySelectorAll('.matching-left-item').length;
+        var matchScore = Math.max(MIN_SCORE_FLOOR, totalPairs / (totalPairs + wrongAttempts));
         var bloomBadge = container.closest('.slide').querySelector('.bloom-badge');
         var bloom = bloomBadge ? bloomBadge.textContent.trim() : '';
-        recordScore(slideIdx, true, wrongAttempts + 1, confidence, bloom);
+        recordScore(slideIdx, matchScore, confidence, bloom);
     };
 
     // ── Ordering interaction ─────────────────────────────────────────────
@@ -1697,7 +1421,7 @@ window.__lxpToggleTheme = function() {
             }
         });
 
-        if (allCorrect || attempts >= 3) {
+        if (allCorrect || attempts >= MAX_EXERCISE_ATTEMPTS) {
             btn.disabled = true;
             btn.textContent = allCorrect ? 'Correct Order!' : 'Showing correct order';
             if (!allCorrect) {
@@ -1721,7 +1445,11 @@ window.__lxpToggleTheme = function() {
             if (explEl) explEl.style.display = 'block';
             container.querySelectorAll('.ordering-arrow-btn').forEach(function(b) { b.disabled = true; });
             var slideIdx = parseInt(container.closest('.slide').dataset.index);
-            recordScore(slideIdx, allCorrect, attempts, 0, '');
+            var orderCorrect = 0;
+            items.forEach(function(item, i) { if (correctOrder[i] === i) orderCorrect++; });
+            var orderFraction = items.length > 0 ? orderCorrect / items.length : 0;
+            var orderScore = orderFraction * Math.max(MIN_SCORE_FLOOR, 1.0 / Math.max(1, attempts));
+            recordScore(slideIdx, orderScore, 0, '');
         } else if (attempts === 1) {
             var hintEl = container.querySelector('.ordering-hint');
             if (hintEl) { hintEl.style.display = 'block'; renderMath(hintEl); }
@@ -1797,7 +1525,7 @@ window.__lxpToggleTheme = function() {
         var poolItems = container.querySelectorAll('.categorization-pool .categorization-item');
         if (poolItems.length > 0) allCorrect = false;
 
-        if (allCorrect || attempts >= 3) {
+        if (allCorrect || attempts >= MAX_EXERCISE_ATTEMPTS) {
             btn.disabled = true;
             btn.textContent = allCorrect ? 'All Correct!' : 'Showing answers';
             if (!allCorrect) {
@@ -1819,7 +1547,10 @@ window.__lxpToggleTheme = function() {
             var explEl = container.querySelector('.categorization-explanation');
             if (explEl) explEl.style.display = 'block';
             var slideIdx = parseInt(container.closest('.slide').dataset.index);
-            recordScore(slideIdx, allCorrect, attempts, 0, '');
+            var catTotal = totalItems + poolItems.length;
+            var catFraction = catTotal > 0 ? correctCount / catTotal : 0;
+            var catScore = catFraction * Math.max(MIN_SCORE_FLOOR, 1.0 / Math.max(1, attempts));
+            recordScore(slideIdx, catScore, 0, '');
         } else if (attempts === 1) {
             var hintEl = container.querySelector('.categorization-hint');
             if (hintEl) { hintEl.style.display = 'block'; renderMath(hintEl); }
@@ -1844,7 +1575,107 @@ window.__lxpToggleTheme = function() {
         });
         if (allRevealed) {
             var slideIdx = parseInt(container.closest('.slide').dataset.index);
-            recordScore(slideIdx, true, 1, 0, '');
+            recordScore(slideIdx, 1.0, 0, '');
+        }
+    };
+
+    // ── Worked example interaction ─────────────────────────────────────
+
+    window.selectWorkedExampleOption = function(el) {
+        var container = el.closest('.worked-example-container');
+        if (container.dataset.challengeAttempted === 'true') return;
+        container.querySelectorAll('.worked-example-option').forEach(function(o) {
+            o.classList.remove('selected');
+        });
+        el.classList.add('selected');
+        container.querySelector('.quiz-check-btn').disabled = false;
+    };
+
+    window.checkWorkedExampleChallenge = function(btn) {
+        var container = btn.closest('.worked-example-container');
+        if (container.dataset.challengeAttempted === 'true') return;
+
+        var selected = container.querySelector('.worked-example-option.selected');
+        if (!selected) return;
+
+        container.dataset.challengeAttempted = 'true';
+        btn.style.display = 'none';
+
+        var correctIdx = parseInt(container.dataset.challengeCorrect);
+        var selectedIdx = parseInt(selected.dataset.optionIndex);
+        var isCorrect = selectedIdx === correctIdx;
+
+        // Mark correct/wrong
+        var options = container.querySelectorAll('.worked-example-option');
+        options[correctIdx].classList.add('correct');
+        if (!isCorrect) selected.classList.add('wrong');
+
+        // Disable further selection
+        options.forEach(function(o) { o.style.pointerEvents = 'none'; });
+
+        // Store result for scoring
+        container.dataset.challengeResult = isCorrect ? '1' : '0';
+
+        // Show explanation
+        var expl = container.querySelector('.worked-example-challenge-explanation');
+        if (expl) { expl.style.display = 'block'; renderMath(expl); }
+
+        // Show solution section with first step available
+        var solution = container.querySelector('.worked-example-solution');
+        solution.style.display = 'block';
+        renderMath(solution);
+    };
+
+    window.revealWorkedExampleStep = function(btn, stepIndex) {
+        var container = btn.closest('.worked-example-container');
+        var step = btn.closest('.worked-example-step');
+        var body = step.querySelector('.worked-example-step-body');
+        var stepCount = parseInt(container.dataset.stepCount);
+
+        // Toggle if already revealed
+        if (step.classList.contains('revealed')) {
+            var isHidden = body.style.display === 'none';
+            body.style.display = isHidden ? 'block' : 'none';
+            return;
+        }
+
+        // Only allow revealing steps in order
+        var revealed = parseInt(container.dataset.stepsRevealed || '0');
+        if (stepIndex > revealed) return;
+
+        // Reveal this step
+        step.classList.add('revealed');
+        body.style.display = 'block';
+        renderMath(body);
+        container.dataset.stepsRevealed = (revealed + 1).toString();
+
+        // Track timestamp for engagement scoring
+        if (!container._stepTimestamps) container._stepTimestamps = [];
+        container._stepTimestamps.push(Date.now());
+
+        // If all steps revealed, show final answer and score
+        if (revealed + 1 >= stepCount) {
+            var finalEl = container.querySelector('.worked-example-final');
+            if (finalEl) { finalEl.style.display = 'block'; renderMath(finalEl); }
+
+            // Calculate score
+            var challengeCorrect = container.dataset.challengeResult === '1';
+            var score;
+            if (challengeCorrect) {
+                score = 1.0;
+            } else {
+                // Engagement-based scoring for wrong challenge answers
+                var ts = container._stepTimestamps;
+                var rapidClicks = 0;
+                for (var i = 1; i < ts.length; i++) {
+                    if (ts[i] - ts[i - 1] < 1500) rapidClicks++;
+                }
+                var engagementRatio = ts.length > 1 ? 1 - (rapidClicks / (ts.length - 1)) : 1;
+                score = 0.3 + (0.3 * engagementRatio);
+            }
+
+            var slideIdx = parseInt(container.closest('.slide').dataset.index);
+            recordScore(slideIdx, score, 0, '');
         }
     };
 
@@ -1895,7 +1726,7 @@ window.__lxpToggleTheme = function() {
                     var attempts = parseInt(qDiv.dataset.attempts) + 1;
                     qDiv.dataset.attempts = attempts;
 
-                    if (selIdx === correctIdx || attempts >= 3) {
+                    if (selIdx === correctIdx || attempts >= MAX_EXERCISE_ATTEMPTS) {
                         qDiv.classList.add('analogy-answered');
                         var opts = qDiv.querySelectorAll('.analogy-option');
                         opts[correctIdx].classList.add('analogy-correct');
@@ -1928,18 +1759,20 @@ window.__lxpToggleTheme = function() {
                 var questions = container.querySelectorAll('.analogy-question');
                 var allDone = true;
                 var totalAttempts = 0;
-                var allCorrect = true;
+                var correctItems = 0;
                 questions.forEach(function(q) {
                     if (!q.classList.contains('analogy-answered')) { allDone = false; return; }
                     totalAttempts += parseInt(q.dataset.attempts);
                     var sel = q.querySelector('.analogy-option.analogy-selected, .analogy-option.analogy-wrong');
-                    var correct = q.querySelector('.analogy-option.analogy-correct');
-                    if (sel && !sel.classList.contains('analogy-correct')) allCorrect = false;
+                    if (sel && sel.classList.contains('analogy-correct')) correctItems++;
                 });
                 if (allDone) {
                     observer.disconnect();
                     var slideIdx = parseInt(container.closest('.slide').dataset.index);
-                    recordScore(slideIdx, allCorrect, Math.ceil(totalAttempts / questions.length), 0, '');
+                    var analogyFraction = questions.length > 0 ? correctItems / questions.length : 0;
+                    var avgAttempts = questions.length > 0 ? totalAttempts / questions.length : 1;
+                    var analogyScore = analogyFraction * Math.max(MIN_SCORE_FLOOR, 1.0 / Math.max(1, avgAttempts));
+                    recordScore(slideIdx, analogyScore, 0, '');
                 }
             });
             observer.observe(itemsDiv, { attributes: true, subtree: true, attributeFilter: ['class'] });
@@ -1957,6 +1790,8 @@ window.__lxpToggleTheme = function() {
             var dueCount = 0;
             keys.forEach(function(k) {
                 var c = flashcards[k];
+                // Only count intentional items (explicitly added or reviewed at least once)
+                if (c.autoCache && !c.addedToReview && c.reps === 0) return;
                 if (c.reps === 0 || !c.nextReview || c.nextReview <= now) dueCount++;
             });
             var badge = document.getElementById('reviewNavBadge');
@@ -1997,6 +1832,16 @@ window.__lxpToggleTheme = function() {
         try { flashcards = JSON.parse(localStorage.getItem(flashcardKey) || '{}'); } catch(e) {}
 
         if (flashcards[elementId]) {
+            if (flashcards[elementId].autoCache && !flashcards[elementId].addedToReview) {
+                // Upgrade auto-cached item to explicitly added
+                flashcards[elementId].addedToReview = true;
+                delete flashcards[elementId].autoCache;
+                try { localStorage.setItem(flashcardKey, JSON.stringify(flashcards)); } catch(e) {}
+                btn.textContent = 'Added to review!';
+                btn.disabled = true;
+                updateReviewNavBadge();
+                return;
+            }
             btn.textContent = 'Already added';
             btn.disabled = true;
             return;
@@ -2030,7 +1875,8 @@ window.__lxpToggleTheme = function() {
             reps: 0, lapses: 0,
             front: front, back: back,
             chapterNum: parseInt(CHAPTER_NUM), sectionTitle: sectionTitle,
-            concepts: concepts, bloom: bloom
+            concepts: concepts, bloom: bloom,
+            addedToReview: true
         };
 
         try { localStorage.setItem(flashcardKey, JSON.stringify(flashcards)); } catch(e) {}
@@ -2072,7 +1918,8 @@ window.__lxpToggleTheme = function() {
                             front: front.childNodes[0] ? front.childNodes[0].innerHTML || front.childNodes[0].textContent.trim() : '',
                             back: back.innerHTML,
                             chapterNum: parseInt(CHAPTER_NUM), sectionTitle: sectionTitle,
-                            concepts: concepts
+                            concepts: concepts,
+                            autoCache: true
                         };
                     }
                 }
@@ -2090,6 +1937,7 @@ window.__lxpToggleTheme = function() {
                         type: 'quiz', chapter: parseInt(CHAPTER_NUM),
                         section: sectionTitle, bloom: bloom, concepts: concepts,
                         reps: 0, difficulty: 0, stability: 0, lastReview: null, nextReview: null, lapses: 0,
+                        autoCache: true,
                         data: { question: q.querySelector('.quiz-question-text').innerHTML,
                             options: opts, correct: parseInt(q.dataset.correct),
                             explanation: q.querySelector('.quiz-explanation').innerHTML,
@@ -2106,6 +1954,7 @@ window.__lxpToggleTheme = function() {
                     type: 'fitb', chapter: parseInt(CHAPTER_NUM),
                     section: sectionTitle, bloom: bloom, concepts: concepts,
                     reps: 0, difficulty: 0, stability: 0, lastReview: null, nextReview: null, lapses: 0,
+                    autoCache: true,
                     data: { answers: JSON.parse(fitbEl.dataset.answers || '[]'),
                         hint: fitbEl.querySelector('.fitb-hint') ? fitbEl.querySelector('.fitb-hint').innerHTML : '',
                         statement_html: fitbEl.querySelector('.fitb-statement') ? fitbEl.querySelector('.fitb-statement').innerHTML : '' }
@@ -2119,6 +1968,7 @@ window.__lxpToggleTheme = function() {
                     type: 'matching', chapter: parseInt(CHAPTER_NUM),
                     section: sectionTitle, bloom: bloom, concepts: concepts,
                     reps: 0, difficulty: 0, stability: 0, lastReview: null, nextReview: null, lapses: 0,
+                    autoCache: true,
                     data: {
                         pairs: JSON.parse(matchEl.dataset.correct || '{}'),
                         title: matchEl.querySelector('.matching-title') ? matchEl.querySelector('.matching-title').innerHTML : '',
@@ -2137,6 +1987,7 @@ window.__lxpToggleTheme = function() {
                     type: 'self_explain', chapter: parseInt(CHAPTER_NUM),
                     section: sectionTitle, bloom: bloom, concepts: concepts,
                     reps: 0, difficulty: 0, stability: 0, lastReview: null, nextReview: null, lapses: 0,
+                    autoCache: true,
                     data: {
                         prompt: sePrompt ? sePrompt.innerHTML : '',
                         rubric: JSON.parse(seEl.getAttribute('data-key-points') || '[]'),
@@ -2156,6 +2007,7 @@ window.__lxpToggleTheme = function() {
                     type: 'ordering', chapter: parseInt(CHAPTER_NUM),
                     section: sectionTitle, bloom: bloom, concepts: concepts,
                     reps: 0, difficulty: 0, stability: 0, lastReview: null, nextReview: null, lapses: 0,
+                    autoCache: true,
                     data: {
                         title: orderEl.querySelector('.ordering-title') ? orderEl.querySelector('.ordering-title').innerHTML : '',
                         instruction: orderEl.querySelector('.ordering-instruction') ? orderEl.querySelector('.ordering-instruction').innerHTML : '',
@@ -2174,6 +2026,7 @@ window.__lxpToggleTheme = function() {
                     type: 'categorization', chapter: parseInt(CHAPTER_NUM),
                     section: sectionTitle, bloom: bloom, concepts: concepts,
                     reps: 0, difficulty: 0, stability: 0, lastReview: null, nextReview: null, lapses: 0,
+                    autoCache: true,
                     data: {
                         title: catEl.querySelector('.categorization-title') ? catEl.querySelector('.categorization-title').innerHTML : '',
                         instruction: catEl.querySelector('.categorization-instruction') ? catEl.querySelector('.categorization-instruction').innerHTML : '',
@@ -2202,6 +2055,7 @@ window.__lxpToggleTheme = function() {
                     type: 'error_detection', chapter: parseInt(CHAPTER_NUM),
                     section: sectionTitle, bloom: bloom, concepts: concepts,
                     reps: 0, difficulty: 0, stability: 0, lastReview: null, nextReview: null, lapses: 0,
+                    autoCache: true,
                     data: {
                         title: errEl.querySelector('.error-detection-title') ? errEl.querySelector('.error-detection-title').innerHTML : '',
                         instruction: errEl.querySelector('.error-detection-instruction') ? errEl.querySelector('.error-detection-instruction').innerHTML : '',
@@ -2218,9 +2072,27 @@ window.__lxpToggleTheme = function() {
                     type: 'analogy', chapter: parseInt(CHAPTER_NUM),
                     section: sectionTitle, bloom: bloom, concepts: concepts,
                     reps: 0, difficulty: 0, stability: 0, lastReview: null, nextReview: null, lapses: 0,
+                    autoCache: true,
                     data: {
                         title: analogyEl.querySelector('.analogy-title') ? analogyEl.querySelector('.analogy-title').textContent.trim() : '',
                         items: JSON.parse(analogyEl.dataset.items || '[]')
+                    }
+                });
+            }
+
+            // Cache worked example exercises
+            var weEl = slideEl.querySelector('.worked-example-container');
+            if (weEl) {
+                exercises.push({
+                    type: 'worked_example', chapter: parseInt(CHAPTER_NUM),
+                    section: sectionTitle, bloom: bloom, concepts: concepts,
+                    reps: 0, difficulty: 0, stability: 0, lastReview: null, nextReview: null, lapses: 0,
+                    autoCache: true,
+                    data: {
+                        title: weEl.querySelector('.worked-example-title') ? weEl.querySelector('.worked-example-title').textContent.trim() : '',
+                        problem: weEl.querySelector('.worked-example-problem') ? weEl.querySelector('.worked-example-problem').innerHTML : '',
+                        steps: JSON.parse(weEl.dataset.steps || '[]'),
+                        finalAnswer: weEl.querySelector('.worked-example-final-content') ? weEl.querySelector('.worked-example-final-content').innerHTML : ''
                     }
                 });
             }
@@ -2304,7 +2176,7 @@ window.__lxpToggleTheme = function() {
         var slideIndex = Array.prototype.indexOf.call(slides, slideEl);
         var bloomBadge = slideEl.querySelector('.bloom-badge');
         var bloom = bloomBadge ? bloomBadge.textContent.trim() : '';
-        recordScore(slideIndex, false, 1, 0, bloom);
+        recordScore(slideIndex, 0.0, 0, bloom);
     };
 
     function updateRubricScore(container) {
@@ -2330,7 +2202,7 @@ window.__lxpToggleTheme = function() {
         var bloomBadge = slideEl.querySelector('.bloom-badge');
         var bloom = bloomBadge ? bloomBadge.textContent.trim() : '';
         var fraction = checkboxes.length > 0 ? checked / checkboxes.length : 0;
-        recordScore(slideIndex, fraction >= 0.7, 1, fraction, bloom);
+        recordScore(slideIndex, fraction, 0, bloom);
     }
 
     function showModelResponse(container) {
@@ -2449,12 +2321,12 @@ window.__lxpToggleTheme = function() {
             showRetryOptions(essayEl);
         }
 
-        // Update score tracking
+        // Update score tracking (continuous)
         var slideEl = essayEl.closest('.slide');
         var slideIndex = Array.prototype.indexOf.call(slides, slideEl);
         var bloomBadge = slideEl.querySelector('.bloom-badge');
         var bloom = bloomBadge ? bloomBadge.textContent.trim() : '';
-        recordScore(slideIndex, fraction >= threshold, 1, fraction, bloom);
+        recordScore(slideIndex, fraction, 0, bloom);
     }
 
     function markEssayComplete(essayEl) {
@@ -2535,7 +2407,7 @@ window.__lxpToggleTheme = function() {
                 'Content-Type': 'application/json',
                 'Authorization': 'Bearer ' + apiKey
             },
-            body: JSON.stringify({ model: model, messages: messages, temperature: 0.7 })
+            body: JSON.stringify({ model: model, messages: messages, temperature: TUTOR_TEMPERATURE })
         })
         .then(function(res) {
             if (!res.ok) throw new Error('API error: ' + res.status);

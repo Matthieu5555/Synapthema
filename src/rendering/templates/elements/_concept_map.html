@@ -1,0 +1,13 @@
+<span class="element-badge cmap-badge">Concept Map</span>
+{% if element.bloom_level %}<span class="bloom-badge bloom-{{ element.bloom_level }}">{{ element.bloom_level }}</span>{% endif %}
+<h2>{{ element.concept_map.title }}</h2>
+<div class="concept-map-container"
+     id="cmap-{{ element.element_index }}"
+     data-nodes='{{ element.concept_map.nodes_json|safe }}'
+     data-edges='{{ element.concept_map.edges_json|safe }}'
+     data-blanks='{{ element.concept_map.blank_indices_json|safe }}'>
+    <svg class="concept-map-svg"></svg>
+    <div class="cmap-controls">
+        <button class="quiz-check-btn" onclick="checkConceptMap({{ element.element_index }})">Check Answers</button>
+    </div>
+</div>

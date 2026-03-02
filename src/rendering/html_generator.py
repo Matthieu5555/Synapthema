@@ -1,12 +1,12 @@
 """HTML rendering — the deep module for Stage 3.
 
-Single public entry point: render_course(). Takes a sequence of TrainingModules
+Internal entry point: _render_course(). Takes a sequence of TrainingModules
 from Stage 2 and produces self-contained HTML files — one per chapter plus
 an index page. All CSS and JS are inlined for zero-dependency output.
 
-Supports all 13 element types: section intros, slides, mermaid diagrams, quizzes,
+Supports all 14 element types: section intros, slides, mermaid diagrams, quizzes,
 flashcards, fill-in-the-blank, matching, ordering, categorization, error detection,
-analogy, concept maps, and interactive essays. Includes KaTeX for math rendering,
+analogy, worked examples, concept maps, and interactive essays. Includes KaTeX for math rendering,
 Bloom's Taxonomy badges, markdown rendering, and currency/LaTeX-aware fill-in-the-blank.
 """
 
@@ -31,6 +31,7 @@ from src.transformation.types import (
     AnalogyElement,
     CategorizationElement,
     ConceptMapElement,
+    CourseCapabilities,
     ErrorDetectionElement,
     FillInBlankElement,
     FlashcardElement,
@@ -42,6 +43,7 @@ from src.transformation.types import (
     SectionIntroElement,
     SlideElement,
     TrainingModule,
+    WorkedExampleElement,
     TrainingSection,
 )
 
@@ -50,7 +52,18 @@ logger = logging.getLogger(__name__)
 # Directory containing the Jinja2 HTML/CSS templates.
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 
-def render_course(
+
+def _json_for_attr(obj: object) -> str:
+    """Serialize *obj* to JSON safe for embedding in single-quoted HTML attributes.
+
+    ``json.dumps`` does not escape ``'``.  Since our templates use
+    ``data-foo='{{ val }}'``, an unescaped single-quote in the JSON would
+    break out of the attribute.  We replace ``'`` with ``&#39;`` after
+    serialization so the browser reconstructs the original value on parse.
+    """
+    return json.dumps(obj).replace("'", "&#39;")
+
+def _render_course(
     modules: Sequence[TrainingModule],
     output_dir: Path,
     extracted_dir: Path | None = None,
@@ -63,6 +76,7 @@ def render_course(
     learner_journey: str | None = None,
     source_book_titles: Sequence[str] | None = None,
     chapter_to_module: dict[int, int] | None = None,
+    capabilities: CourseCapabilities | None = None,
 ) -> Path:
     """Render training modules as a self-contained interactive HTML course.
 
@@ -86,7 +100,7 @@ def render_course(
     """
     if not chapter_analyses:
         logger.warning(
-            "render_course() called without chapter_analyses — "
+            "_render_course() called without chapter_analyses — "
             "learner model, mastery dashboard, and concept-based review will be inert"
         )
 
@@ -104,7 +118,9 @@ def render_course(
     course_title = course_title or _derive_course_title(modules)
     # Derive slug from dir name. If output_dir is "html" (nested under the
     # course root), use the parent directory name instead.
-    course_slug = output_dir.parent.name if output_dir.name == "html" else output_dir.name
+    # Sanitize to alphanumeric + hyphens to prevent JS injection in templates.
+    raw_slug = output_dir.parent.name if output_dir.name == "html" else output_dir.name
+    course_slug = re.sub(r"[^a-zA-Z0-9_-]", "-", raw_slug)
 
     # Load course_meta.json override (takes priority over blueprint values)
     meta_override = _load_course_meta(output_dir)
@@ -204,6 +220,7 @@ def render_course(
         course_summary=course_summary,
         learner_journey=learner_journey,
         subtitle=subtitle,
+        capabilities=capabilities,
     )
 
     _render_review_pages(
@@ -257,6 +274,7 @@ def _render_chapter(
         chapter_analysis=chapter_analysis,
         concept_graph=concept_graph,
         module_number=effective_number,
+        env=env,
     )
 
     html = template.render(
@@ -285,6 +303,7 @@ def _build_sections_data(
     chapter_analysis: ChapterAnalysis | None = None,
     concept_graph: ConceptGraph | None = None,
     module_number: int | None = None,
+    env: Environment | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """Build section metadata and flat element list via fold.
 
@@ -325,7 +344,10 @@ def _build_sections_data(
                     effective_number, section_index, i,
                 ),
                 "concepts_tested": _tag_element_concepts(prepared, concepts, reinf_targets),
+                "element_index": offset + i,
             }
+            if env is not None:
+                element_dict["element_html"] = _render_element(element_dict, env)
             prepared_elements.append(element_dict)
         # Element ordering is owned by content_designer (SectionResponse validator).
         # The renderer trusts upstream ordering and does not re-sort.
@@ -423,7 +445,7 @@ def _prep_fill_in_blank(elem: FillInBlankElement, _ed: Path | None, _ei: bool) -
     ]
     return {"fill_in_the_blank": {
         "statement_html": _render_fitb_statement(fitb.statement, fitb.answers),
-        "answers_json": json.dumps(interactive_answers),
+        "answers_json": _json_for_attr(interactive_answers),
         "hint": _markdown_to_html_inline(fitb.hint) if fitb.hint else "",
         "hint_first_letter": fitb.hint_first_letter,
     }}
@@ -442,8 +464,8 @@ def _prep_matching(elem: MatchingElement, _ed: Path | None, _ei: bool) -> dict:
         "title": m.title,
         "left_items": [_markdown_to_html_inline(item) for item in left],
         "shuffled_right": [_markdown_to_html_inline(item) for item in shuffled_right],
-        "correct_json": json.dumps(correct_map),
-        "pair_explanations_json": json.dumps([_markdown_to_html_inline(e) if e else "" for e in m.pair_explanations]),
+        "correct_json": _json_for_attr(correct_map),
+        "pair_explanations_json": _json_for_attr([_markdown_to_html_inline(e) if e else "" for e in m.pair_explanations]),
     }}
 
 
@@ -457,7 +479,7 @@ def _prep_ordering(elem: OrderingElement, _ed: Path | None, _ei: bool) -> dict:
         "title": o.title,
         "instruction": _markdown_to_html_inline(o.instruction) if o.instruction else "",
         "shuffled_items": [_markdown_to_html_inline(correct_order[i]) for i in shuffled],
-        "correct_order_json": json.dumps([shuffled.index(i) for i in range(len(correct_order))]),
+        "correct_order_json": _json_for_attr([shuffled.index(i) for i in range(len(correct_order))]),
         "explanation": _markdown_to_html(o.explanation),
         "hint": _markdown_to_html_inline(o.hint) if o.hint else "",
     }}
@@ -475,7 +497,7 @@ def _prep_categorization(elem: CategorizationElement, _ed: Path | None, _ei: boo
         "title": cat.title,
         "instruction": _markdown_to_html_inline(cat.instruction) if cat.instruction else "",
         "category_names": [_markdown_to_html_inline(b.name) if b.name else "" for b in cat.categories],
-        "items_json": json.dumps(all_items),
+        "items_json": _json_for_attr(all_items),
         "explanation": _markdown_to_html(cat.explanation),
         "hint": _markdown_to_html_inline(cat.hint) if cat.hint else "",
     }}
@@ -514,15 +536,18 @@ def _prep_analogy(elem: AnalogyElement, _ed: Path | None, _ei: bool) -> dict:
         })
     return {"analogy": {
         "title": a.title,
-        "items_json": json.dumps(prepared_items),
+        "items_json": _json_for_attr(prepared_items),
     }}
 
 
 def _prep_mermaid(elem: MermaidElement, _ed: Path | None, _ei: bool) -> dict:
     d = elem.mermaid
+    code = _fix_unicode_escapes(d.diagram_code)
+    # Strip HTML tags from diagram code to prevent XSS via |safe rendering
+    code = re.sub(r"<[^>]+>", "", code)
     return {"mermaid": {
         "title": d.title,
-        "diagram_code": _fix_unicode_escapes(d.diagram_code),
+        "diagram_code": code,
         "caption": _markdown_to_html_inline(d.caption) if d.caption else "",
         "diagram_type": d.diagram_type,
     }}
@@ -532,9 +557,43 @@ def _prep_concept_map(elem: ConceptMapElement, _ed: Path | None, _ei: bool) -> d
     cmap = elem.concept_map
     return {"concept_map": {
         "title": cmap.title,
-        "nodes_json": json.dumps([n.model_dump() for n in cmap.nodes]),
-        "edges_json": json.dumps([e.model_dump() for e in cmap.edges]),
-        "blank_indices_json": json.dumps(cmap.blank_edge_indices),
+        "nodes_json": _json_for_attr([n.model_dump() for n in cmap.nodes]),
+        "edges_json": _json_for_attr([e.model_dump() for e in cmap.edges]),
+        "blank_indices_json": _json_for_attr(cmap.blank_edge_indices),
+    }}
+
+
+def _prep_worked_example(elem: WorkedExampleElement, _ed: Path | None, _ei: bool) -> dict:
+    we = elem.worked_example
+    # Deterministic shuffle of challenge options (same seed → same order on re-render)
+    options = [opt.text for opt in we.challenge_options]
+    rng = random.Random(we.title)
+    indexed = list(enumerate(options))
+    rng.shuffle(indexed)
+    shuffled_options = [text for _, text in indexed]
+    correct_shuffled = next(
+        i for i, (orig_i, _) in enumerate(indexed) if orig_i == we.challenge_correct_index
+    )
+    steps = [
+        {
+            "title": _markdown_to_html_inline(step.title),
+            "content": _markdown_to_html(step.content),
+            "why": _markdown_to_html(step.why),
+        }
+        for step in we.steps
+    ]
+    return {"worked_example": {
+        "title": we.title,
+        "problem_statement": _markdown_to_html(we.problem_statement),
+        "challenge_question": _markdown_to_html_inline(we.challenge_question),
+        "challenge_options": [_markdown_to_html_inline(opt) for opt in shuffled_options],
+        "challenge_correct_index": correct_shuffled,
+        "challenge_explanation": _markdown_to_html(we.challenge_explanation) if we.challenge_explanation else "",
+        "steps": steps,
+        "steps_json": _json_for_attr(steps),
+        "step_count": len(we.steps),
+        "final_answer": _markdown_to_html(we.final_answer),
+        "source_pages": we.source_pages,
     }}
 
 
@@ -547,7 +606,7 @@ def _prep_interactive_essay(elem: InteractiveEssayElement, _ed: Path | None, _ei
         "prompts": [
             {
                 "prompt": _markdown_to_html_inline(p.prompt),
-                "key_points_json": json.dumps([_markdown_to_html_inline(kp) if kp else "" for kp in p.key_points]),
+                "key_points_json": _json_for_attr([_markdown_to_html_inline(kp) if kp else "" for kp in p.key_points]),
                 "example_response": _markdown_to_html(p.example_response),
                 "minimum_words": p.minimum_words,
                 "source_pages": getattr(p, "source_pages", ""),
@@ -555,7 +614,7 @@ def _prep_interactive_essay(elem: InteractiveEssayElement, _ed: Path | None, _ei
             for p in ie.prompts
         ],
         "passing_threshold": ie.passing_threshold,
-        "tutor_system_prompt_json": json.dumps(ie.tutor_system_prompt),
+        "tutor_system_prompt_json": _json_for_attr(ie.tutor_system_prompt),
         "is_static": is_static,
     }}
 
@@ -574,6 +633,7 @@ _ELEMENT_PREPARERS: dict[str, callable] = {
     "analogy": _prep_analogy,
     "mermaid": _prep_mermaid,
     "concept_map": _prep_concept_map,
+    "worked_example": _prep_worked_example,
     "interactive_essay": _prep_interactive_essay,
 }
 
@@ -582,7 +642,7 @@ def _prepare_element(
     elem: SectionIntroElement | SlideElement | QuizElement | FlashcardElement
     | FillInBlankElement | MatchingElement | OrderingElement | MermaidElement
     | ConceptMapElement | CategorizationElement | ErrorDetectionElement
-    | AnalogyElement | InteractiveEssayElement,
+    | AnalogyElement | WorkedExampleElement | InteractiveEssayElement,
     extracted_dir: Path | None,
     embed_images: bool,
 ) -> dict:
@@ -611,6 +671,46 @@ def _fix_unicode_escapes_deep(obj: object) -> object:
     return obj
 
 
+# ── Element renderer dispatch ────────────────────────────────────────────────
+# Each renderer takes (element_data, jinja_env) and returns an HTML string.
+# Uses partial templates in templates/elements/ for each element type.
+
+from collections.abc import Callable as _Callable
+
+
+def _partial_renderer(partial_name: str) -> _Callable[[dict, Environment], str]:
+    """Create a renderer function that renders a Jinja2 partial template."""
+    def render(data: dict, env: Environment) -> str:
+        template = env.get_template(partial_name)
+        return template.render(element=data)
+    render.__name__ = f"_render_{partial_name.split('/')[-1].replace('.html', '').lstrip('_')}"
+    return render
+
+
+RENDERERS: dict[str, _Callable[[dict, Environment], str]] = {
+    etype: _partial_renderer(f"elements/_{etype}.html")
+    for etype in [
+        "section_intro", "slide", "quiz", "flashcard", "fill_in_the_blank",
+        "matching", "ordering", "categorization", "error_detection",
+        "analogy", "mermaid", "concept_map", "worked_example", "interactive_essay",
+    ]
+}
+
+
+def _render_element(data: dict, env: Environment) -> str:
+    """Render an element's inner HTML via the RENDERERS dispatch table.
+
+    Returns an HTML string for the element's content (badges + interactive
+    HTML). Returns empty string with a warning for unknown element types.
+    """
+    element_type = data.get("element_type", "")
+    renderer = RENDERERS.get(element_type)
+    if renderer is None:
+        logger.warning("Unknown element type '%s', skipping render", element_type)
+        return ""
+    return renderer(data, env)
+
+
 # ── Internal: element-level concept tagging ───────────────────────────────────
 
 
@@ -637,7 +737,9 @@ def _tag_element_concepts(
     # Extract text content from the element for matching
     text_parts: list[str] = []
     for key in ("section_intro", "slide", "quiz", "flashcard", "fill_in_the_blank",
-                "matching", "concept_map", "interactive_essay", "mermaid"):
+                "matching", "concept_map", "worked_example", "interactive_essay",
+                "mermaid", "ordering", "categorization", "error_detection",
+                "analogy"):
         sub = element.get(key)
         if sub:
             # Collect all string values recursively
@@ -691,6 +793,7 @@ def _render_index(
     course_summary: str | None = None,
     learner_journey: str | None = None,
     subtitle: str = "",
+    capabilities: CourseCapabilities | None = None,
 ) -> None:
     """Render the course index/landing page."""
     template = env.get_template("index.html")
@@ -704,6 +807,7 @@ def _render_index(
         course_summary=course_summary,
         learner_journey=learner_journey,
         subtitle=subtitle,
+        capabilities=capabilities,
     )
     output_path.write_text(html, encoding="utf-8")
 
@@ -1021,6 +1125,16 @@ def _render_fill_blanks(statement: str) -> str:
 # NOTE: Use [$] instead of \$ — Python 3.13+ treats \$ as end-of-string anchor.
 _CURRENCY_RE = re.compile(r"[$](?=\d[\d,]*\.?\d*(?![a-zA-Z_\\$]))")
 
+# Currency $ inside LaTeX braces: {$60} → {60}.
+# {$DIGITS} is never valid LaTeX, so the $ always means currency here.
+_CURRENCY_IN_BRACES_RE = re.compile(r"(?<=\{)[$](\d[\d,]*\.?\d*)")
+
+
+def _fix_currency_in_latex_braces(text: str) -> str:
+    """Strip currency $ from inside LaTeX braces: \\frac{$60} → \\frac{60}."""
+    return _CURRENCY_IN_BRACES_RE.sub(r"\1", text)
+
+
 # LaTeX block patterns (display then inline).
 # NOTE: Use [$] instead of \$ — Python 3.13+ treats \$ as end-of-string anchor.
 _LATEX_DISPLAY_RE = re.compile(r"[$][$].+?[$][$]", re.DOTALL)
@@ -1147,10 +1261,27 @@ def _escape_latex_percent(math_str: str) -> str:
     return _UNESCAPED_PERCENT_RE.sub(r"\\%", math_str)
 
 
+def _to_katex_delimiters(math_span: str) -> str:
+    """Convert $...$ → \\(...\\) and $$...$$ → \\[...\\] for KaTeX rendering.
+
+    The LLM outputs standard LaTeX ``$`` delimiters (where it is most fluent),
+    but we convert to ``\\(`` / ``\\[`` at the HTML boundary so that currency
+    ``$`` signs in the DOM can never be misinterpreted by KaTeX auto-render.
+    """
+    if math_span.startswith('$$') and math_span.endswith('$$'):
+        return '\\[' + math_span[2:-2] + '\\]'
+    if math_span.startswith('$') and math_span.endswith('$'):
+        return '\\(' + math_span[1:-1] + '\\)'
+    return math_span  # \(...\) and \[...\] pass through unchanged
+
+
 # Dangerous HTML patterns stripped after markdown conversion.
 _SCRIPT_RE = re.compile(r"<script[^>]*>.*?</script>", re.DOTALL | re.IGNORECASE)
 _STYLE_RE = re.compile(r"<style[^>]*>.*?</style>", re.DOTALL | re.IGNORECASE)
 _EVENT_HANDLER_RE = re.compile(r"""\s+on\w+\s*=\s*(?:"[^"]*"|'[^']*')""", re.IGNORECASE)
+_IFRAME_RE = re.compile(r"<iframe[^>]*>.*?</iframe>", re.DOTALL | re.IGNORECASE)
+_OBJECT_RE = re.compile(r"<(?:object|embed|base)[^>]*(?:>.*?</(?:object|embed|base)>|/?>)", re.DOTALL | re.IGNORECASE)
+_JS_URL_RE = re.compile(r"""(?:href|src|action)\s*=\s*(?:"javascript:[^"]*"|'javascript:[^']*')""", re.IGNORECASE)
 
 
 def _protect_currency(text: str) -> tuple[str, list[str]]:
@@ -1188,6 +1319,9 @@ def _sanitize_html(html: str) -> str:
     html = _SCRIPT_RE.sub("", html)
     html = _STYLE_RE.sub("", html)
     html = _EVENT_HANDLER_RE.sub("", html)
+    html = _IFRAME_RE.sub("", html)
+    html = _OBJECT_RE.sub("", html)
+    html = _JS_URL_RE.sub("", html)
     return html
 
 
@@ -1206,13 +1340,9 @@ def _markdown_to_html(text: str) -> str:
     # Fix LLM doubled-math before any other processing.
     text = _deduplicate_math(text)
 
-    # Protect currency $ from being treated as LaTeX delimiters.
-    text, currency_spans = _protect_currency(text)
+    # Strip currency $ from inside LaTeX braces FIRST: \frac{$60} → \frac{60}.
+    text = _fix_currency_in_latex_braces(text)
 
-    # Protect LaTeX math blocks from markdown interpretation.
-    # Display math ($$...$$) must be matched before inline ($...$).
-    # Also protect \(...\) and \[...\] delimiters (LLM sometimes uses these
-    # despite being told to use $ delimiters).
     math_spans: list[str] = []
 
     def _save_math(match: re.Match) -> str:
@@ -1221,15 +1351,39 @@ def _markdown_to_html(text: str) -> str:
         math_spans.append(_escape_latex_percent(span))
         return f"\x00MATH{idx}\x00"
 
-    protected = _LATEX_DISPLAY_RE.sub(_save_math, text)
-    protected = _LATEX_BRACKET_RE.sub(_save_math, protected)
+    # --- Extract LaTeX that is UNAMBIGUOUSLY math (before currency) ---
+    protected = _LATEX_DISPLAY_RE.sub(_save_math, text)        # $$...$$
+    protected = _LATEX_BRACKET_RE.sub(_save_math, protected)   # \[...\]
+
+    # Extract $...$ pairs containing \commands — definitely LaTeX, not currency.
+    # A $...$  pair with a backslash-command like \frac, \times, \approx is
+    # ALWAYS LaTeX, never currency.  Extracting these first prevents currency
+    # regex from consuming the opening $ of expressions like $931.08 = \frac{60}{X}$.
+    _LATEX_CMD_PROBE = re.compile(r"\\[a-zA-Z]|[\^_]")
+
+    def _save_if_latex_heavy(match: re.Match) -> str:
+        inner = match.group(0)[1:-1]
+        if _LATEX_CMD_PROBE.search(inner):
+            return _save_math(match)       # has \command or ^/_ → extract as LaTeX
+        return match.group(0)              # no math markers → leave for currency pass
+
+    protected = _LATEX_INLINE_RE.sub(_save_if_latex_heavy, protected)
+
+    # --- Now currency protection is safe (LaTeX-heavy spans already extracted) ---
+    protected, currency_spans = _protect_currency(protected)
+
+    # --- Extract remaining inline math ($x^2$, $p=0.5$, etc.) ---
     protected = _LATEX_INLINE_RE.sub(_save_math, protected)
     protected = _LATEX_PAREN_RE.sub(_save_math, protected)
+
+    # Escape orphaned $ signs — all legitimate math is in \x00MATH\x00 sentinels
+    # and all currency is in \x00CURR\x00 sentinels at this point.
+    protected = protected.replace("$", "&#36;")
 
     html = md.markdown(protected, extensions=["fenced_code"])
 
     for idx, original in enumerate(math_spans):
-        html = html.replace(f"\x00MATH{idx}\x00", original)
+        html = html.replace(f"\x00MATH{idx}\x00", _to_katex_delimiters(original))
 
     html = _restore_currency(html, currency_spans)
     return _sanitize_html(html)
@@ -1266,25 +1420,54 @@ def _render_fitb_statement(statement: str, answers: list[str] | None = None) -> 
             When provided, each ``<input>`` gets a ``data-answer`` attribute
             and a hint button for progressive letter reveal.
     """
-    # Step 1: protect currency
-    text, currency_spans = _protect_currency(statement)
+    # Step 1: strip currency $ inside LaTeX braces
+    text = _fix_currency_in_latex_braces(statement)
 
-    # Step 2: replace blanks inside LaTeX with KaTeX markers
-    def _replace_blanks_in_latex(match: re.Match) -> str:
-        return re.sub(r"_{3,}", r"\\underline{\\hspace{3em}}", match.group(0))
-
-    text = _LATEX_DISPLAY_RE.sub(_replace_blanks_in_latex, text)
-    text = _LATEX_INLINE_RE.sub(_replace_blanks_in_latex, text)
-
-    # Step 3: replace remaining blanks (outside LaTeX) with <input> elements
-    # Also compute which original blank indices map to interactive inputs
+    # Step 2+3: extract LaTeX (two-pass) with blanks converted to KaTeX markers,
+    # then protect currency, then extract remaining math, then replace leftover blanks.
     interactive_indices = _fitb_interactive_answer_indices(statement)
+
+    math_spans: list[str] = []
+
+    def _save_math(match: re.Match) -> str:
+        # Replace blanks inside LaTeX with KaTeX markers before saving
+        content = re.sub(r"_{3,}", r"\\underline{\\hspace{3em}}", match.group(0))
+        idx = len(math_spans)
+        span = _fix_double_escaped_latex(content)
+        math_spans.append(_escape_latex_percent(span))
+        return f"\x00MATH{idx}\x00"
+
+    # First pass: display math
+    protected = _LATEX_DISPLAY_RE.sub(_save_math, text)
+
+    # Extract $...$ with \commands before currency protection.
+    # NOTE: We do NOT expand the probe to include _ here because FITB blanks
+    # (___) would false-positive as math subscripts.
+    _LATEX_CMD_PROBE = re.compile(r"\\[a-zA-Z]")
+
+    def _save_if_latex_heavy(match: re.Match) -> str:
+        inner = match.group(0)[1:-1]
+        if _LATEX_CMD_PROBE.search(inner):
+            return _save_math(match)
+        return match.group(0)
+
+    protected = _LATEX_INLINE_RE.sub(_save_if_latex_heavy, protected)
+
+    # Now currency protection is safe
+    protected, currency_spans = _protect_currency(protected)
+
+    # Extract remaining inline math
+    protected = _LATEX_INLINE_RE.sub(_save_math, protected)
+
+    # Escape orphaned $ signs — all legitimate math is in sentinels at this point.
+    protected = protected.replace("$", "&#36;")
+
+    # Replace remaining blanks (outside LaTeX) with interactive <input> elements
     blank_counter = [0]
 
     def _input_replacer(match: re.Match) -> str:
         idx = blank_counter[0]
         blank_counter[0] += 1
-        # Map interactive blank index to the original answer index
         answer_attr = ""
         if answers and idx < len(interactive_indices):
             orig_idx = interactive_indices[idx]
@@ -1302,19 +1485,7 @@ def _render_fitb_statement(statement: str, answers: list[str] | None = None) -> 
             f'{hint_btn}'
         )
 
-    text = re.sub(r"_{3,}", _input_replacer, text)
-
-    # Step 4: protect LaTeX from markdown
-    math_spans: list[str] = []
-
-    def _save_math(match: re.Match) -> str:
-        idx = len(math_spans)
-        span = _fix_double_escaped_latex(match.group(0))
-        math_spans.append(_escape_latex_percent(span))
-        return f"\x00MATH{idx}\x00"
-
-    protected = _LATEX_DISPLAY_RE.sub(_save_math, text)
-    protected = _LATEX_INLINE_RE.sub(_save_math, protected)
+    protected = re.sub(r"_{3,}", _input_replacer, protected)
 
     # Also protect <input> tags from markdown
     input_spans: list[str] = []
@@ -1326,16 +1497,16 @@ def _render_fitb_statement(statement: str, answers: list[str] | None = None) -> 
 
     protected = re.sub(r"<input[^>]+>(?:<button[^>]+>[^<]*</button>)?", _save_input, protected)
 
-    # Step 5: markdown conversion
-    html = md.markdown(protected, extensions=["fenced_code"])
+    # Step 5: markdown conversion + sanitize LLM content before restoring trusted HTML
+    html = _sanitize_html(md.markdown(protected, extensions=["fenced_code"]))
 
-    # Step 6: restore everything
+    # Step 6: restore trusted sentinels (input buttons, math, currency)
     for idx, original in enumerate(input_spans):
         html = html.replace(f"\x00INPUT{idx}\x00", original)
     for idx, original in enumerate(math_spans):
-        html = html.replace(f"\x00MATH{idx}\x00", original)
+        html = html.replace(f"\x00MATH{idx}\x00", _to_katex_delimiters(original))
     html = _restore_currency(html, currency_spans)
-    return _sanitize_html(html)
+    return html
 
 
 def _fitb_interactive_answer_indices(statement: str) -> list[int]:

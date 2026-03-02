@@ -1,6 +1,6 @@
 """Tests for the prompt template module — pure functions, no LLM calls."""
 
-from src.transformation.prompts import (
+from src.transformation.content_designer_prompts import (
     _smart_truncate,
     build_section_prompt,
     build_target_selection_prompt,
@@ -146,7 +146,7 @@ class TestNewElementTypes:
         assert "interactive_essay" in SYSTEM_PROMPT
 
     def test_element_ordering_instruction_in_system_prompt(self) -> None:
-        assert "Teach-Practice Cycles" in SYSTEM_PROMPT
+        assert "One Slide, Then Drill" in SYSTEM_PROMPT
 
 
 class TestConceptContext:
@@ -439,7 +439,24 @@ class TestFocusConceptsPromptBlock:
         assert "**basis**" in result
         assert "**span**" in result
         assert "ONLY" in result
-        assert "3-5 minutes" in result
+        assert "5-8 minutes" in result
+        # Multi-concept case: should still request exactly 1 slide
+        assert "SINGLE slide" in result
+
+    def test_focus_block_single_concept(self) -> None:
+        result = build_section_prompt(
+            section_title="Basis",
+            section_text="Content about basis...",
+            chapter_title="Linear Algebra",
+            image_count=0,
+            table_count=0,
+            focus_concepts=["basis"],
+        )
+        assert "CONCEPT FOCUS" in result
+        assert "**basis**" in result
+        assert "1 slide covering this concept" in result
+        # Single concept should NOT mention "tightly coupled"
+        assert "tightly coupled" not in result
 
     def test_no_focus_block_when_none(self) -> None:
         result = build_section_prompt(

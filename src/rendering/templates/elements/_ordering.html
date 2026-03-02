@@ -1,0 +1,24 @@
+<span class="element-badge ordering-badge">Ordering</span>
+{% if element.bloom_level %}<span class="bloom-badge bloom-{{ element.bloom_level }}">{{ element.bloom_level }}</span>{% endif %}
+<div class="ordering-container" data-correct-order='{{ element.ordering.correct_order_json|safe }}' data-attempts="0">
+    <div class="ordering-title">{{ element.ordering.title }}</div>
+    <p class="ordering-instruction">{{ element.ordering.instruction|safe }}</p>
+    <ol class="ordering-list">
+        {% for item in element.ordering.shuffled_items %}
+        <li class="ordering-item" data-idx="{{ loop.index0 }}">
+            <span class="ordering-handle">&#9776;</span>
+            <span class="ordering-text">{{ item|safe }}</span>
+            <span class="ordering-arrows">
+                <button class="ordering-arrow-btn" onclick="moveOrderingItem(this, -1)" title="Move up">&#9650;</button>
+                <button class="ordering-arrow-btn" onclick="moveOrderingItem(this, 1)" title="Move down">&#9660;</button>
+            </span>
+        </li>
+        {% endfor %}
+    </ol>
+    {% if element.ordering.hint %}
+    <div class="ordering-hint" style="display:none;">Hint: {{ element.ordering.hint|safe }}</div>
+    {% endif %}
+    <div class="ordering-explanation" style="display:none;">{{ element.ordering.explanation|safe }}</div>
+    <button class="quiz-check-btn" onclick="checkOrdering(this)">Check Order</button>
+    <button class="add-review-btn" onclick="addToReview(this)" title="Add to spaced review">+ Review</button>
+</div>

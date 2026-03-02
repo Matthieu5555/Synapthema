@@ -1,0 +1,64 @@
+<span class="element-badge worked-example-badge">Worked Example</span>
+{% if element.bloom_level %}<span class="bloom-badge bloom-{{ element.bloom_level }}">{{ element.bloom_level }}</span>{% endif %}
+<div class="worked-example-container"
+     data-challenge-correct="{{ element.worked_example.challenge_correct_index }}"
+     data-step-count="{{ element.worked_example.step_count }}"
+     data-steps='{{ element.worked_example.steps_json|safe }}'
+     data-challenge-attempted="false"
+     data-steps-revealed="0">
+    <div class="worked-example-title">{{ element.worked_example.title }}</div>
+
+    <!-- Problem Statement -->
+    <div class="worked-example-problem">
+        {{ element.worked_example.problem_statement|safe }}
+    </div>
+
+    <!-- Try It First Challenge -->
+    <div class="worked-example-challenge">
+        <div class="worked-example-challenge-label">Try it first</div>
+        <div class="worked-example-challenge-question">{{ element.worked_example.challenge_question|safe }}</div>
+        <ul class="worked-example-options">
+            {% for option in element.worked_example.challenge_options %}
+            <li class="worked-example-option" data-option-index="{{ loop.index0 }}" onclick="selectWorkedExampleOption(this)">
+                <span class="quiz-option-marker">{{ ['A','B','C','D','E'][loop.index0] }}</span>
+                <span>{{ option|safe }}</span>
+            </li>
+            {% endfor %}
+        </ul>
+        <button class="quiz-check-btn" onclick="checkWorkedExampleChallenge(this)" disabled>Check Answer</button>
+        {% if element.worked_example.challenge_explanation %}
+        <div class="worked-example-challenge-explanation" style="display:none;">{{ element.worked_example.challenge_explanation|safe }}</div>
+        {% endif %}
+    </div>
+
+    <!-- Step-by-step Solution (hidden until challenge attempted) -->
+    <div class="worked-example-solution" style="display:none;">
+        <div class="worked-example-solution-header">Step-by-step Solution</div>
+        {% for step in element.worked_example.steps %}
+        <div class="worked-example-step" data-step-index="{{ loop.index0 }}">
+            <button class="worked-example-step-toggle" onclick="revealWorkedExampleStep(this, {{ loop.index0 }})">
+                <span class="worked-example-step-indicator">Step {{ loop.index }} of {{ element.worked_example.step_count }}</span>
+                <span class="worked-example-step-title">{{ step.title|safe }}</span>
+                <span class="worked-example-step-chevron">&#9660;</span>
+            </button>
+            <div class="worked-example-step-body" style="display:none;">
+                <div class="worked-example-step-content">{{ step.content|safe }}</div>
+                <div class="worked-example-step-why">
+                    <strong>Why?</strong> {{ step.why|safe }}
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+
+        <!-- Final Answer -->
+        <div class="worked-example-final" style="display:none;">
+            <div class="worked-example-final-label">Final Answer</div>
+            <div class="worked-example-final-content">{{ element.worked_example.final_answer|safe }}</div>
+        </div>
+    </div>
+
+    {% if element.worked_example.source_pages %}
+    <div class="source-attribution">{{ element.worked_example.source_pages }}</div>
+    {% endif %}
+    <button class="add-review-btn" onclick="addToReview(this)" title="Add to spaced review">+ Review</button>
+</div>

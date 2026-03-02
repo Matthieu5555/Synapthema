@@ -32,6 +32,12 @@ DocumentType = Literal[
     "mixed",           # No dominant type
 ]
 
+SectionQuality = Literal[
+    "content",        # Meaningful learnable content
+    "structural",     # ToC, index, bibliography, front/back matter
+    "insufficient",   # Too little text to generate training content
+]
+
 # Minimum total score to confidently assign a document type.
 # Below this threshold, the document is classified as "mixed".
 _MIN_DETECTION_CONFIDENCE = 3.0
@@ -219,6 +225,78 @@ def analyze_chapter_sections(
         chapter_title=chapter_title,
         sections=section_signals,
     )
+
+
+# ── Section quality classification ────────────────────────────────────────────
+
+# Minimum stripped text length for a section to be worth transforming.
+_MIN_CONTENT_LENGTH = 200
+
+# Titles that indicate structural (non-content) pages.
+_STRUCTURAL_TITLE_PATTERNS = re.compile(
+    r"(?i)^(?:"
+    r"table\s+of\s+contents?"
+    r"|contents?"
+    r"|index"
+    r"|bibliography"
+    r"|references"
+    r"|glossary"
+    r"|appendix\s+[a-z]?\s*$"
+    r"|list\s+of\s+(?:figures|tables|abbreviations|symbols)"
+    r"|acknowledgements?"
+    r"|about\s+the\s+authors?"
+    r"|colophon"
+    r"|copyright"
+    r"|dedication"
+    r"|foreword"
+    r"|preface"
+    r"|further\s+reading"
+    r"|suggested\s+reading"
+    r"|notes"
+    r")$"
+)
+
+# Lines ending with page numbers (e.g., "Chapter 1 ..... 5" or "Introduction  12")
+_TOC_LINE_PATTERN = re.compile(
+    r"^.{5,}\s*\.{2,}\s*\d+\s*$"  # dots + page number
+    r"|^.{5,}\s{2,}\d+\s*$",       # spaces + page number
+    re.MULTILINE,
+)
+
+
+def classify_section_quality(title: str, text: str) -> SectionQuality:
+    """Classify whether a section contains meaningful learnable content.
+
+    Zero LLM cost. Uses heuristics based on text length, title patterns,
+    and content structure to filter out structural pages (ToC, index,
+    bibliography) and insufficient content before expensive LLM calls.
+
+    Args:
+        title: The section heading.
+        text: Full text content of the section.
+
+    Returns:
+        'content', 'structural', or 'insufficient'.
+    """
+    stripped = text.strip()
+
+    # Check text length first (cheapest check)
+    if len(stripped) < _MIN_CONTENT_LENGTH:
+        return "insufficient"
+
+    # Check title against structural patterns
+    if _STRUCTURAL_TITLE_PATTERNS.match(title.strip()):
+        return "structural"
+
+    # Check for ToC-like content (many lines ending with page numbers)
+    lines = stripped.splitlines()
+    non_empty_lines = [l for l in lines if l.strip()]
+    if non_empty_lines:
+        toc_lines = len(_TOC_LINE_PATTERN.findall(stripped))
+        if toc_lines / len(non_empty_lines) > 0.5:
+            return "structural"
+
+    return "content"
 
 
 # ── Formula detection ────────────────────────────────────────────────────────

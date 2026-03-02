@@ -1,23 +1,21 @@
-"""Tests for pipeline checkpointing and resume (Task 10)."""
+"""Tests for pipeline checkpointing and resume."""
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from pathlib import Path
 
 import pytest
 
+from src.checkpoint import load_checkpoint, save_checkpoint, save_checkpoint_raw
 from src.extraction.types import Book, Chapter, Section
 from src.pipeline import (
-    _load_analyses_checkpoint,
-    _load_blueprint_checkpoint,
-    _load_books_checkpoint,
+    _AnalysesCheckpoint,
     _load_training_modules_checkpoint,
     _regroup_analyses_by_book,
-    _save_blueprint_json,
-    _save_books_json,
     _save_training_json,
-    _save_analyses_json,
+    compute_capabilities,
 )
 from src.transformation.analysis_types import (
     ChapterAnalysis,
@@ -125,16 +123,16 @@ def _make_training_module(chapter_number: int) -> TrainingModule:
     )
 
 
-# ── Checkpoint loader tests ─────────────────────────────────────────────────
+# ── Book checkpoint tests (via generic load_checkpoint) ───────────────────
 
 
 class TestLoadBooksCheckpoint:
     def test_loads_valid_checkpoint(self, tmp_path: Path) -> None:
         book = _make_book()
         path = tmp_path / "book_structure.json"
-        _save_books_json([book], path)
+        save_checkpoint_raw(path, [dataclasses.asdict(book)])
 
-        result = _load_books_checkpoint(path)
+        result = load_checkpoint(path, list[Book])
         assert result is not None
         assert len(result) == 1
         assert result[0].title == "Test Book"
@@ -142,17 +140,22 @@ class TestLoadBooksCheckpoint:
 
     def test_returns_none_for_missing_file(self, tmp_path: Path) -> None:
         path = tmp_path / "nonexistent.json"
-        assert _load_books_checkpoint(path) is None
+        assert load_checkpoint(path, list[Book]) is None
 
     def test_returns_none_for_invalid_json(self, tmp_path: Path) -> None:
         path = tmp_path / "bad.json"
         path.write_text("not valid json", encoding="utf-8")
-        assert _load_books_checkpoint(path) is None
+        assert load_checkpoint(path, list[Book]) is None
 
-    def test_returns_none_for_empty_list(self, tmp_path: Path) -> None:
+    def test_returns_empty_for_empty_list(self, tmp_path: Path) -> None:
         path = tmp_path / "empty.json"
         path.write_text("[]", encoding="utf-8")
-        assert _load_books_checkpoint(path) is None
+        result = load_checkpoint(path, list[Book])
+        assert result is not None
+        assert result == []
+
+
+# ── Analyses checkpoint tests (via _AnalysesCheckpoint) ───────────────────
 
 
 class TestLoadAnalysesCheckpoint:
@@ -160,61 +163,61 @@ class TestLoadAnalysesCheckpoint:
         analyses = [_make_analysis(1), _make_analysis(2)]
         graph = _make_concept_graph()
         path = tmp_path / "chapter_analyses.json"
-        _save_analyses_json(analyses, graph, path)
+        save_checkpoint(
+            path,
+            _AnalysesCheckpoint(chapter_analyses=analyses, concept_graph=graph),
+        )
 
-        result = _load_analyses_checkpoint(path, expected_count=2)
+        result = load_checkpoint(path, _AnalysesCheckpoint)
         assert result is not None
-        loaded_analyses, loaded_graph = result
-        assert len(loaded_analyses) == 2
-        assert loaded_analyses[0].chapter_number == 1
+        assert len(result.chapter_analyses) == 2
+        assert result.chapter_analyses[0].chapter_number == 1
 
-    def test_returns_none_for_wrong_count(self, tmp_path: Path) -> None:
-        analyses = [_make_analysis(1)]
-        graph = _make_concept_graph()
-        path = tmp_path / "chapter_analyses.json"
-        _save_analyses_json(analyses, graph, path)
-
-        result = _load_analyses_checkpoint(path, expected_count=3)
-        assert result is None
+    def test_returns_none_for_invalid_json(self, tmp_path: Path) -> None:
+        path = tmp_path / "bad.json"
+        path.write_text("{broken", encoding="utf-8")
+        assert load_checkpoint(path, _AnalysesCheckpoint) is None
 
     def test_returns_none_for_missing_concept_graph(self, tmp_path: Path) -> None:
         path = tmp_path / "no_graph.json"
         data = {"chapter_analyses": [_make_analysis(1).model_dump(mode="json")]}
         path.write_text(json.dumps(data), encoding="utf-8")
 
-        result = _load_analyses_checkpoint(path, expected_count=1)
+        # _AnalysesCheckpoint requires concept_graph — missing field
+        result = load_checkpoint(path, _AnalysesCheckpoint)
         assert result is None
 
-    def test_returns_none_for_invalid_json(self, tmp_path: Path) -> None:
-        path = tmp_path / "bad.json"
-        path.write_text("{broken", encoding="utf-8")
-        assert _load_analyses_checkpoint(path, expected_count=1) is None
+
+# ── Blueprint checkpoint tests ────────────────────────────────────────────
 
 
 class TestLoadBlueprintCheckpoint:
     def test_loads_valid_checkpoint(self, tmp_path: Path) -> None:
         blueprint = _make_blueprint()
         path = tmp_path / "curriculum_blueprint.json"
-        _save_blueprint_json(blueprint, path)
+        save_checkpoint(path, blueprint)
 
-        result = _load_blueprint_checkpoint(path)
+        result = load_checkpoint(path, CurriculumBlueprint)
         assert result is not None
         assert result.course_title == "Test Course"
         assert len(result.modules) == 2
 
-    def test_returns_none_for_empty_modules(self, tmp_path: Path) -> None:
+    def test_loads_empty_modules(self, tmp_path: Path) -> None:
         path = tmp_path / "empty_bp.json"
-        data = CurriculumBlueprint(
-            course_title="Empty", modules=[],
-        ).model_dump(mode="json")
-        path.write_text(json.dumps(data), encoding="utf-8")
+        bp = CurriculumBlueprint(course_title="Empty", modules=[])
+        save_checkpoint(path, bp)
 
-        assert _load_blueprint_checkpoint(path) is None
+        result = load_checkpoint(path, CurriculumBlueprint)
+        assert result is not None
+        assert result.modules == []
 
     def test_returns_none_for_invalid_json(self, tmp_path: Path) -> None:
         path = tmp_path / "bad.json"
         path.write_text("nope", encoding="utf-8")
-        assert _load_blueprint_checkpoint(path) is None
+        assert load_checkpoint(path, CurriculumBlueprint) is None
+
+
+# ── Training modules checkpoint tests ─────────────────────────────────────
 
 
 class TestLoadTrainingModulesCheckpoint:
@@ -254,15 +257,79 @@ class TestSaveBlueprintJson:
     def test_roundtrip(self, tmp_path: Path) -> None:
         blueprint = _make_blueprint()
         path = tmp_path / "bp.json"
-        _save_blueprint_json(blueprint, path)
+        save_checkpoint(path, blueprint)
 
         assert path.exists()
-        loaded = _load_blueprint_checkpoint(path)
+        loaded = load_checkpoint(path, CurriculumBlueprint)
         assert loaded is not None
         assert loaded.course_title == blueprint.course_title
         assert len(loaded.modules) == len(blueprint.modules)
 
     def test_creates_parent_directories(self, tmp_path: Path) -> None:
         path = tmp_path / "deep" / "nested" / "bp.json"
-        _save_blueprint_json(_make_blueprint(), path)
+        save_checkpoint(path, _make_blueprint())
         assert path.exists()
+
+
+# ── Course capabilities tests ────────────────────────────────────────────────
+
+
+class TestComputeCapabilities:
+    def test_full_capabilities(self) -> None:
+        modules = [_make_training_module(1), _make_training_module(2)]
+        graph = _make_concept_graph()
+        # Add a concept so has_concept_graph is True
+        from src.transformation.analysis_types import ResolvedConcept
+        graph_with_concepts = ConceptGraph(
+            concepts=[ResolvedConcept(
+                canonical_name="Test",
+                definition="A test concept.",
+                first_introduced_chapter=1,
+            )],
+            edges=[],
+            topological_order=["Test"],
+            foundation_concepts=["Test"],
+            advanced_concepts=[],
+        )
+        analyses = [_make_analysis(1)]
+
+        caps = compute_capabilities(modules, graph_with_concepts, analyses, "My Course")
+        assert caps["has_concept_graph"] is True
+        assert caps["has_mastery_tracking"] is True
+        assert caps["has_chapter_review"] is True
+        assert caps["has_mixed_review"] is True
+        assert caps["has_course_metadata"] is True
+        assert caps["chapter_count"] == 2
+        assert "slide" in caps["element_types_present"]
+        assert "flashcard" in caps["element_types_present"]
+
+    def test_no_concept_graph(self) -> None:
+        modules = [_make_training_module(1)]
+        caps = compute_capabilities(modules, None, None, "Test")
+        assert caps["has_concept_graph"] is False
+        assert caps["has_mastery_tracking"] is False
+
+    def test_empty_concept_graph(self) -> None:
+        modules = [_make_training_module(1)]
+        empty_graph = _make_concept_graph()
+        caps = compute_capabilities(modules, empty_graph, None, "Test")
+        assert caps["has_concept_graph"] is False
+
+    def test_no_modules(self) -> None:
+        caps = compute_capabilities([], None, None, None)
+        assert caps["chapter_count"] == 0
+        assert caps["has_chapter_review"] is False
+        assert caps["has_mixed_review"] is False
+        assert caps["has_course_metadata"] is False
+        assert caps["element_types_present"] == []
+
+    def test_learning_objectives_detected(self) -> None:
+        module = _make_training_module(1)
+        module.sections[0].learning_objectives = ["Understand testing"]
+        caps = compute_capabilities([module], None, None, "Test")
+        assert caps["has_learning_objectives"] is True
+
+    def test_no_learning_objectives(self) -> None:
+        module = _make_training_module(1)
+        caps = compute_capabilities([module], None, None, "Test")
+        assert caps["has_learning_objectives"] is False

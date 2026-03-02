@@ -22,7 +22,9 @@
 </head>
 <body style="overflow-y: auto; height: auto;">
 
-<nav class="course-header">
+<a class="skip-link" href="#main-content">Skip to content</a>
+
+<nav class="course-header" aria-label="Course navigation">
     <div class="course-header-left">
         <span class="breadcrumb-home" id="breadcrumbTitle">{{ course_title }}</span>
     </div>
@@ -32,7 +34,7 @@
     </div>
 </nav>
 
-<div class="index-container">
+<main class="index-container" id="main-content">
     <h1 class="index-title editable-field" contenteditable="true"
         data-field="course_title" data-original="{{ course_title }}">{{ course_title }}</h1>
     <p class="course-summary editable-field{% if not course_summary %} editable-empty{% endif %}"
@@ -81,6 +83,11 @@
         <p class="graph-subtitle">Top concepts across all chapters. Click a node to navigate. Node size = cross-chapter importance.</p>
         <div id="concept-graph" class="concept-graph-container"></div>
         <div class="concept-graph-legend" id="graphLegend"></div>
+    </section>
+    {% elif capabilities and not capabilities.has_concept_graph %}
+    <section class="concept-graph-section">
+        <h2>Knowledge Map</h2>
+        <p class="graph-subtitle" style="opacity: 0.6;">Concept graph not available for this course.</p>
     </section>
     {% endif %}
 
@@ -146,11 +153,16 @@
             </a>
         </div>
     </div>
-</div>
+</main>
 
 <script>
 // ── Learner Model ─────────────────────────────────────────────────────────
 {% include '_learner_model.js' %}
+
+// ── Named constants ──────────────────────────────────────────────────────
+var SAVED_INDICATOR_FADE_MS = 1500;
+var MASTERY_GOOD_PCT = 80;
+var MASTERY_PARTIAL_PCT = 50;
 
 // ── Theme toggle ──────────────────────────────────────────────────────────
 window.__lxpToggleTheme = function() {
@@ -205,7 +217,7 @@ window.__lxpToggleTheme = function() {
             try { localStorage.setItem(META_KEY, JSON.stringify(meta)); } catch(e) {}
             controls.style.display = 'flex';
             savedIndicator.style.opacity = '1';
-            setTimeout(function() { savedIndicator.style.opacity = '0'; }, 1500);
+            setTimeout(function() { savedIndicator.style.opacity = '0'; }, SAVED_INDICATOR_FADE_MS);
         } else {
             try { localStorage.removeItem(META_KEY); } catch(e) {}
             controls.style.display = 'none';
@@ -398,7 +410,7 @@ window.__lxpToggleTheme = function() {
                 '<span class="chapter-mastery-label">Ch ' + chapterNum + '</span>' +
                 '<div class="chapter-mastery-track">' +
                     '<div class="chapter-mastery-fill" style="width:' + avgScore + '%;' +
-                    'background:' + (avgScore >= 80 ? 'var(--success)' : avgScore >= 50 ? 'var(--warning)' : 'var(--error)') + '"></div>' +
+                    'background:' + (avgScore >= MASTERY_GOOD_PCT ? 'var(--color-success)' : avgScore >= MASTERY_PARTIAL_PCT ? 'var(--color-warning)' : 'var(--color-error)') + '"></div>' +
                 '</div>' +
                 '<span class="chapter-mastery-pct">' + avgScore + '%</span>';
             bar.title = chTitle + ' — ' + avgScore + '% mastery';
@@ -423,7 +435,7 @@ window.__lxpToggleTheme = function() {
         });
     } catch(e) {}
 
-    // Show review section if any flashcards or exercises exist
+    // Show review section with proper counting
     var exercisesKey = 'lxp_' + COURSE_SLUG + '_exercises';
     var flashcards = {};
     var exercises = [];
@@ -431,46 +443,59 @@ window.__lxpToggleTheme = function() {
     try { exercises = JSON.parse(localStorage.getItem(exercisesKey) || '[]'); } catch(e) {}
 
     var cardKeys = Object.keys(flashcards);
-
-    // Count due FSRS items across both flashcards and exercises
     var now = Date.now();
-    var dueCount = 0;
-    var newCount = 0;
+
+    // Spaced Review counts: only items the user has engaged with
+    // An item counts if: explicitly added (addedToReview) OR reviewed at least once (reps > 0)
+    var spacedDue = 0;
+    var spacedNew = 0;
+    var spacedTotal = 0;
+
     cardKeys.forEach(function(key) {
         var c = flashcards[key];
-        if (c.reps === 0) newCount++;
-        else if (!c.nextReview || c.nextReview <= now) dueCount++;
+        var isIntentional = c.addedToReview || c.reps > 0;
+        if (!isIntentional) return;
+        spacedTotal++;
+        if (c.reps === 0) spacedNew++;
+        else if (!c.nextReview || c.nextReview <= now) spacedDue++;
     });
-    // Also count exercises with FSRS fields
+
     exercises.forEach(function(ex) {
-        if (ex.reps === undefined) return; // no FSRS fields yet
-        if (ex.reps === 0) newCount++;
-        else if (!ex.nextReview || ex.nextReview <= now) dueCount++;
+        if (ex.reps === undefined) return;
+        var isIntentional = ex.addedToReview || ex.reps > 0;
+        if (!isIntentional) return;
+        spacedTotal++;
+        if (ex.reps === 0) spacedNew++;
+        else if (!ex.nextReview || ex.nextReview <= now) spacedDue++;
     });
 
-    var totalReviewItems = cardKeys.length + exercises.filter(function(ex) { return ex.reps !== undefined; }).length;
+    // Mixed Practice counts: all exercises (auto-cached is fine for mixed practice)
+    var mixedTotal = exercises.length;
 
-    if (cardKeys.length > 0 || exercises.length > 0) {
+    var hasSpacedItems = spacedTotal > 0;
+    var hasMixedItems = mixedTotal > 0;
+
+    if (hasSpacedItems || hasMixedItems) {
         document.getElementById('reviewSection').style.display = 'block';
 
         var reviewMeta = document.getElementById('reviewMeta');
-        if (totalReviewItems === 0) {
-            reviewMeta.textContent = 'Visit chapters to build your review deck';
-        } else if (dueCount > 0 || newCount > 0) {
+        if (!hasSpacedItems) {
+            reviewMeta.textContent = 'Add items to your review deck with the + Review button';
+        } else if (spacedDue > 0 || spacedNew > 0) {
             var parts = [];
-            if (dueCount > 0) parts.push(dueCount + ' due');
-            if (newCount > 0) parts.push(newCount + ' new');
-            reviewMeta.textContent = parts.join(', ') + ' — ' + totalReviewItems + ' items total';
+            if (spacedDue > 0) parts.push(spacedDue + ' due');
+            if (spacedNew > 0) parts.push(spacedNew + ' new');
+            reviewMeta.textContent = parts.join(', ') + ' \u2014 ' + spacedTotal + ' items in deck';
         } else {
-            reviewMeta.textContent = 'All caught up! ' + totalReviewItems + ' items total';
+            reviewMeta.textContent = 'All caught up! ' + spacedTotal + ' items in deck';
         }
 
         var mixedMeta = document.getElementById('mixedMeta');
-        if (exercises.length > 0) {
+        if (hasMixedItems) {
             var types = {};
             exercises.forEach(function(ex) { types[ex.type] = true; });
             var typeCount = Object.keys(types).length;
-            mixedMeta.textContent = exercises.length + ' exercises (' + typeCount + ' types) across chapters';
+            mixedMeta.textContent = mixedTotal + ' exercises available (' + typeCount + ' types)';
         }
     }
 })();

@@ -16,13 +16,14 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from pydantic import ValidationError
+from pydantic import BaseModel, TypeAdapter, ValidationError
 
+from src.checkpoint import load_checkpoint, save_checkpoint, save_checkpoint_raw
 from src.config import Config, InputSource
 from src.extraction.multi_doc import extract_corpus, source_slug
 from src.extraction.pdf_parser import extract_book
-from src.extraction.types import Book, Chapter, ImageRef, Section, Table
-from src.rendering.html_generator import render_course
+from src.extraction.types import Book, Chapter
+from src.rendering.html_generator import _render_course
 from src.transformation.analysis_types import ChapterAnalysis, ConceptGraph
 from src.transformation.concept_consolidator import consolidate_concepts
 from src.transformation.content_designer import transform_chapter
@@ -35,9 +36,21 @@ from src.transformation.curriculum_planner import (
 from src.transformation.deep_reader import analyze_book
 from src.rendering.mermaid_validator import validate_and_fix_mermaid_diagrams
 from src.transformation.llm_client import LLMClient, create_llm_client
-from src.transformation.types import CurriculumBlueprint, ModuleBlueprint, TrainingModule
+from src.transformation.types import (
+    CourseCapabilities,
+    CurriculumBlueprint,
+    ModuleBlueprint,
+    TrainingModule,
+)
 
 logger = logging.getLogger(__name__)
+
+
+class _AnalysesCheckpoint(BaseModel):
+    """Composite checkpoint for deep reading analyses + concept graph."""
+
+    chapter_analyses: list[ChapterAnalysis]
+    concept_graph: ConceptGraph
 
 
 def _book_extracted_dirs(
@@ -75,7 +88,10 @@ def _maybe_create_llm_client(config: Config) -> LLMClient | None:
         return None
 
 
-def rerender_from_json(config: Config) -> Path:
+def rerender_from_json(
+    config: Config,
+    exclude_element_types: set[str] | None = None,
+) -> Path:
     """Re-render HTML from an existing training_modules.json.
 
     Skips extraction and LLM transformation — loads the intermediate JSON
@@ -86,6 +102,8 @@ def rerender_from_json(config: Config) -> Path:
     Args:
         config: Pipeline config (only extracted_dir, output_dir, and
             embed_images are used; LLM fields are ignored).
+        exclude_element_types: If provided, remove elements of these types
+            before rendering (e.g., {"mermaid", "concept_map"}).
 
     Returns:
         Path to the generated course index.html.
@@ -93,10 +111,22 @@ def rerender_from_json(config: Config) -> Path:
     training_json = config.extracted_dir / "training_modules.json"
     logger.info("Render-only: loading %s", training_json)
 
-    data = json.loads(training_json.read_text(encoding="utf-8"))
-    _migrate_legacy_elements(data)
-    modules = [TrainingModule.model_validate(m) for m in data]
+    modules = _load_training_modules_checkpoint(training_json)
+    if modules is None:
+        msg = "Cannot load training modules from %s"
+        logger.error(msg, training_json)
+        raise FileNotFoundError(msg % training_json)
     logger.info("Loaded %d modules from JSON", len(modules))
+
+    # Post-filter: remove excluded element types
+    if exclude_element_types:
+        for module in modules:
+            for section in module.sections:
+                section.elements = [
+                    e for e in section.elements
+                    if e.element_type not in exclude_element_types
+                ]
+        logger.info("Excluded element types: %s", ", ".join(sorted(exclude_element_types)))
 
     # Validate and fix mermaid diagrams (optional — requires LLM + Node.js)
     llm_client = _maybe_create_llm_client(config)
@@ -108,23 +138,15 @@ def rerender_from_json(config: Config) -> Path:
     concept_graph = None
     chapter_analyses = None
     analyses_json = config.extracted_dir / "chapter_analyses.json"
-    if analyses_json.exists():
-        try:
-            analyses_data = json.loads(analyses_json.read_text(encoding="utf-8"))
-            chapter_analyses = [
-                ChapterAnalysis.model_validate(a)
-                for a in analyses_data.get("chapter_analyses", [])
-            ]
-            concept_graph = ConceptGraph.model_validate(
-                analyses_data.get("concept_graph", {}),
-            )
-            logger.info(
-                "Loaded concept graph (%d concepts) and %d chapter analyses",
-                len(concept_graph.concepts),
-                len(chapter_analyses),
-            )
-        except (OSError, json.JSONDecodeError, KeyError, ValueError, ValidationError) as exc:
-            logger.warning("Failed to load chapter_analyses.json, skipping: %s", exc)
+    loaded_analyses = load_checkpoint(analyses_json, _AnalysesCheckpoint)
+    if loaded_analyses is not None:
+        chapter_analyses = loaded_analyses.chapter_analyses
+        concept_graph = loaded_analyses.concept_graph
+        logger.info(
+            "Loaded concept graph (%d concepts) and %d chapter analyses",
+            len(concept_graph.concepts),
+            len(chapter_analyses),
+        )
 
     # Load course metadata and blueprint for chapter mapping
     course_title = course_summary = learner_journey = None
@@ -186,7 +208,11 @@ def rerender_from_json(config: Config) -> Path:
                     "Failed to load book_structure.json for chapter mapping: %s", exc,
                 )
 
-    index_path = render_course(
+    capabilities = compute_capabilities(
+        modules, concept_graph, chapter_analyses, course_title,
+    )
+
+    index_path = _render_course(
         modules=modules,
         output_dir=config.html_dir,
         extracted_dir=config.extracted_dir,
@@ -197,6 +223,7 @@ def rerender_from_json(config: Config) -> Path:
         course_summary=course_summary,
         learner_journey=learner_journey,
         chapter_to_module=chapter_to_module,
+        capabilities=capabilities,
     )
 
     logger.info("Render-only complete. Open %s in a browser.", index_path)
@@ -361,8 +388,14 @@ def run_pipeline(
             for bp in blueprint.modules
         ]
 
+    # Compute course capabilities
+    capabilities = compute_capabilities(
+        modules, concept_graph, global_flat, blueprint.course_title,
+    )
+    logger.info("Course capabilities: %s", capabilities)
+
     # Stage 3: Render (always re-run — it's instant)
-    index_path = render_course(
+    index_path = _render_course(
         modules=modules,
         output_dir=config.html_dir,
         extracted_dir=config.extracted_dir,
@@ -375,62 +408,14 @@ def run_pipeline(
         learner_journey=blueprint.learner_journey,
         source_book_titles=source_book_titles,
         chapter_to_module=chapter_to_module,
+        capabilities=capabilities,
     )
 
     logger.info("Pipeline complete. Open %s in a browser.", index_path)
     return index_path
 
 
-# ── Checkpoint loaders ────────────────────────────────────────────────────────
-# Each loader returns None if the checkpoint is missing or invalid.
-# Invalid JSON is treated as "no checkpoint" — the stage re-runs.
-
-
-def _load_books_checkpoint(path: Path) -> list[Book] | None:
-    """Load extraction checkpoint. Returns None if invalid."""
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        books = [_dict_to_book(b) for b in data]
-        if not books or not any(b.chapters for b in books):
-            return None
-        return books
-    except (OSError, json.JSONDecodeError, KeyError, ValueError, TypeError) as exc:
-        logger.debug("Invalid extraction checkpoint: %s", exc)
-        return None
-
-
-def _load_analyses_checkpoint(
-    path: Path, expected_count: int,
-) -> tuple[list[ChapterAnalysis], ConceptGraph] | None:
-    """Load deep reading + concept graph checkpoint. Returns None if invalid."""
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        analyses = [
-            ChapterAnalysis.model_validate(a)
-            for a in data.get("chapter_analyses", [])
-        ]
-        if len(analyses) != expected_count:
-            return None
-        if "concept_graph" not in data:
-            return None
-        concept_graph = ConceptGraph.model_validate(data["concept_graph"])
-        return analyses, concept_graph
-    except (OSError, json.JSONDecodeError, KeyError, ValueError, ValidationError) as exc:
-        logger.debug("Invalid analyses checkpoint: %s", exc)
-        return None
-
-
-def _load_blueprint_checkpoint(path: Path) -> CurriculumBlueprint | None:
-    """Load curriculum blueprint checkpoint. Returns None if invalid."""
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        blueprint = CurriculumBlueprint.model_validate(data)
-        if not blueprint.modules:
-            return None
-        return blueprint
-    except (OSError, json.JSONDecodeError, KeyError, ValueError, ValidationError) as exc:
-        logger.debug("Invalid blueprint checkpoint: %s", exc)
-        return None
+# ── Checkpoint helpers ────────────────────────────────────────────────────────
 
 
 def _migrate_legacy_elements(data: list[dict]) -> None:
@@ -459,16 +444,14 @@ def _migrate_legacy_elements(data: list[dict]) -> None:
 
 
 def _load_training_modules_checkpoint(path: Path) -> list[TrainingModule] | None:
-    """Load training modules checkpoint. Returns None if invalid.
-
-    Handles backward compatibility for legacy element types.
-    """
+    """Load training modules with legacy migration. Returns None if invalid."""
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         _migrate_legacy_elements(data)
-        return [TrainingModule.model_validate(m) for m in data]
-    except (OSError, json.JSONDecodeError, KeyError, ValueError, ValidationError) as exc:
-        logger.debug("Invalid training modules checkpoint: %s", exc)
+        adapter = TypeAdapter(list[TrainingModule])
+        return adapter.validate_python(data)
+    except Exception:
+        logger.debug("Invalid training modules checkpoint %s, will re-run", path)
         return None
 
 
@@ -482,17 +465,16 @@ def _load_or_extract(
     resume: bool,
 ) -> list[Book]:
     """Load extraction checkpoint or run extraction."""
-    book_structure_path = extracted_dir / "book_structure.json"
+    checkpoint_path = extracted_dir / "book_structure.json"
 
-    if resume and book_structure_path.exists():
-        books = _load_books_checkpoint(book_structure_path)
-        if books is not None:
+    if resume:
+        books = load_checkpoint(checkpoint_path, list[Book])
+        if books is not None and books and any(b.chapters for b in books):
             total = sum(len(b.chapters) for b in books)
-            logger.info(
-                "Loaded extraction checkpoint (%d chapters)", total,
-            )
+            logger.info("Loaded extraction checkpoint (%d chapters)", total)
             return books
-        logger.warning("Invalid extraction checkpoint, re-running extraction")
+        if checkpoint_path.exists():
+            logger.warning("Invalid extraction checkpoint, re-running extraction")
 
     if len(input_sources) == 1:
         books = [extract_book(
@@ -507,8 +489,7 @@ def _load_or_extract(
         len(books), total_chapters,
     )
 
-    # Save extraction checkpoint
-    _save_books_json(books, book_structure_path)
+    save_checkpoint_raw(checkpoint_path, [dataclasses.asdict(b) for b in books])
 
     return books
 
@@ -529,20 +510,21 @@ def _load_or_analyze(
         ``global_flat_analyses`` has globally unique chapter numbers (1..N) that
         match the concept graph — used for rendering only.
     """
-    analyses_path = extracted_dir / "chapter_analyses.json"
+    checkpoint_path = extracted_dir / "chapter_analyses.json"
 
-    if resume and analyses_path.exists():
-        result = _load_analyses_checkpoint(analyses_path, total_chapters)
-        if result is not None:
-            global_flat, concept_graph = result
-            # Re-group by book for downstream consumers
+    if resume:
+        loaded = load_checkpoint(checkpoint_path, _AnalysesCheckpoint)
+        if loaded is not None and len(loaded.chapter_analyses) == total_chapters:
+            global_flat = loaded.chapter_analyses
+            concept_graph = loaded.concept_graph
             all_chapter_analyses = _regroup_analyses_by_book(global_flat, books)
             logger.info(
                 "Loaded deep reading checkpoint (%d analyses, %d concepts)",
                 len(global_flat), len(concept_graph.concepts),
             )
             return all_chapter_analyses, concept_graph, global_flat
-        logger.warning("Invalid deep reading checkpoint, re-running analysis")
+        if checkpoint_path.exists():
+            logger.warning("Invalid deep reading checkpoint, re-running analysis")
 
     # Run deep reading
     all_chapter_analyses = [
@@ -580,7 +562,12 @@ def _load_or_analyze(
         len(concept_graph.advanced_concepts),
     )
 
-    _save_analyses_json(global_flat, concept_graph, analyses_path)
+    save_checkpoint(
+        checkpoint_path,
+        _AnalysesCheckpoint(
+            chapter_analyses=global_flat, concept_graph=concept_graph,
+        ),
+    )
 
     return all_chapter_analyses, concept_graph, global_flat
 
@@ -595,16 +582,17 @@ def _load_or_plan(
     document_type: str = "mixed",
 ) -> CurriculumBlueprint:
     """Load curriculum blueprint checkpoint or run planner."""
-    blueprint_path = extracted_dir / "curriculum_blueprint.json"
+    checkpoint_path = extracted_dir / "curriculum_blueprint.json"
 
-    if resume and blueprint_path.exists():
-        blueprint = _load_blueprint_checkpoint(blueprint_path)
-        if blueprint is not None:
+    if resume:
+        blueprint = load_checkpoint(checkpoint_path, CurriculumBlueprint)
+        if blueprint is not None and blueprint.modules:
             logger.info(
                 "Loaded curriculum checkpoint (%d modules)", len(blueprint.modules),
             )
             return blueprint
-        logger.warning("Invalid curriculum checkpoint, re-running planner")
+        if checkpoint_path.exists():
+            logger.warning("Invalid curriculum checkpoint, re-running planner")
 
     if len(books) == 1:
         blueprint = plan_curriculum(
@@ -621,7 +609,7 @@ def _load_or_plan(
             document_type=document_type,  # type: ignore[arg-type]
         )
 
-    _save_blueprint_json(blueprint, blueprint_path)
+    save_checkpoint(checkpoint_path, blueprint)
 
     return blueprint
 
@@ -647,7 +635,7 @@ def _load_or_transform(
     """
     training_path = extracted_dir / "training_modules.json"
 
-    if resume and training_path.exists():
+    if resume:
         existing = _load_training_modules_checkpoint(training_path)
         if existing is not None:
             existing_chapters = {m.chapter_number for m in existing}
@@ -681,6 +669,7 @@ def _load_or_transform(
                 book_extracted_dirs=book_extracted_dirs,
                 vision_enabled=vision_enabled,
                 max_workers=max_workers,
+                existing_modules=existing,
             )
             all_modules = sorted(
                 existing + new_modules, key=lambda m: m.chapter_number,
@@ -719,95 +708,6 @@ def _regroup_analyses_by_book(
     return result
 
 
-def _save_books_json(books: list[Book], output_path: Path) -> None:
-    """Save extraction output as a checkpoint."""
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    data = [dataclasses.asdict(b) for b in books]
-    output_path.write_text(
-        json.dumps(data, indent=2, ensure_ascii=False, default=str),
-        encoding="utf-8",
-    )
-    logger.info("Saved extraction checkpoint to %s", output_path)
-
-
-def _dict_to_section(d: dict) -> Section:
-    """Reconstruct a Section from a dictionary (checkpoint loading)."""
-    return Section(
-        title=d["title"],
-        level=d["level"],
-        start_page=d["start_page"],
-        end_page=d["end_page"],
-        text=d["text"],
-        images=tuple(
-            ImageRef(
-                path=Path(img["path"]),
-                page=img["page"],
-                caption=img["caption"],
-                bbox=tuple(img["bbox"]),
-            )
-            for img in d.get("images", ())
-        ),
-        tables=tuple(
-            Table(
-                page=t["page"],
-                headers=tuple(t["headers"]),
-                rows=tuple(tuple(r) for r in t["rows"]),
-            )
-            for t in d.get("tables", ())
-        ),
-        subsections=tuple(
-            _dict_to_section(sub) for sub in d.get("subsections", ())
-        ),
-    )
-
-
-def _dict_to_book(d: dict) -> Book:
-    """Reconstruct a Book from a dictionary (checkpoint loading)."""
-    return Book(
-        title=d["title"],
-        author=d["author"],
-        total_pages=d["total_pages"],
-        chapters=tuple(
-            Chapter(
-                chapter_number=ch["chapter_number"],
-                title=ch["title"],
-                start_page=ch["start_page"],
-                end_page=ch["end_page"],
-                sections=tuple(
-                    _dict_to_section(s) for s in ch.get("sections", ())
-                ),
-            )
-            for ch in d.get("chapters", ())
-        ),
-    )
-
-
-def _save_analyses_json(
-    analyses: list[ChapterAnalysis],
-    concept_graph: ConceptGraph,
-    output_path: Path,
-) -> None:
-    """Save deep reading analyses and concept graph to JSON."""
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    data = {
-        "chapter_analyses": [a.model_dump(mode="json") for a in analyses],
-        "concept_graph": concept_graph.model_dump(mode="json"),
-    }
-    output_path.write_text(
-        json.dumps(data, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
-    logger.info("Saved deep reading analyses to %s", output_path)
-
-
-def _save_blueprint_json(blueprint: CurriculumBlueprint, output_path: Path) -> None:
-    """Save curriculum blueprint as a checkpoint."""
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(
-        json.dumps(blueprint.model_dump(mode="json"), indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
-    logger.info("Saved curriculum blueprint to %s", output_path)
 
 
 def _precompute_cumulative_concepts(
@@ -965,6 +865,7 @@ def _transform_modules(
     book_extracted_dirs: list[Path] | None = None,
     vision_enabled: bool = False,
     max_workers: int = 4,
+    existing_modules: list[TrainingModule] | None = None,
 ) -> list[TrainingModule]:
     """Transform blueprint modules into TrainingModules in parallel.
 
@@ -978,6 +879,8 @@ def _transform_modules(
         concept_graph: Optional concept graph for resolving canonical names.
         document_type: Optional document type for prompt hints.
         max_workers: Maximum parallel chapter transformations.
+        existing_modules: Previously-checkpointed modules to include in
+            incremental saves (ensures crash safety during resume).
     """
     # Precompute cumulative concepts for each module from analyses
     cumulative_by_idx = _precompute_cumulative_concepts(
@@ -1068,6 +971,7 @@ def _transform_modules(
             supplementary_context=supplementary_by_idx.get(idx),
             additional_chapters=additional_chapters or None,
             additional_extracted_dirs=additional_extracted_dirs or None,
+            canonical_map=concept_graph.canonical_map if concept_graph else None,
         )
         logger.info(
             "Chapter %d transformed: %d elements",
@@ -1091,13 +995,14 @@ def _transform_modules(
                 continue
             results[idx] = module
 
-            # Incremental checkpoint: save all completed modules so far
+            # Incremental checkpoint: save existing + all completed modules
             if training_path is not None:
                 with save_lock:
                     completed_modules.append(module)
-                    # Save sorted by original blueprint order
+                    # Merge existing (from prior resume) with newly completed
+                    all_so_far = list(existing_modules or []) + completed_modules
                     sorted_so_far = sorted(
-                        completed_modules, key=lambda m: m.chapter_number,
+                        all_so_far, key=lambda m: m.chapter_number,
                     )
                     _save_training_json(sorted_so_far, training_path)
 
@@ -1105,12 +1010,41 @@ def _transform_modules(
     return [results[idx] for idx, _, _, _ in work_items if idx in results]
 
 
-def _save_training_json(modules: list[TrainingModule], output_path: Path) -> None:
-    """Serialize training modules to JSON for inspection and debugging."""
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    data = [m.model_dump(mode="json") for m in modules]
-    output_path.write_text(
-        json.dumps(data, indent=2, ensure_ascii=False),
-        encoding="utf-8",
+def compute_capabilities(
+    modules: list[TrainingModule],
+    concept_graph: ConceptGraph | None,
+    chapter_analyses: list[ChapterAnalysis] | None,
+    course_title: str | None,
+) -> CourseCapabilities:
+    """Compute what features are available in this generated course.
+
+    Called after all pipeline stages complete, before rendering.
+    """
+    has_analyses = bool(chapter_analyses)
+
+    element_types: set[str] = set()
+    has_objectives = False
+    for m in modules:
+        for s in m.sections:
+            for e in s.elements:
+                element_types.add(e.element_type)
+            if s.learning_objectives:
+                has_objectives = True
+
+    return CourseCapabilities(
+        has_concept_graph=bool(concept_graph and concept_graph.concepts),
+        has_mastery_tracking=has_analyses,
+        has_chapter_review=bool(modules),
+        has_mixed_review=bool(modules),
+        has_course_metadata=bool(course_title),
+        has_learning_objectives=has_objectives,
+        chapter_count=len(modules),
+        element_types_present=sorted(element_types),
     )
-    logger.info("Saved intermediate training JSON to %s", output_path)
+
+
+def _save_training_json(modules: list[TrainingModule], output_path: Path) -> None:
+    """Serialize training modules to JSON checkpoint."""
+    save_checkpoint_raw(
+        output_path, [m.model_dump(mode="json") for m in modules],
+    )

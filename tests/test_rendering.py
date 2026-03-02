@@ -1,6 +1,6 @@
 """Tests for the HTML rendering module — deep interface tests.
 
-Tests render_course() with fixture data (no LLM, no PDF) and individual
+Tests _render_course() with fixture data (no LLM, no PDF) and individual
 helper functions like _markdown_to_html and _render_fill_blanks.
 """
 
@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from src.rendering.html_generator import (
+    RENDERERS,
     _deduplicate_math,
     _derive_course_title,
     _element_id,
@@ -19,11 +20,13 @@ from src.rendering.html_generator import (
     _markdown_to_html,
     _markdown_to_html_inline,
     _prepare_graph_data,
+    _render_element,
     _render_fill_blanks,
     _render_fitb_statement,
     _sanitize_html,
+    _to_katex_delimiters,
     _write_course_meta,
-    render_course,
+    _render_course,
 )
 from src.transformation.analysis_types import (
     ChapterAnalysis,
@@ -62,6 +65,10 @@ from src.transformation.types import (
     SlideElement,
     TrainingModule,
     TrainingSection,
+    WorkedExample,
+    WorkedExampleChallengeOption,
+    WorkedExampleElement,
+    WorkedExampleStep,
 )
 
 
@@ -100,16 +107,16 @@ class TestMarkdownToHtml:
 
     def test_preserves_latex_inline(self) -> None:
         result = _markdown_to_html("The formula $E = mc^2$ is famous.")
-        assert "$E = mc^2$" in result
+        assert r"\(E = mc^2\)" in result
 
     def test_preserves_latex_display(self) -> None:
         result = _markdown_to_html("$$\\frac{a}{b}$$")
-        assert "$$\\frac{a}{b}$$" in result
+        assert r"\[\frac{a}{b}\]" in result
 
     def test_latex_with_underscores(self) -> None:
         """LaTeX subscripts like $x_i$ should not be interpreted as emphasis."""
         result = _markdown_to_html("Variable $x_i$ is indexed.")
-        assert "$x_i$" in result
+        assert r"\(x_i\)" in result
 
     def test_paragraphs(self) -> None:
         result = _markdown_to_html("Paragraph one.\n\nParagraph two.")
@@ -171,11 +178,11 @@ class TestDeriveCourseTitle:
         assert _derive_course_title(modules) == "Interactive Training Course"
 
 
-# ── render_course integration test ───────────────────────────────────────────
+# ── _render_course integration test ───────────────────────────────────────────
 
 
 class TestRenderCourse:
-    """Integration test for the full render_course entry point."""
+    """Integration test for the full _render_course entry point."""
 
     def _make_module(self) -> TrainingModule:
         """Build a TrainingModule with one of each element type."""
@@ -276,6 +283,25 @@ class TestRenderCourse:
                     ],
                 ),
             ),
+            WorkedExampleElement(
+                bloom_level="apply",
+                worked_example=WorkedExample(
+                    title="Solve for X",
+                    problem_statement="Given 2x + 4 = 10, find x.",
+                    challenge_question="What is x?",
+                    challenge_options=[
+                        WorkedExampleChallengeOption(text="2"),
+                        WorkedExampleChallengeOption(text="3"),
+                        WorkedExampleChallengeOption(text="4"),
+                    ],
+                    challenge_correct_index=1,
+                    steps=[
+                        WorkedExampleStep(title="Subtract 4", content="2x = 6", why="Isolate the variable term"),
+                        WorkedExampleStep(title="Divide by 2", content="x = 3", why="Solve for x"),
+                    ],
+                    final_answer="x = 3",
+                ),
+            ),
             FlashcardElement(
                 bloom_level="remember",
                 flashcard=Flashcard(front="Term", back="Definition"),
@@ -328,7 +354,7 @@ class TestRenderCourse:
         module = self._make_module()
         output_dir = tmp_path / "output"
 
-        index_path = render_course(
+        index_path = _render_course(
             modules=[module],
             output_dir=output_dir,
             embed_images=False,
@@ -346,7 +372,7 @@ class TestRenderCourse:
         module = self._make_module()
         output_dir = tmp_path / "output"
 
-        render_course(modules=[module], output_dir=output_dir, embed_images=False)
+        _render_course(modules=[module], output_dir=output_dir, embed_images=False)
 
         chapter_html = (output_dir / "chapter_01.html").read_text(encoding="utf-8")
 
@@ -385,10 +411,14 @@ class TestRenderCourse:
         assert "analogy-container" in chapter_html
         assert "Analogy Challenge" in chapter_html
 
+        # Worked example
+        assert "worked-example-container" in chapter_html
+        assert "Solve for X" in chapter_html
+
     def test_chapter_contains_section_intro(self, tmp_path: Path) -> None:
         module = self._make_module()
         output_dir = tmp_path / "output"
-        render_course(modules=[module], output_dir=output_dir, embed_images=False)
+        _render_course(modules=[module], output_dir=output_dir, embed_images=False)
         chapter_html = (output_dir / "chapter_01.html").read_text(encoding="utf-8")
 
         assert "section-intro-container" in chapter_html
@@ -397,7 +427,7 @@ class TestRenderCourse:
     def test_chapter_contains_static_essay(self, tmp_path: Path) -> None:
         module = self._make_module()
         output_dir = tmp_path / "output"
-        render_course(modules=[module], output_dir=output_dir, embed_images=False)
+        _render_course(modules=[module], output_dir=output_dir, embed_images=False)
         chapter_html = (output_dir / "chapter_01.html").read_text(encoding="utf-8")
 
         assert "essay-container" in chapter_html
@@ -406,7 +436,7 @@ class TestRenderCourse:
     def test_chapter_contains_interactive_essay(self, tmp_path: Path) -> None:
         module = self._make_module()
         output_dir = tmp_path / "output"
-        render_course(modules=[module], output_dir=output_dir, embed_images=False)
+        _render_course(modules=[module], output_dir=output_dir, embed_images=False)
         chapter_html = (output_dir / "chapter_01.html").read_text(encoding="utf-8")
 
         assert "essay-container" in chapter_html
@@ -416,7 +446,7 @@ class TestRenderCourse:
     def test_chapter_contains_settings_modal(self, tmp_path: Path) -> None:
         module = self._make_module()
         output_dir = tmp_path / "output"
-        render_course(modules=[module], output_dir=output_dir, embed_images=False)
+        _render_course(modules=[module], output_dir=output_dir, embed_images=False)
         chapter_html = (output_dir / "chapter_01.html").read_text(encoding="utf-8")
 
         assert "settingsModal" in chapter_html
@@ -426,7 +456,7 @@ class TestRenderCourse:
         """Help modal should appear on chapter, index, review, and mixed_review."""
         module = self._make_module()
         output_dir = tmp_path / "output"
-        render_course(modules=[module], output_dir=output_dir, embed_images=False)
+        _render_course(modules=[module], output_dir=output_dir, embed_images=False)
 
         for page in ("chapter_01.html", "index.html", "review.html", "mixed_review.html"):
             html = (output_dir / page).read_text(encoding="utf-8")
@@ -453,7 +483,7 @@ class TestRenderCourse:
             ],
         )
         output_dir = tmp_path / "output"
-        render_course(modules=[m1, m2], output_dir=output_dir, embed_images=False)
+        _render_course(modules=[m1, m2], output_dir=output_dir, embed_images=False)
 
         ch1 = (output_dir / "chapter_01.html").read_text(encoding="utf-8")
         ch2 = (output_dir / "chapter_02.html").read_text(encoding="utf-8")
@@ -518,7 +548,7 @@ class TestRenderCourse:
             ),
         ]
         output_dir = tmp_path / "output"
-        render_course(modules=modules, output_dir=output_dir, embed_images=False)
+        _render_course(modules=modules, output_dir=output_dir, embed_images=False)
 
         # Should produce 3 unique files named by sequential index, not source chapter
         assert (output_dir / "chapter_01.html").exists()
@@ -558,7 +588,7 @@ class TestRenderCourse:
         """Both chapter and index HTML should contain the theme init script."""
         module = self._make_module()
         output_dir = tmp_path / "output"
-        render_course(modules=[module], output_dir=output_dir, embed_images=False)
+        _render_course(modules=[module], output_dir=output_dir, embed_images=False)
 
         chapter_html = (output_dir / "chapter_01.html").read_text(encoding="utf-8")
         index_html = (output_dir / "index.html").read_text(encoding="utf-8")
@@ -573,7 +603,7 @@ class TestRenderCourse:
         """The course slug should be embedded in HTML for localStorage keying."""
         module = self._make_module()
         output_dir = tmp_path / "my-course"
-        render_course(modules=[module], output_dir=output_dir, embed_images=False)
+        _render_course(modules=[module], output_dir=output_dir, embed_images=False)
 
         chapter_html = (output_dir / "chapter_01.html").read_text(encoding="utf-8")
         index_html = (output_dir / "index.html").read_text(encoding="utf-8")
@@ -585,7 +615,7 @@ class TestRenderCourse:
         """Chapter pages should have a course header with breadcrumbs."""
         module = self._make_module()
         output_dir = tmp_path / "output"
-        render_course(modules=[module], output_dir=output_dir, embed_images=False)
+        _render_course(modules=[module], output_dir=output_dir, embed_images=False)
 
         chapter_html = (output_dir / "chapter_01.html").read_text(encoding="utf-8")
 
@@ -598,7 +628,7 @@ class TestRenderCourse:
         """Index page should have a theme toggle button."""
         module = self._make_module()
         output_dir = tmp_path / "output"
-        render_course(modules=[module], output_dir=output_dir, embed_images=False)
+        _render_course(modules=[module], output_dir=output_dir, embed_images=False)
 
         index_html = (output_dir / "index.html").read_text(encoding="utf-8")
 
@@ -609,7 +639,7 @@ class TestRenderCourse:
         """Chapter pages should contain progress tracking JavaScript."""
         module = self._make_module()
         output_dir = tmp_path / "output"
-        render_course(modules=[module], output_dir=output_dir, embed_images=False)
+        _render_course(modules=[module], output_dir=output_dir, embed_images=False)
 
         chapter_html = (output_dir / "chapter_01.html").read_text(encoding="utf-8")
 
@@ -639,7 +669,7 @@ class TestRenderCourse:
             sections=[section],
         )
         output_dir = tmp_path / "output"
-        render_course(modules=[module], output_dir=output_dir, embed_images=False)
+        _render_course(modules=[module], output_dir=output_dir, embed_images=False)
 
         chapter_html = (output_dir / "chapter_01.html").read_text(encoding="utf-8")
 
@@ -653,7 +683,7 @@ class TestRenderCourse:
         """Each element should have a data-element-id attribute in HTML."""
         module = self._make_module()
         output_dir = tmp_path / "output"
-        render_course(modules=[module], output_dir=output_dir, embed_images=False)
+        _render_course(modules=[module], output_dir=output_dir, embed_images=False)
 
         chapter_html = (output_dir / "chapter_01.html").read_text(encoding="utf-8")
 
@@ -665,8 +695,8 @@ class TestRenderCourse:
 
         dir1 = tmp_path / "render1"
         dir2 = tmp_path / "render2"
-        render_course(modules=[module], output_dir=dir1, embed_images=False)
-        render_course(modules=[module], output_dir=dir2, embed_images=False)
+        _render_course(modules=[module], output_dir=dir1, embed_images=False)
+        _render_course(modules=[module], output_dir=dir2, embed_images=False)
 
         html1 = (dir1 / "chapter_01.html").read_text(encoding="utf-8")
         html2 = (dir2 / "chapter_01.html").read_text(encoding="utf-8")
@@ -682,7 +712,7 @@ class TestRenderCourse:
         """Elements should have data-concepts attribute (empty when no analysis)."""
         module = self._make_module()
         output_dir = tmp_path / "output"
-        render_course(modules=[module], output_dir=output_dir, embed_images=False)
+        _render_course(modules=[module], output_dir=output_dir, embed_images=False)
 
         chapter_html = (output_dir / "chapter_01.html").read_text(encoding="utf-8")
         assert 'data-concepts=' in chapter_html
@@ -709,7 +739,7 @@ class TestRenderCourse:
             ],
         )
         output_dir = tmp_path / "output"
-        render_course(
+        _render_course(
             modules=[module], output_dir=output_dir, embed_images=False,
             chapter_analyses=[analysis],
         )
@@ -722,7 +752,7 @@ class TestRenderCourse:
         """Chapter pages should contain 'Add to Review' buttons."""
         module = self._make_module()
         output_dir = tmp_path / "output"
-        render_course(modules=[module], output_dir=output_dir, embed_images=False)
+        _render_course(modules=[module], output_dir=output_dir, embed_images=False)
 
         chapter_html = (output_dir / "chapter_01.html").read_text(encoding="utf-8")
         assert "add-review-btn" in chapter_html
@@ -732,7 +762,7 @@ class TestRenderCourse:
         """Chapter pages should have a review nav badge in the header."""
         module = self._make_module()
         output_dir = tmp_path / "output"
-        render_course(modules=[module], output_dir=output_dir, embed_images=False)
+        _render_course(modules=[module], output_dir=output_dir, embed_images=False)
 
         chapter_html = (output_dir / "chapter_01.html").read_text(encoding="utf-8")
         assert "reviewNavBadge" in chapter_html
@@ -742,7 +772,7 @@ class TestRenderCourse:
         """Chapter pages should include the learner model JavaScript."""
         module = self._make_module()
         output_dir = tmp_path / "output"
-        render_course(modules=[module], output_dir=output_dir, embed_images=False)
+        _render_course(modules=[module], output_dir=output_dir, embed_images=False)
 
         chapter_html = (output_dir / "chapter_01.html").read_text(encoding="utf-8")
         assert "__lxpCreateLearnerModel" in chapter_html
@@ -753,7 +783,7 @@ class TestRenderCourse:
         """Index page should include the learner model JavaScript."""
         module = self._make_module()
         output_dir = tmp_path / "output"
-        render_course(modules=[module], output_dir=output_dir, embed_images=False)
+        _render_course(modules=[module], output_dir=output_dir, embed_images=False)
 
         index_html = (output_dir / "index.html").read_text(encoding="utf-8")
         assert "__lxpCreateLearnerModel" in index_html
@@ -763,7 +793,7 @@ class TestRenderCourse:
         """Index should not have concept graph section without graph data."""
         module = self._make_module()
         output_dir = tmp_path / "output"
-        render_course(modules=[module], output_dir=output_dir, embed_images=False)
+        _render_course(modules=[module], output_dir=output_dir, embed_images=False)
 
         index_html = (output_dir / "index.html").read_text(encoding="utf-8")
         # The graph section and vis-network script should not be rendered
@@ -793,7 +823,7 @@ class TestRenderCourse:
             ],
         )
         output_dir = tmp_path / "output"
-        render_course(
+        _render_course(
             modules=[module], output_dir=output_dir, embed_images=False,
             concept_graph=graph,
         )
@@ -808,7 +838,7 @@ class TestRenderCourse:
         """Review and mixed review pages should include learner model."""
         module = self._make_module()
         output_dir = tmp_path / "output"
-        render_course(modules=[module], output_dir=output_dir, embed_images=False)
+        _render_course(modules=[module], output_dir=output_dir, embed_images=False)
 
         review_html = (output_dir / "review.html").read_text(encoding="utf-8")
         mixed_html = (output_dir / "mixed_review.html").read_text(encoding="utf-8")
@@ -964,7 +994,7 @@ class TestCourseMetaJson:
         (tmp_path / "course_meta.json").write_text("not json", encoding="utf-8")
         assert _load_course_meta(tmp_path) is None
 
-    def test_render_course_creates_meta_json(self, tmp_path: Path) -> None:
+    def test__render_course_creates_meta_json(self, tmp_path: Path) -> None:
         module = TrainingModule(
             chapter_number=1,
             title="Ch1",
@@ -981,7 +1011,7 @@ class TestCourseMetaJson:
             ],
         )
         output_dir = tmp_path / "output"
-        render_course(
+        _render_course(
             modules=[module],
             output_dir=output_dir,
             embed_images=False,
@@ -994,7 +1024,7 @@ class TestCourseMetaJson:
         assert data["course_title"] == "My Title"
         assert data["course_summary"] == "My Summary"
 
-    def test_render_course_applies_meta_override(self, tmp_path: Path) -> None:
+    def test__render_course_applies_meta_override(self, tmp_path: Path) -> None:
         module = TrainingModule(
             chapter_number=1,
             title="Ch1",
@@ -1016,7 +1046,7 @@ class TestCourseMetaJson:
             json.dumps({"course_title": "Override Title", "course_summary": "Override Summary"}),
             encoding="utf-8",
         )
-        index = render_course(
+        index = _render_course(
             modules=[module],
             output_dir=output_dir,
             embed_images=False,
@@ -1048,7 +1078,7 @@ class TestEditableMetadata:
             ],
         )
         output_dir = tmp_path / "output"
-        index = render_course(
+        index = _render_course(
             modules=[module],
             output_dir=output_dir,
             embed_images=False,
@@ -1076,7 +1106,7 @@ class TestEditableMetadata:
             ],
         )
         output_dir = tmp_path / "output"
-        index = render_course(
+        index = _render_course(
             modules=[module],
             output_dir=output_dir,
             embed_images=False,
@@ -1102,7 +1132,7 @@ class TestEditableMetadata:
             ],
         )
         output_dir = tmp_path / "output"
-        index = render_course(
+        index = _render_course(
             modules=[module],
             output_dir=output_dir,
             embed_images=False,
@@ -1136,13 +1166,60 @@ class TestCurrencyProtection:
     def test_latex_still_works_with_currency(self) -> None:
         result = _markdown_to_html("Cost is $50 and $x^2$ is math")
         assert "&#36;50" in result
-        assert "$x^2$" in result
+        assert r"\(x^2\)" in result
 
     def test_only_dollar_sign_is_protected(self) -> None:
         """Digits after the $ should remain visible."""
         result = _markdown_to_html("Earn $200 per day")
         assert "&#36;200" in result
         assert "200" in result
+
+
+# ── Currency + LaTeX interaction tests ────────────────────────────────────
+
+
+class TestCurrencyLatexInteraction:
+    """Currency $ mixed with LaTeX delimiters — the finance content problem."""
+
+    def test_currency_in_braces_stripped(self) -> None:
+        r"""\frac{$60}{1.09} should have inner $ stripped."""
+        result = _markdown_to_html(r"Price $= \frac{$60}{1.09}$")
+        assert r"\frac{60}{1.09}" in result
+        assert "&#36;60" not in result  # NOT treated as currency
+
+    def test_equation_starting_with_digits(self) -> None:
+        r"""$931.08 = \frac{60}{X}$ should NOT have opening $ consumed as currency."""
+        result = _markdown_to_html(r"$931.08 = \frac{60}{X}$")
+        assert r"\frac{60}{X}" in result
+        assert "&#36;931" not in result
+
+    def test_latex_heavy_extracted_before_currency(self) -> None:
+        r"""$..$ with \commands extracted before currency can interfere."""
+        result = _markdown_to_html(r"$z_1 = 9\%$ and $50 profit")
+        assert r"z_1 = 9\%" in result      # LaTeX preserved
+        assert "&#36;50" in result            # Currency still works
+
+    def test_simple_math_still_works(self) -> None:
+        """$x^2$ (no backslash) still works after currency protection."""
+        result = _markdown_to_html("Cost $50 and $x^2$ is math")
+        assert "&#36;50" in result
+        assert r"\(x^2\)" in result
+
+    def test_display_math_unaffected(self) -> None:
+        result = _markdown_to_html(r"$$\frac{a}{b}$$")
+        assert r"\[\frac{a}{b}\]" in result
+
+    def test_currency_on_non_math_line_unchanged(self) -> None:
+        result = _markdown_to_html("Pay $50 and $1,000 total")
+        assert "&#36;50" in result
+        assert "&#36;1,000" in result
+
+    def test_fix_currency_in_braces_function(self) -> None:
+        from src.rendering.html_generator import _fix_currency_in_latex_braces
+
+        assert _fix_currency_in_latex_braces(r"\frac{$60}{$1,000}") == r"\frac{60}{1,000}"
+        assert _fix_currency_in_latex_braces(r"\frac{x}{y}") == r"\frac{x}{y}"  # no change
+        assert _fix_currency_in_latex_braces("{$3.14}") == "{3.14}"
 
 
 # ── Inline markdown variant tests ────────────────────────────────────────
@@ -1161,7 +1238,7 @@ class TestMarkdownToHtmlInline:
 
     def test_preserves_latex_inline(self) -> None:
         result = _markdown_to_html_inline("The formula $x^2$")
-        assert "$x^2$" in result
+        assert r"\(x^2\)" in result
         assert "<p>" not in result
 
     def test_preserves_currency(self) -> None:
@@ -1243,6 +1320,12 @@ class TestRenderFitbStatement:
         assert 'data-blank-index="0"' in result
         assert 'data-blank-index="1"' in result
 
+    def test_hint_button_onclick_preserved(self) -> None:
+        """Hint buttons must keep their onclick handler after sanitization."""
+        result = _render_fitb_statement("The _____ theorem.", answers=["central"])
+        assert 'onclick="revealNextLetters' in result
+        assert 'class="hint-letter-btn fitb-hint-letter-btn"' in result
+
 
 class TestFitbInteractiveAnswerIndices:
     """Tests for identifying which FITB blanks are interactive."""
@@ -1292,11 +1375,11 @@ class TestMarkdownInAllElements:
             ],
         )
         output_dir = tmp_path / "output"
-        render_course(modules=[module], output_dir=output_dir, embed_images=False)
+        _render_course(modules=[module], output_dir=output_dir, embed_images=False)
         html = (output_dir / "chapter_01.html").read_text(encoding="utf-8")
         assert "<strong>Bold</strong>" in html
         assert "<em>emphasis</em>" in html
-        assert "$x^2$" in html
+        assert r"\(x^2\)" in html
 
     def test_quiz_renders_markdown(self, tmp_path: Path) -> None:
         module = TrainingModule(
@@ -1325,10 +1408,10 @@ class TestMarkdownInAllElements:
             ],
         )
         output_dir = tmp_path / "output"
-        render_course(modules=[module], output_dir=output_dir, embed_images=False)
+        _render_course(modules=[module], output_dir=output_dir, embed_images=False)
         html = (output_dir / "chapter_01.html").read_text(encoding="utf-8")
         assert "<strong>bold</strong>" in html
-        assert "$E=mc^2$" in html
+        assert r"\(E=mc^2\)" in html
         assert "<code>code</code>" in html
 
     def test_matching_renders_markdown(self, tmp_path: Path) -> None:
@@ -1352,7 +1435,7 @@ class TestMarkdownInAllElements:
             ],
         )
         output_dir = tmp_path / "output"
-        render_course(modules=[module], output_dir=output_dir, embed_images=False)
+        _render_course(modules=[module], output_dir=output_dir, embed_images=False)
         html = (output_dir / "chapter_01.html").read_text(encoding="utf-8")
         assert "<strong>Bold</strong>" in html
 
@@ -1377,7 +1460,7 @@ class TestMarkdownInAllElements:
             ],
         )
         output_dir = tmp_path / "output"
-        render_course(modules=[module], output_dir=output_dir, embed_images=False)
+        _render_course(modules=[module], output_dir=output_dir, embed_images=False)
         html = (output_dir / "chapter_01.html").read_text(encoding="utf-8")
         assert "&#36;90" in html
         assert "&#36;100" in html
@@ -1434,7 +1517,96 @@ class TestDeduplicateMath:
         text = "The probability is $p=0.12$p=0.12 for this."
         html = _markdown_to_html(text)
         # Should contain the math delimiters once, not doubled
-        assert "$p=0.12$" in html
+        assert r"\(p=0.12\)" in html
         # The plain text echo should be gone
         assert "p=0.12p=0.12" not in html
-        assert "$p=0.12$p=0.12" not in html
+        assert r"\(p=0.12\)p=0.12" not in html
+
+
+class TestToKatexDelimiters:
+    """Tests for the _to_katex_delimiters converter."""
+
+    def test_inline_dollar(self) -> None:
+        assert _to_katex_delimiters("$E = mc^2$") == r"\(E = mc^2\)"
+
+    def test_display_dollar(self) -> None:
+        assert _to_katex_delimiters(r"$$\frac{a}{b}$$") == r"\[\frac{a}{b}\]"
+
+    def test_paren_passthrough(self) -> None:
+        assert _to_katex_delimiters(r"\(x^2\)") == r"\(x^2\)"
+
+    def test_bracket_passthrough(self) -> None:
+        assert _to_katex_delimiters(r"\[x^2\]") == r"\[x^2\]"
+
+    def test_plain_text_passthrough(self) -> None:
+        assert _to_katex_delimiters("no delimiters") == "no delimiters"
+
+
+class TestMathOutputNosDollarDelimiters:
+    """Integration: math output uses \\(...\\) / \\[...\\], never $...$."""
+
+    def test_inline_math_uses_paren_delimiters(self) -> None:
+        result = _markdown_to_html("Compute $x^2 + y^2$ now.")
+        assert r"\(x^2 + y^2\)" in result
+        assert "$x^2" not in result
+
+    def test_display_math_uses_bracket_delimiters(self) -> None:
+        result = _markdown_to_html(r"$$\sum_{i=1}^{n} x_i$$")
+        assert r"\[\sum_{i=1}^{n} x_i\]" in result
+        assert "$$" not in result
+
+    def test_currency_dollar_survives(self) -> None:
+        result = _markdown_to_html("Costs $100 and $x^2$ is math")
+        assert "&#36;100" in result
+        assert r"\(x^2\)" in result
+
+    def test_orphaned_dollar_escaped(self) -> None:
+        """A lone $ that isn't currency or math gets HTML-escaped."""
+        result = _markdown_to_html("Pay $ or not")
+        assert "&#36;" in result
+        assert "$" not in result.replace("&#36;", "")
+
+
+class TestElementRendererDispatch:
+    """Tests for the RENDERERS registry and _render_element dispatch."""
+
+    def test_renderers_covers_all_element_types(self) -> None:
+        expected = {
+            "section_intro", "slide", "quiz", "flashcard", "fill_in_the_blank",
+            "matching", "ordering", "categorization", "error_detection",
+            "analogy", "mermaid", "concept_map", "worked_example", "interactive_essay",
+        }
+        assert set(RENDERERS.keys()) == expected
+
+    def test_renderers_values_are_callable(self) -> None:
+        for etype, renderer in RENDERERS.items():
+            assert callable(renderer), f"RENDERERS['{etype}'] is not callable"
+
+    def test_unknown_element_type_returns_empty(self) -> None:
+        from jinja2 import Environment, FileSystemLoader
+        env = Environment(loader=FileSystemLoader(
+            str(Path(__file__).parent.parent / "src" / "rendering" / "templates")
+        ))
+        result = _render_element({"element_type": "nonexistent"}, env)
+        assert result == ""
+
+    def test_render_slide_returns_html(self) -> None:
+        from jinja2 import Environment, FileSystemLoader
+        env = Environment(loader=FileSystemLoader(
+            str(Path(__file__).parent.parent / "src" / "rendering" / "templates")
+        ))
+        data = {
+            "element_type": "slide",
+            "bloom_level": "understand",
+            "slide": {
+                "title": "Test Slide",
+                "content_html": "<p>Hello</p>",
+                "image_data": None,
+                "source_pages": "pp. 1-2",
+            },
+        }
+        html = _render_element(data, env)
+        assert "Test Slide" in html
+        assert "<p>Hello</p>" in html
+        assert "slide-badge" in html
+        assert "bloom-understand" in html

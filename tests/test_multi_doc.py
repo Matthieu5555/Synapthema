@@ -295,6 +295,49 @@ class TestBuildMultiDocContentSummary:
         assert "2 documents" in summary
 
 
+class TestRichMultiDocContentSummary:
+    """Tests for _build_rich_multi_doc_content_summary concept resolution."""
+
+    def test_rich_multi_doc_summary_resolves_concepts(self) -> None:
+        """Per-book summaries include concept graph info when graph provided."""
+        from src.transformation.analysis_types import (
+            ChapterAnalysis,
+            ConceptGraph,
+        )
+        from src.transformation.curriculum_planner import (
+            _build_rich_multi_doc_content_summary,
+        )
+
+        books = _make_two_books()
+        # Minimal analyses (empty concepts list is fine — we test graph passthrough)
+        analyses_per_book: list[list[ChapterAnalysis]] = [
+            [
+                ChapterAnalysis(chapter_number=1, chapter_title="What are Widgets"),
+            ],
+            [
+                ChapterAnalysis(chapter_number=1, chapter_title="Gadget Fundamentals"),
+                ChapterAnalysis(chapter_number=2, chapter_title="Gadget Applications"),
+            ],
+        ]
+        graph = ConceptGraph(
+            topological_order=["Widget", "Gadget", "Hybrid"],
+            foundation_concepts=["Widget"],
+            advanced_concepts=["Hybrid"],
+        )
+
+        result = _build_rich_multi_doc_content_summary(
+            books, analyses_per_book, graph,
+        )
+
+        # The per-book rich summaries should include concept dependency info
+        # (from _build_rich_content_summary receiving the graph)
+        assert "Widget" in result
+        assert "Gadget" in result
+        assert "Hybrid" in result
+        # Global concept order header
+        assert "Concept Dependency Order" in result
+
+
 # ── Tests: config with multiple PDFs ──────────────────────────────────────────
 
 

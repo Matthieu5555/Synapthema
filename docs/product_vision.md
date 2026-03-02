@@ -52,7 +52,7 @@ The system is **material-agnostic**. The learning science and pedagogy are baked
 - **Cross-concept navigation** — wiki-links let the learner jump to related concepts
 - **Review mode** — surface due cards and questions from previous sections
 
-## Additional Features (Claude's Suggestions)
+## Additional Features
 
 ### Pedagogical Safeguards
 

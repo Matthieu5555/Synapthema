@@ -11,6 +11,7 @@ from src.transformation.analysis_types import (
     PrerequisiteLink,
     ResolvedConcept,
     SectionCharacterization,
+    resolve_concept,
 )
 
 
@@ -263,3 +264,26 @@ class TestConceptGraph:
         assert len(graph.edges) == 1
         assert graph.topological_order[0] == "Present value"
         assert "Present value" in graph.foundation_concepts
+
+
+class TestResolveConcept:
+    """Tests for the resolve_concept pure function."""
+
+    def test_resolves_known_concept(self) -> None:
+        canonical_map = {"sharpe ratio": "Sharpe ratio", "sr": "Sharpe ratio"}
+        assert resolve_concept("Sharpe Ratio", canonical_map) == "Sharpe ratio"
+
+    def test_resolves_alias(self) -> None:
+        canonical_map = {"sharpe ratio": "Sharpe ratio", "sr": "Sharpe ratio"}
+        assert resolve_concept("SR", canonical_map) == "Sharpe ratio"
+
+    def test_returns_original_for_unknown(self) -> None:
+        canonical_map = {"sharpe ratio": "Sharpe ratio"}
+        assert resolve_concept("Unknown Concept", canonical_map) == "Unknown Concept"
+
+    def test_strips_whitespace(self) -> None:
+        canonical_map = {"sharpe ratio": "Sharpe ratio"}
+        assert resolve_concept("  Sharpe Ratio  ", canonical_map) == "Sharpe ratio"
+
+    def test_empty_map(self) -> None:
+        assert resolve_concept("anything", {}) == "anything"

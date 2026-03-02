@@ -1,0 +1,24 @@
+<span class="element-badge matching-badge">Matching</span>
+{% if element.bloom_level %}<span class="bloom-badge bloom-{{ element.bloom_level }}">{{ element.bloom_level }}</span>{% endif %}
+<div class="matching-container" data-correct='{{ element.matching.correct_json|safe }}' data-pair-explanations='{{ element.matching.pair_explanations_json|safe }}'>
+    <div class="matching-title">{{ element.matching.title }}</div>
+    <div class="matching-grid">
+        {% for item in element.matching.left_items %}
+        <div class="matching-left-item" data-idx="{{ loop.index0 }}" onclick="selectMatchItem(this, 'left')">{{ item|safe }}</div>
+        <div class="matching-arrow">&#8594;</div>
+        <div class="matching-right-item" data-idx="{{ loop.index0 }}" onclick="selectMatchItem(this, 'right')">{{ element.matching.shuffled_right[loop.index0]|safe }}</div>
+        {% endfor %}
+    </div>
+    <div class="matching-explanations" style="display:none;"></div>
+    <div class="matching-confidence" style="display:none;">
+        <div class="confidence-prompt">How confident were you?</div>
+        <div class="confidence-dots">
+            <span class="confidence-dot" data-value="1" onclick="selectMatchConfidence(this)">1</span>
+            <span class="confidence-dot" data-value="2" onclick="selectMatchConfidence(this)">2</span>
+            <span class="confidence-dot" data-value="3" onclick="selectMatchConfidence(this)">3</span>
+            <span class="confidence-dot" data-value="4" onclick="selectMatchConfidence(this)">4</span>
+            <span class="confidence-dot" data-value="5" onclick="selectMatchConfidence(this)">5</span>
+        </div>
+        <button class="quiz-check-btn confidence-confirm-btn" onclick="confirmMatchConfidence(this)" disabled>Confirm</button>
+    </div>
+</div>

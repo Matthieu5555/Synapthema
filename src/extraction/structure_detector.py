@@ -177,9 +177,12 @@ def detect_toc_with_llm(
         for item in toc_data:
             if not isinstance(item, dict):
                 continue
-            level = int(item.get("level", 1))
+            try:
+                level = int(item.get("level", 1))
+                page = int(item.get("page", 0))
+            except (ValueError, TypeError):
+                continue
             title = str(item.get("title", "")).strip()
-            page = int(item.get("page", 0))
 
             if not title or page < 1:
                 continue
@@ -309,9 +312,12 @@ def detect_subsections_with_llm(
         for item in toc_data:
             if not isinstance(item, dict):
                 continue
-            level = int(item.get("level", 2))
+            try:
+                level = int(item.get("level", 2))
+                page = int(item.get("page", 0))
+            except (ValueError, TypeError):
+                continue
             title = str(item.get("title", "")).strip()
-            page = int(item.get("page", 0))
 
             if not title or page < 1:
                 continue
@@ -401,7 +407,7 @@ def identify_chapters(
         # End page
         if idx + 1 < len(chapter_indices):
             next_chapter_idx = chapter_indices[idx + 1]
-            end_page = toc_entries[next_chapter_idx].page - 1
+            end_page = max(chapter_entry.page, toc_entries[next_chapter_idx].page - 1)
         else:
             end_page = total_pages
             for subsequent in toc_entries[chapter_idx + 1:]:
@@ -452,8 +458,12 @@ _CHAPTER_PATTERN = re.compile(
 
 
 def _is_chapter_entry(entry: TocEntry) -> bool:
-    """Check if a TOC entry represents a chapter heading."""
-    return entry.level <= 2 and bool(_CHAPTER_PATTERN.search(entry.title))
+    """Check if a TOC entry represents a chapter heading.
+
+    Allows up to level 3 to handle books where chapters are nested under
+    part headings (e.g., L1: Book Title → L2: PART ONE → L3: CHAPTER 1).
+    """
+    return entry.level <= 3 and bool(_CHAPTER_PATTERN.search(entry.title))
 
 
 def _normalize_title(title: str) -> str:
@@ -519,12 +529,17 @@ def _filter_front_matter(entries: tuple[TocEntry, ...]) -> tuple[TocEntry, ...]:
     Keeps all entries from the first one whose title doesn't match known
     front-matter patterns.
     """
-    first_content_idx = 0
+    first_content_idx: int | None = None
     for i, entry in enumerate(entries):
         title_lower = entry.title.lower().strip()
         if title_lower not in _FRONT_MATTER_TITLES and not _is_front_matter_title(title_lower):
             first_content_idx = i
             break
+
+    if first_content_idx is None:
+        # All entries are front matter — return empty
+        logger.info("Filtered all %d TOC entries as front matter", len(entries))
+        return ()
 
     filtered = entries[first_content_idx:]
     skipped = len(entries) - len(filtered)

@@ -1,0 +1,92 @@
+{% if element.interactive_essay.is_static %}
+{# ── Static mode: single-prompt self-explanation ── #}
+<span class="element-badge explain-badge">Explain</span>
+{% if element.bloom_level %}<span class="bloom-badge bloom-{{ element.bloom_level }}">{{ element.bloom_level }}</span>{% endif %}
+<div class="self-explain-container" data-key-points='{{ element.interactive_essay.prompts[0].key_points_json|safe }}' data-min-words="{{ element.interactive_essay.prompts[0].minimum_words }}">
+    <div class="explain-prompt">
+        <h2>Explain in Your Own Words</h2>
+        <div class="explain-prompt-text">{{ element.interactive_essay.prompts[0].prompt|safe }}</div>
+    </div>
+    <textarea class="explain-textarea"
+              placeholder="Type your explanation here (minimum {{ element.interactive_essay.prompts[0].minimum_words }} words)..."
+              rows="8"
+              oninput="updateWordCount(this)"></textarea>
+    <div class="explain-word-count">
+        <span class="word-count">0</span> / {{ element.interactive_essay.prompts[0].minimum_words }} words minimum
+    </div>
+    <button class="explain-submit-btn" onclick="submitExplanation(this)" disabled>
+        Submit My Explanation
+    </button>
+    <div class="explain-rubric" style="display:none;">
+        <h3>Self-Assessment</h3>
+        <p>Check each point your explanation covered:</p>
+        <div class="rubric-checklist"></div>
+        <div class="rubric-score" style="display:none;">
+            <p>You covered <span class="score-count">0</span> out of <span class="score-total">0</span> key points.</p>
+        </div>
+        <button class="show-model-btn" onclick="showModelResponse(this)">See Model Response</button>
+        <div class="model-response" style="display:none;">
+            {{ element.interactive_essay.prompts[0].example_response|safe }}
+        </div>
+    </div>
+    {% if element.interactive_essay.prompts[0].source_pages %}
+    <div class="source-attribution">{{ element.interactive_essay.prompts[0].source_pages }}</div>
+    {% endif %}
+</div>
+{% else %}
+{# ── Dynamic mode: multi-prompt essay with optional tutor ── #}
+<span class="element-badge essay-badge">Interactive Essay</span>
+{% if element.bloom_level %}<span class="bloom-badge bloom-{{ element.bloom_level }}">{{ element.bloom_level }}</span>{% endif %}
+<div class="essay-container"
+     data-threshold="{{ element.interactive_essay.passing_threshold }}"
+     data-tutor-prompt='{{ element.interactive_essay.tutor_system_prompt_json|safe }}'>
+    <div class="essay-header">
+        <h2>{{ element.interactive_essay.title }}</h2>
+        <p class="essay-subtitle">Synthesize and explain what you've learned</p>
+        <div class="concepts-tested">
+            <strong>Concepts tested:</strong>
+            {% for concept in element.interactive_essay.concepts_tested %}
+            <span class="concept-tag">{{ concept }}</span>
+            {% endfor %}
+        </div>
+    </div>
+
+    {% for prompt in element.interactive_essay.prompts %}
+    <div class="essay-prompt" data-prompt-index="{{ loop.index0 }}"
+         data-key-points='{{ prompt.key_points_json|safe }}' data-min-words="{{ prompt.minimum_words }}">
+        <h3>Question {{ loop.index }}</h3>
+        <div class="essay-prompt-text">{{ prompt.prompt|safe }}</div>
+        <textarea class="explain-textarea" rows="6"
+                  placeholder="Minimum {{ prompt.minimum_words }} words..."
+                  oninput="updateWordCount(this)"></textarea>
+        <div class="explain-word-count">
+            <span class="word-count">0</span> / {{ prompt.minimum_words }} words minimum
+        </div>
+        <div class="model-response" style="display:none;">
+            {{ prompt.example_response|safe }}
+        </div>
+    </div>
+    {% endfor %}
+
+    <button class="essay-submit-btn" onclick="submitEssay(this)" disabled>
+        Submit All Answers
+    </button>
+
+    <div class="essay-results" style="display:none;">
+        <div class="essay-rubric"></div>
+        <div class="essay-verdict" style="display:none;"></div>
+    </div>
+
+    <div class="llm-tutor-panel" style="display:none;">
+        <h3>AI Tutor Review</h3>
+        <p>Get personalized feedback from an AI tutor:</p>
+        <div class="tutor-chat-history"></div>
+        <div class="tutor-input-area">
+            <input type="text" class="tutor-input" placeholder="Ask a follow-up or respond to feedback..."
+                   onkeydown="if(event.key==='Enter')sendToTutor(this.closest('.llm-tutor-panel').querySelector('.tutor-send-btn'))">
+            <button class="tutor-send-btn" onclick="sendToTutor(this)">Send</button>
+        </div>
+        <div class="tutor-verdict" style="display:none;"></div>
+    </div>
+</div>
+{% endif %}

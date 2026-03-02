@@ -245,11 +245,18 @@ def _find_canonical(
     if name_lower in name_to_canonical:
         return name_to_canonical[name_lower]
 
-    # Strategy 2: Substring containment
+    # Strategy 2: Substring containment (with minimum length guard)
+    # Only match when the shorter name is multi-word (≥ 2 words) or when the
+    # shorter is ≥ 60% of the longer, to avoid merging single-word names like
+    # "risk" with "market risk", "credit risk", etc.
     for existing_name, canonical in name_to_canonical.items():
         if name_lower in existing_name or existing_name in name_lower:
-            name_to_canonical[name_lower] = canonical
-            return canonical
+            shorter = min(name_lower, existing_name, key=len)
+            longer = max(name_lower, existing_name, key=len)
+            short_words = shorter.split()
+            if len(short_words) >= 2 or (len(longer) > 0 and len(shorter) / len(longer) >= 0.6):
+                name_to_canonical[name_lower] = canonical
+                return canonical
 
     # Strategy 3: Key term overlap
     if concept.key_terms:

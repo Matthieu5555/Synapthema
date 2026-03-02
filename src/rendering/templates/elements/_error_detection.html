@@ -1,0 +1,20 @@
+<span class="element-badge error-detect-badge">Spot the Error</span>
+{% if element.bloom_level %}<span class="bloom-badge bloom-{{ element.bloom_level }}">{{ element.bloom_level }}</span>{% endif %}
+<div class="error-detection-container">
+    <div class="error-detection-title">{{ element.error_detection.title }}</div>
+    <p class="error-detection-instruction">{{ element.error_detection.instruction|safe }}</p>
+    {% if element.error_detection.context %}
+    <p class="error-detection-context">{{ element.error_detection.context|safe }}</p>
+    {% endif %}
+    {% for item in element.error_detection.error_items %}
+    <div class="error-item" data-idx="{{ loop.index0 }}">
+        <div class="error-statement">{{ loop.index }}. {{ item.statement|safe }}</div>
+        <button class="quiz-check-btn error-reveal-btn" onclick="revealError(this)">Reveal Error</button>
+        <div class="error-feedback" style="display:none;">
+            <div class="error-explanation"><strong>Error:</strong> {{ item.error_explanation|safe }}</div>
+            <div class="error-corrected"><strong>Corrected:</strong> {{ item.corrected_statement|safe }}</div>
+        </div>
+    </div>
+    {% endfor %}
+    <button class="add-review-btn" onclick="addToReview(this)" title="Add to spaced review">+ Review</button>
+</div>

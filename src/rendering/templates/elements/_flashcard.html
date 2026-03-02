@@ -1,0 +1,14 @@
+<span class="element-badge flashcard-badge">Flashcard</span>
+{% if element.bloom_level %}<span class="bloom-badge bloom-{{ element.bloom_level }}">{{ element.bloom_level }}</span>{% endif %}
+<div class="flashcard-container">
+    <div class="flashcard" onclick="this.classList.toggle('flipped')">
+        <div class="flashcard-front">
+            {{ element.flashcard.front|safe }}
+            <div class="flashcard-hint">Tap or swipe to reveal</div>
+        </div>
+        <div class="flashcard-back">
+            {{ element.flashcard.back|safe }}
+        </div>
+    </div>
+</div>
+<button class="add-review-btn" onclick="addToReview(this)" title="Add to spaced review">+ Review</button>

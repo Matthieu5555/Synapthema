@@ -4,7 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Mixed Practice — {{ course_title }}</title>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.25/dist/katex.min.css">
+    <link rel="preload" href="https://cdn.jsdelivr.net/npm/katex@0.16.25/dist/fonts/KaTeX_Main-Regular.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="preload" href="https://cdn.jsdelivr.net/npm/katex@0.16.25/dist/fonts/KaTeX_Math-Italic.woff2" as="font" type="font/woff2" crossorigin>
     <style>
 {{ css|safe }}
     </style>
@@ -20,7 +22,9 @@
 </head>
 <body style="overflow-y: auto; height: auto;">
 
-<nav class="course-header">
+<a class="skip-link" href="#main-content">Skip to content</a>
+
+<nav class="course-header" aria-label="Course navigation">
     <div class="course-header-left">
         <a href="index.html" class="breadcrumb-home" title="Back to course index">{{ course_title }}</a>
         <span class="breadcrumb-sep">/</span>
@@ -33,7 +37,7 @@
     </div>
 </nav>
 
-<div class="index-container">
+<main class="index-container" id="main-content">
     <h1 class="index-title">Mixed Practice</h1>
     <p class="index-subtitle" id="mixedSubtitle">Interleaved exercises from across chapters</p>
 
@@ -49,7 +53,7 @@
                 (quizzes, ordering, matching, fill-in-the-blank) engage different
                 cognitive pathways, creating richer and more flexible knowledge.
             </p>
-            <p style="color:var(--text-muted); font-size:0.85rem; margin-top:0.5rem;">
+            <p style="color:var(--color-fg-muted); font-size:var(--text-sm); margin-top:0.5rem;">
                 Based on: Brunmair &amp; Richter (2019) meta-analysis, effect size
                 g&nbsp;=&nbsp;0.42; Kornell &amp; Bjork (2008); Roediger &amp; Karpicke
                 (2006) testing effect; Bjork &amp; Bjork (2011) desirable difficulties
@@ -59,14 +63,14 @@
     </details>
 
     <div id="emptyState" style="display:none; text-align:center; margin-top:3rem;">
-        <p style="font-size:1.2rem; color:var(--text-muted);">No exercises available yet.</p>
-        <p style="color:var(--text-muted); margin-top:0.5rem;">Complete some chapter exercises to populate your mixed practice deck.</p>
+        <p style="font-size:var(--text-xl); color:var(--color-fg-muted);">No exercises available yet.</p>
+        <p style="color:var(--color-fg-muted); margin-top:0.5rem;">Complete some chapter exercises to populate your mixed practice deck.</p>
         <a href="index.html" class="nav-btn" style="display:inline-block; margin-top:1.5rem; text-decoration:none;">Back to Course</a>
     </div>
 
     <div id="doneState" style="display:none; text-align:center; margin-top:3rem;">
-        <p style="font-size:1.5rem; color:var(--success); font-weight:700;">Session Complete!</p>
-        <p style="color:var(--text-muted); margin-top:0.5rem;" id="sessionSummary"></p>
+        <p style="font-size:var(--text-3xl); color:var(--color-success); font-weight:700;">Session Complete!</p>
+        <p style="color:var(--color-fg-muted); margin-top:0.5rem;" id="sessionSummary"></p>
         <a href="index.html" class="nav-btn" style="display:inline-block; margin-top:1.5rem; text-decoration:none;">Back to Course</a>
         <button class="nav-btn" style="display:inline-block; margin-top:1.5rem; margin-left:0.5rem;" onclick="location.reload()">Practice Again</button>
     </div>
@@ -82,7 +86,7 @@
 
         <div class="review-progress" id="exerciseProgress"></div>
     </div>
-</div>
+</main>
 
 <script>
 // ── Learner Model ─────────────────────────────────────────────────────────
@@ -95,8 +99,6 @@ function renderMath(el) {
     if (typeof renderMathInElement === 'function') {
         renderMathInElement(el, {
             delimiters: [
-                {left: '$$', right: '$$', display: true},
-                {left: '$', right: '$', display: false},
                 {left: '\\(', right: '\\)', display: false},
                 {left: '\\[', right: '\\]', display: true}
             ],
@@ -151,6 +153,11 @@ window.__lxpToggleTheme = function() {
     var EXERCISES_KEY = 'lxp_' + COURSE_SLUG + '_exercises';
     var PROGRESS_KEY = 'lxp_' + COURSE_SLUG + '_progress';
     var learnerModel = __lxpCreateLearnerModel(COURSE_SLUG);
+
+    // ── Named constants ──────────────────────────────────────────────────
+    var MAX_EXERCISES_PER_SESSION = 30;
+    var MAX_EXERCISE_ATTEMPTS = 3;
+    var MIN_EXPLAIN_WORDS = 3;
 
     var BLOOM_ORDER = { 'remember': 1, 'understand': 2, 'apply': 3,
                         'analyze': 4, 'evaluate': 5, 'create': 6 };
@@ -240,7 +247,7 @@ window.__lxpToggleTheme = function() {
     });
 
     // Cap at 30 exercises per session
-    interleaved = interleaved.slice(0, 30);
+    interleaved = interleaved.slice(0, MAX_EXERCISES_PER_SESSION);
 
     var uniqueChapters = {};
     interleaved.forEach(function(ex) { uniqueChapters[ex.chapter] = true; });
@@ -468,7 +475,7 @@ window.__lxpToggleTheme = function() {
         for (var i = 0; i < leftItems.length; i++) {
             html += '<div class="match-item" style="display:flex;gap:0.5rem;align-items:center;padding:0.5rem 0;">' +
                     '<strong>' + (leftItems[i] || '') + '</strong>' +
-                    ' <span style="color:var(--text-muted);">&rarr;</span> ' +
+                    ' <span style="color:var(--color-fg-muted);">&rarr;</span> ' +
                     '<span>' + (rightItems[i] || '') + '</span></div>';
         }
         html += '</div>';
@@ -514,7 +521,7 @@ window.__lxpToggleTheme = function() {
         var textarea = container.querySelector('.self-explain-input');
         textarea.addEventListener('input', function() {
             var words = textarea.value.trim().split(/\s+/).filter(function(w) { return w.length > 0; });
-            container.querySelector('.quiz-check-btn').disabled = words.length < 3;
+            container.querySelector('.quiz-check-btn').disabled = words.length < MIN_EXPLAIN_WORDS;
         });
     }
 
@@ -636,7 +643,7 @@ window.__lxpToggleTheme = function() {
         });
 
         var btn = container.querySelector('.quiz-check-btn');
-        if (allCorrect || attempts >= 3) {
+        if (allCorrect || attempts >= MAX_EXERCISE_ATTEMPTS) {
             btn.disabled = true;
             btn.textContent = allCorrect ? 'Correct Order!' : 'Showing correct order';
             if (!allCorrect) {
@@ -754,7 +761,7 @@ window.__lxpToggleTheme = function() {
         if (poolItems.length > 0) allCorrect = false;
 
         var btn = container.querySelector('.quiz-check-btn');
-        if (allCorrect || attempts >= 3) {
+        if (allCorrect || attempts >= MAX_EXERCISE_ATTEMPTS) {
             btn.disabled = true;
             btn.textContent = allCorrect ? 'All Correct!' : 'Showing answers';
             if (!allCorrect) {
@@ -894,7 +901,7 @@ window.__lxpToggleTheme = function() {
                 var att = parseInt(qDiv.dataset.attempts) + 1;
                 qDiv.dataset.attempts = att;
 
-                if (selIdx === correctIdx || att >= 3) {
+                if (selIdx === correctIdx || att >= MAX_EXERCISE_ATTEMPTS) {
                     qDiv.classList.add('analogy-answered');
                     var opts = qDiv.querySelectorAll('.analogy-option');
                     opts[correctIdx].classList.add('analogy-correct');
@@ -960,8 +967,8 @@ window.__lxpToggleTheme = function() {
 
 {% include '_help_modal.html' %}
 
-<script src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/contrib/auto-render.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.25/dist/katex.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.25/dist/contrib/auto-render.min.js"></script>
 
 </body>
 </html>

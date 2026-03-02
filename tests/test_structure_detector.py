@@ -40,8 +40,13 @@ class TestIsChapterEntry:
         entry = TocEntry(level=1, title="Chapter 3: Analysis", page=30)
         assert _is_chapter_entry(entry)
 
-    def test_rejects_non_chapter_level(self) -> None:
+    def test_accepts_level_3_chapter(self) -> None:
+        """Level 3 chapters are valid (e.g., books with Part > Chapter nesting)."""
         entry = TocEntry(level=3, title="Chapter 1: Intro", page=5)
+        assert _is_chapter_entry(entry)
+
+    def test_rejects_non_chapter_level(self) -> None:
+        entry = TocEntry(level=4, title="Chapter 1: Intro", page=5)
         assert not _is_chapter_entry(entry)
 
     def test_rejects_non_chapter_title(self) -> None:

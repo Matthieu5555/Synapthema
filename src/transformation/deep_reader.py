@@ -167,7 +167,16 @@ def analyze_book(
         results: list[ChapterAnalysis | None] = [None] * total
         for future in as_completed(future_to_idx):
             idx = future_to_idx[future]
-            results[idx] = future.result()
+            try:
+                results[idx] = future.result()
+            except Exception:
+                chapter = book.chapters[idx]
+                logger.error(
+                    "Failed to analyze chapter %d '%s' — skipping",
+                    chapter.chapter_number, chapter.title,
+                    exc_info=True,
+                )
+                # results[idx] stays None, filtered out below
 
     analyses = [a for a in results if a is not None]
 
@@ -191,10 +200,12 @@ def _compute_signals(chapter: Chapter) -> ChapterSignals:
 
 
 def _build_chapter_text(chapter: Chapter) -> str:
-    """Concatenate section texts with headers, smartly truncated."""
+    """Concatenate section texts (including subsections) with headers, smartly truncated."""
     parts: list[str] = []
     for section in chapter.sections:
         parts.append(f"## {section.title}\n\n{section.text}")
+        for sub in section.subsections:
+            parts.append(f"### {sub.title}\n\n{sub.text}")
 
     full_text = "\n\n---\n\n".join(parts)
     return _smart_truncate(full_text, MAX_CHAPTER_TEXT_LENGTH)

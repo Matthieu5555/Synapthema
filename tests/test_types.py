@@ -38,6 +38,10 @@ from src.transformation.types import (
     SlideElement,
     TrainingElement,
     FillInTheBlank,
+    WorkedExample,
+    WorkedExampleChallengeOption,
+    WorkedExampleElement,
+    WorkedExampleStep,
 )
 
 # TypeAdapter for the discriminated union — needed for dict-based construction
@@ -165,6 +169,49 @@ class TestTrainingElementValidation:
         })
         assert isinstance(elem, AnalogyElement)
         assert elem.analogy.items[0].answer == "D"
+
+    def test_valid_worked_example(self) -> None:
+        elem = _ElementAdapter.validate_python({
+            "element_type": "worked_example",
+            "bloom_level": "apply",
+            "worked_example": {
+                "title": "Solve a quadratic",
+                "problem_statement": "Find x in x^2 + 3x + 2 = 0",
+                "challenge_question": "What are the roots?",
+                "challenge_options": [
+                    {"text": "x = -1, -2"},
+                    {"text": "x = 1, 2"},
+                    {"text": "x = -1, 2"},
+                ],
+                "challenge_correct_index": 0,
+                "steps": [
+                    {"title": "Factor", "content": "(x+1)(x+2) = 0", "why": "Look for factors of 2 that sum to 3"},
+                    {"title": "Solve", "content": "x = -1 or x = -2", "why": "Zero product property"},
+                ],
+                "final_answer": "x = -1 and x = -2",
+            },
+        })
+        assert isinstance(elem, WorkedExampleElement)
+        assert len(elem.worked_example.steps) == 2
+
+    def test_rejects_worked_example_bad_challenge_index(self) -> None:
+        with pytest.raises(ValidationError):
+            WorkedExample(
+                title="T",
+                problem_statement="P",
+                challenge_question="Q?",
+                challenge_options=[
+                    WorkedExampleChallengeOption(text="A"),
+                    WorkedExampleChallengeOption(text="B"),
+                    WorkedExampleChallengeOption(text="C"),
+                ],
+                challenge_correct_index=5,
+                steps=[
+                    WorkedExampleStep(title="S1", content="C1", why="W1"),
+                    WorkedExampleStep(title="S2", content="C2", why="W2"),
+                ],
+                final_answer="FA",
+            )
 
     def test_rejects_unknown_element_type(self) -> None:
         """An unrecognized element_type should fail."""
@@ -315,7 +362,7 @@ class TestElementBloomMap:
         expected = {
             "section_intro", "flashcard", "slide", "mermaid", "quiz", "matching",
             "ordering", "fill_in_the_blank", "categorization", "analogy",
-            "concept_map", "error_detection", "interactive_essay",
+            "concept_map", "error_detection", "worked_example", "interactive_essay",
         }
         assert set(ELEMENT_BLOOM_MAP.keys()) == expected
 
@@ -337,6 +384,7 @@ class TestElementBloomMap:
         assert ELEMENT_BLOOM_MAP["analogy"] == "analyze"
         assert ELEMENT_BLOOM_MAP["concept_map"] == "apply"
         assert ELEMENT_BLOOM_MAP["error_detection"] == "evaluate"
+        assert ELEMENT_BLOOM_MAP["worked_example"] == "apply"
         assert ELEMENT_BLOOM_MAP["interactive_essay"] == "evaluate"
 
 
@@ -349,6 +397,7 @@ class TestElementRole:
     def test_slides_are_teach(self) -> None:
         assert ELEMENT_ROLE["slide"] == "teach"
         assert ELEMENT_ROLE["mermaid"] == "teach"
+        assert ELEMENT_ROLE["worked_example"] == "teach"
 
     def test_exercises_are_practice(self) -> None:
         assert ELEMENT_ROLE["quiz"] == "practice"

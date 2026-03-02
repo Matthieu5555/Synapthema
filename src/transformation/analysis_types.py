@@ -206,3 +206,12 @@ class ConceptGraph(BaseModel):
     def resolve(self, name: str) -> str:
         """Resolve a raw concept name to its canonical form."""
         return self.canonical_map.get(name.lower().strip(), name)
+
+
+def resolve_concept(name: str, canonical_map: dict[str, str]) -> str:
+    """Resolve a raw concept name to its canonical form.
+
+    Pure function — does not require a ConceptGraph instance.
+    Returns the original name if not found in the map.
+    """
+    return canonical_map.get(name.lower().strip(), name)

@@ -1,0 +1,10 @@
+<span class="element-badge fill-badge">Fill in the Blank</span>
+{% if element.bloom_level %}<span class="bloom-badge bloom-{{ element.bloom_level }}">{{ element.bloom_level }}</span>{% endif %}
+<div class="fitb-container" data-answers='{{ element.fill_in_the_blank.answers_json|safe }}' data-hint-first-letter="{{ element.fill_in_the_blank.hint_first_letter|lower }}" data-attempts="0">
+    {% if element.fill_in_the_blank.hint %}
+    <div class="fitb-hint" style="display:none;">Hint: {{ element.fill_in_the_blank.hint|safe }}</div>
+    {% endif %}
+    <div class="fitb-statement">{{ element.fill_in_the_blank.statement_html|safe }}</div>
+    <button class="quiz-check-btn" onclick="checkFillBlanks(this)">Check Answers</button>
+    <button class="add-review-btn" onclick="addToReview(this)" title="Add to spaced review">+ Review</button>
+</div>

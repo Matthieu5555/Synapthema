@@ -1,0 +1,12 @@
+<span class="element-badge slide-badge">Slide</span>
+{% if element.bloom_level %}<span class="bloom-badge bloom-{{ element.bloom_level }}">{{ element.bloom_level }}</span>{% endif %}
+<h1>{{ element.slide.title }}</h1>
+<div class="slide-content">
+    {{ element.slide.content_html|safe }}
+</div>
+{% if element.slide.image_data %}
+<img class="slide-image" src="{{ element.slide.image_data }}" alt="{{ element.slide.title }}">
+{% endif %}
+{% if element.slide.source_pages %}
+<div class="source-attribution">{{ element.slide.source_pages }}</div>
+{% endif %}

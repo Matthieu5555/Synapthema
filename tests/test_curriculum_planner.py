@@ -675,8 +675,42 @@ def _make_concept(
 class TestSplitOverloadedSections:
     """Tests for the _split_overloaded_sections safety net."""
 
-    def test_no_split_when_few_concepts(self) -> None:
-        """Sections with <4 core/supporting concepts are not split."""
+    def test_no_split_when_single_concept(self) -> None:
+        """Sections with only 1 core/supporting concept are not split."""
+        from src.transformation.analysis_types import ChapterAnalysis
+
+        blueprint = CurriculumBlueprint(
+            course_title="Test",
+            modules=[
+                ModuleBlueprint(
+                    title="M1",
+                    source_chapter_number=1,
+                    sections=[
+                        SectionBlueprint(
+                            title="Sec",
+                            source_section_title="Test Section",
+                        ),
+                    ],
+                ),
+            ],
+        )
+        analyses = [
+            ChapterAnalysis(
+                chapter_number=1,
+                chapter_title="Ch1",
+                concepts=[
+                    _make_concept("A", "Test Section"),
+                ],
+            ),
+        ]
+
+        result = _split_overloaded_sections(blueprint, analyses)
+
+        assert len(result.modules[0].sections) == 1
+        assert result.modules[0].sections[0].title == "Sec"
+
+    def test_splits_section_with_2_concepts(self) -> None:
+        """Sections with 2 core/supporting concepts are now split into 2 units."""
         from src.transformation.analysis_types import ChapterAnalysis
 
         blueprint = CurriculumBlueprint(
@@ -707,8 +741,10 @@ class TestSplitOverloadedSections:
 
         result = _split_overloaded_sections(blueprint, analyses)
 
-        assert len(result.modules[0].sections) == 1
-        assert result.modules[0].sections[0].title == "Sec"
+        sections = result.modules[0].sections
+        assert len(sections) == 2
+        assert sections[0].focus_concepts == ["A"]
+        assert sections[1].focus_concepts == ["B"]
 
     def test_splits_section_with_4_plus_concepts(self) -> None:
         """Section with 4 core concepts becomes 2 sub-sections."""
@@ -753,8 +789,8 @@ class TestSplitOverloadedSections:
             assert len(s.focus_concepts) == 1
             assert s.source_section_title == "Dense Section"
 
-    def test_preserves_sections_with_focus_concepts(self) -> None:
-        """Sections already specifying focus_concepts are not re-split."""
+    def test_preserves_section_with_single_focus_concept(self) -> None:
+        """Sections with exactly 1 focus_concept are kept as-is."""
         from src.transformation.analysis_types import ChapterAnalysis
 
         blueprint = CurriculumBlueprint(
@@ -765,9 +801,9 @@ class TestSplitOverloadedSections:
                     source_chapter_number=1,
                     sections=[
                         SectionBlueprint(
-                            title="Already Split",
+                            title="Already Focused",
                             source_section_title="Dense Section",
-                            focus_concepts=["A", "B"],
+                            focus_concepts=["A"],
                         ),
                     ],
                 ),
@@ -786,8 +822,76 @@ class TestSplitOverloadedSections:
 
         result = _split_overloaded_sections(blueprint, analyses)
 
-        # Should NOT re-split since focus_concepts already set
         assert len(result.modules[0].sections) == 1
+        assert result.modules[0].sections[0].title == "Already Focused"
+
+    def test_resplits_section_with_multi_focus_concepts(self) -> None:
+        """Sections with 2+ focus_concepts are re-split into 1 concept per unit."""
+        from src.transformation.analysis_types import ChapterAnalysis
+
+        blueprint = CurriculumBlueprint(
+            course_title="Test",
+            modules=[
+                ModuleBlueprint(
+                    title="M1",
+                    source_chapter_number=1,
+                    sections=[
+                        SectionBlueprint(
+                            title="Bundled Section",
+                            source_section_title="Dense Section",
+                            focus_concepts=["A", "B", "C"],
+                        ),
+                    ],
+                ),
+            ],
+        )
+        analyses = [
+            ChapterAnalysis(
+                chapter_number=1,
+                chapter_title="Ch1",
+                concepts=[
+                    _make_concept(name, "Dense Section")
+                    for name in ["A", "B", "C", "D", "E"]
+                ],
+            ),
+        ]
+
+        result = _split_overloaded_sections(blueprint, analyses)
+
+        sections = result.modules[0].sections
+        assert len(sections) == 3
+        assert sections[0].focus_concepts == ["A"]
+        assert sections[1].focus_concepts == ["B"]
+        assert sections[2].focus_concepts == ["C"]
+        # All sub-sections keep the original source_section_title
+        for s in sections:
+            assert s.source_section_title == "Dense Section"
+
+    def test_resplits_without_analyses(self) -> None:
+        """Multi-concept focus_concepts splitting works even without chapter_analyses."""
+        blueprint = CurriculumBlueprint(
+            course_title="Test",
+            modules=[
+                ModuleBlueprint(
+                    title="M1",
+                    source_chapter_number=1,
+                    sections=[
+                        SectionBlueprint(
+                            title="Bundled",
+                            source_section_title="Source",
+                            focus_concepts=["X", "Y"],
+                        ),
+                    ],
+                ),
+            ],
+        )
+
+        result = _split_overloaded_sections(blueprint, None)
+
+        sections = result.modules[0].sections
+        assert len(sections) == 2
+        assert sections[0].focus_concepts == ["X"]
+        assert sections[1].focus_concepts == ["Y"]
 
     def test_ignores_peripheral_concepts(self) -> None:
         """Only core/supporting concepts count toward the split threshold."""
@@ -814,7 +918,6 @@ class TestSplitOverloadedSections:
                 chapter_title="Ch1",
                 concepts=[
                     _make_concept("A", "Test Section", importance="core"),
-                    _make_concept("B", "Test Section", importance="supporting"),
                     _make_concept("C", "Test Section", importance="peripheral"),
                     _make_concept("D", "Test Section", importance="peripheral"),
                     _make_concept("E", "Test Section", importance="peripheral"),
@@ -824,7 +927,7 @@ class TestSplitOverloadedSections:
 
         result = _split_overloaded_sections(blueprint, analyses)
 
-        # Only 2 non-peripheral concepts — below threshold, no split
+        # Only 1 non-peripheral concept — below threshold, no split
         assert len(result.modules[0].sections) == 1
 
     def test_no_split_without_analyses(self) -> None:
@@ -894,6 +997,134 @@ class TestSplitOverloadedSections:
         assert sections[0].focus_concepts == ["Alpha"]
         # Topological order preserved: Alpha, Beta, Gamma, Delta
         assert sections[1].focus_concepts == ["Beta"]
+
+    def test_split_multi_doc_no_collision(self) -> None:
+        """Multi-doc: two books with chapter 1 must each get their own analysis."""
+        from src.transformation.analysis_types import ChapterAnalysis
+
+        blueprint = CurriculumBlueprint(
+            course_title="Multi-Doc Test",
+            modules=[
+                ModuleBlueprint(
+                    title="Book0-Ch1",
+                    source_chapter_number=1,
+                    source_book_index=0,
+                    sections=[
+                        SectionBlueprint(
+                            title="Sec-B0",
+                            source_section_title="Intro Section",
+                            source_book_index=0,
+                        ),
+                    ],
+                ),
+                ModuleBlueprint(
+                    title="Book1-Ch1",
+                    source_chapter_number=1,
+                    source_book_index=1,
+                    sections=[
+                        SectionBlueprint(
+                            title="Sec-B1",
+                            source_section_title="Basics Section",
+                            source_book_index=1,
+                        ),
+                    ],
+                ),
+            ],
+        )
+        # Book 0 Ch1 has 2 concepts → should split
+        # Book 1 Ch1 has 1 concept → should NOT split
+        analyses_per_book = [
+            [
+                ChapterAnalysis(
+                    chapter_number=1,
+                    chapter_title="Book0 Ch1",
+                    concepts=[
+                        _make_concept("Alpha", "Intro Section"),
+                        _make_concept("Beta", "Intro Section"),
+                    ],
+                ),
+            ],
+            [
+                ChapterAnalysis(
+                    chapter_number=1,
+                    chapter_title="Book1 Ch1",
+                    concepts=[
+                        _make_concept("Gamma", "Basics Section"),
+                    ],
+                ),
+            ],
+        ]
+
+        result = _split_overloaded_sections(
+            blueprint, None, None,
+            chapter_analyses_per_book=analyses_per_book,
+        )
+
+        # Book 0 module: 2 concepts → split into 2 sections
+        assert len(result.modules[0].sections) == 2
+        assert result.modules[0].sections[0].focus_concepts == ["Alpha"]
+        assert result.modules[0].sections[1].focus_concepts == ["Beta"]
+
+        # Book 1 module: 1 concept → kept as-is (below threshold)
+        assert len(result.modules[1].sections) == 1
+        assert result.modules[1].sections[0].title == "Sec-B1"
+
+    def test_split_uses_per_book_analyses(self) -> None:
+        """Multi-doc: section from book 1 must not get book 0's analysis."""
+        from src.transformation.analysis_types import ChapterAnalysis
+
+        # Both books have chapter_number=1 but different concepts
+        blueprint = CurriculumBlueprint(
+            course_title="Test",
+            modules=[
+                ModuleBlueprint(
+                    title="From-Book1",
+                    source_chapter_number=1,
+                    source_book_index=1,
+                    sections=[
+                        SectionBlueprint(
+                            title="Sec",
+                            source_section_title="Target Section",
+                            source_book_index=1,
+                        ),
+                    ],
+                ),
+            ],
+        )
+        analyses_per_book = [
+            [
+                ChapterAnalysis(
+                    chapter_number=1,
+                    chapter_title="Book0 Ch1",
+                    concepts=[
+                        _make_concept("WRONG-A", "Target Section"),
+                        _make_concept("WRONG-B", "Target Section"),
+                        _make_concept("WRONG-C", "Target Section"),
+                    ],
+                ),
+            ],
+            [
+                ChapterAnalysis(
+                    chapter_number=1,
+                    chapter_title="Book1 Ch1",
+                    concepts=[
+                        _make_concept("RIGHT-A", "Target Section"),
+                        _make_concept("RIGHT-B", "Target Section"),
+                    ],
+                ),
+            ],
+        ]
+
+        result = _split_overloaded_sections(
+            blueprint, None, None,
+            chapter_analyses_per_book=analyses_per_book,
+        )
+
+        sections = result.modules[0].sections
+        # Should use Book1's analysis (2 concepts), not Book0's (3 concepts)
+        assert len(sections) == 2
+        assert sections[0].focus_concepts == ["RIGHT-A"]
+        assert sections[1].focus_concepts == ["RIGHT-B"]
 
 
 class TestValidateProgressionWithSplits:
