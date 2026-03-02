@@ -42,4 +42,6 @@ PERSONAL*
 
 # Development artifacts (agent handoff docs, task tracking)
 CHANGES_AND_ISSUES.md
+DEPLOYMENT_CURRENT_STATE.md
+MOBILE_WEBSITE_DEPLOYMENT.md
 tasks/
