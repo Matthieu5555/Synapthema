@@ -111,6 +111,9 @@ Use EXACT concept names from the inventory. When a source section is split \
 into multiple learning units, each sub-section's focus_concepts should be a \
 disjoint subset covering all the section's concepts. When a source section is \
 kept as one unit, focus_concepts can be empty (covers all).
+12. **Use LaTeX in titles** — when a section title contains mathematical notation \
+(variables, expressions, symbols), wrap them in $...$ delimiters. \
+Example: "Vector addition in $R^n$", "Properties of $A^T$".
 
 ## OUTPUT FORMAT
 

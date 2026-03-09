@@ -4,6 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ course_title }}</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.25/dist/katex.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.25/dist/katex.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.25/dist/contrib/auto-render.min.js"></script>
     <style>
 {{ css|safe }}
     </style>
@@ -110,7 +113,7 @@
                 <a class="chapter-link" href="{{ chapter.filename }}" data-chapter="{{ chapter.number }}">
                     <span class="chapter-number">{{ chapter.number }}</span>
                     <div class="chapter-info">
-                        <div class="chapter-name">{{ chapter.title }}</div>
+                        <div class="chapter-name">{{ chapter.title|math }}</div>
                         <div class="chapter-meta">{{ chapter.section_count }} sections &middot; {{ chapter.element_count }} interactive elements</div>
                     </div>
                 </a>
@@ -125,7 +128,7 @@
             <a class="chapter-link" href="{{ chapter.filename }}" data-chapter="{{ chapter.number }}">
                 <span class="chapter-number">{{ chapter.number }}</span>
                 <div class="chapter-info">
-                    <div class="chapter-name">{{ chapter.title }}</div>
+                    <div class="chapter-name">{{ chapter.title|math }}</div>
                     <div class="chapter-meta">{{ chapter.section_count }} sections &middot; {{ chapter.element_count }} interactive elements</div>
                 </div>
             </a>
@@ -762,6 +765,15 @@ window.__lxpToggleTheme = function() {
     });
 })();
 {% endif %}
+
+// ── Render math in chapter names and mindmap ──────────────────────────
+renderMathInElement(document.body, {
+    delimiters: [
+        {left: '\\(', right: '\\)', display: false},
+        {left: '\\[', right: '\\]', display: true}
+    ],
+    throwOnError: false
+});
 </script>
 
 {% include '_help_modal.html' %}

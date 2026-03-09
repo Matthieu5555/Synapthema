@@ -57,6 +57,40 @@ logger = logging.getLogger(__name__)
 # Directory containing the Jinja2 HTML/CSS templates.
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 
+# ── Auto-wrap bare math in titles ────────────────────────────────────────────
+# Matches common bare math patterns that appear in auto-generated titles
+# (e.g. from concept names) and wraps them in $...$ so KaTeX can render them.
+# Only applied by the |math Jinja2 filter (titles, headings), not body text.
+
+# Patterns matched (all require word boundary or whitespace context):
+#   R^n, R^{m×n}, A^T, A^⊤       — letter + superscript
+#   x_i, a_{ij}, σ_p              — letter + subscript
+#   R^n → R^m                     — expressions with arrows between math
+_BARE_MATH_RE = re.compile(
+    r"(?<!\$)"                     # not already inside $
+    r"("
+    r"[A-Za-zΑ-Ωα-ωσ]"            # starts with a letter (Latin or Greek)
+    r"(?:"
+    r"[\^_]\{[^}]+\}"             #   ^{...} or _{...}
+    r"|[\^_][A-Za-z0-9⊤]"        #   ^x or _x (single char superscript/subscript)
+    r")+"                          # one or more super/subscript groups
+    r")"
+    r"(?!\$)"                      # not already inside $
+)
+
+
+def _auto_wrap_math(text: str) -> str:
+    """Wrap bare math expressions in ``$...$`` for KaTeX rendering.
+
+    Designed for short strings like titles where the LLM or auto-splitting
+    may produce bare math (``R^n``) instead of delimited (``$R^n$``).
+    Already-delimited math (``$...$``) is left untouched.
+    """
+    # Skip if text already has LaTeX delimiters — it's fine as-is
+    if "$" in text or "\\(" in text or "\\[" in text:
+        return text
+    return _BARE_MATH_RE.sub(r"$\1$", text)
+
 
 def _make_jinja_env(template_dir: str | Path | None = None) -> Environment:
     """Create a Jinja2 Environment with custom filters.
@@ -69,7 +103,9 @@ def _make_jinja_env(template_dir: str | Path | None = None) -> Environment:
         loader=FileSystemLoader(str(template_dir or _TEMPLATES_DIR)),
         autoescape=True,
     )
-    env.filters["math"] = lambda text: Markup(_markdown_to_html_inline(text))
+    env.filters["math"] = lambda text: Markup(
+        _markdown_to_html_inline(_auto_wrap_math(text))
+    )
     return env
 
 

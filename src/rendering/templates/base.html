@@ -135,7 +135,7 @@
                     <summary>Learning Objectives</summary>
                     <ul>
                         {% for obj in sections[ns.section_idx].learning_objectives %}
-                        <li>{{ obj }}</li>
+                        <li>{{ obj|math }}</li>
                         {% endfor %}
                     </ul>
                 </details>

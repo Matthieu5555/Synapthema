@@ -244,6 +244,9 @@ def load_render_config(
     except ConfigError:
         logger.info("No LLM credentials — mermaid auto-fixing disabled")
 
+    llm_model_creative = os.getenv("LLM_MODEL_CREATIVE", llm_model or "")
+    viz_enabled = os.getenv("VIZ_ENABLED", "false").lower() in ("true", "1", "yes")
+
     config = Config(
         input_sources=sources,
         extracted_dir=resolved_extracted,
@@ -252,12 +255,14 @@ def load_render_config(
         llm_base_url=llm_base_url,
         llm_model=llm_model,
         llm_model_light=llm_model_light,
+        llm_model_creative=llm_model_creative,
         llm_temperature=llm_temperature,
         llm_max_tokens=llm_max_tokens,
         embed_images=embed_images,
         vision_enabled=False,
         document_type="auto",
         max_concurrent_llm=1,
+        viz_enabled=viz_enabled,
     )
 
     logger.info("Render-only config loaded: extracted=%s, output=%s", resolved_extracted, resolved_output)

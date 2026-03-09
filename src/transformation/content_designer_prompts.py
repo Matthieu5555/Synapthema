@@ -387,9 +387,10 @@ Every section MUST contain:
 
 ## Math Formatting
 
-For mathematical expressions, use LaTeX delimiters:
+For mathematical expressions, use LaTeX delimiters EVERYWHERE — in titles, headings, options, AND body text:
 - Inline math: $E = mc^2$
 - Block math: $$\\frac{\\partial f}{\\partial x} = 0$$
+- In titles: "Properties of $A^T$", "Vector addition in $\\mathbb{R}^n$"
 
 CRITICAL RULES:
 - Write LaTeX naturally with single backslashes: \\frac, \\sum, \\text, etc. Do NOT add extra backslashes — the system handles JSON escaping automatically.
