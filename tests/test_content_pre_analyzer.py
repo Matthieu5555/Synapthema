@@ -7,6 +7,7 @@ from src.transformation.content_pre_analyzer import (
     SectionSignals,
     analyze_chapter_sections,
     analyze_section,
+    classify_section_quality,
     detect_document_type,
     format_document_type_guidance,
 )
@@ -398,3 +399,65 @@ class TestFormatDocumentTypeGuidance:
     def test_mixed_fallback(self) -> None:
         result = format_document_type_guidance("mixed")
         assert "analogy_first" in result
+
+
+# ── Section quality classification tests ──────────────────────────────────────
+
+
+class TestClassifySectionQuality:
+    """classify_section_quality() title patterns and body heuristics."""
+
+    def test_disclaimer_title_is_structural(self) -> None:
+        assert classify_section_quality("Disclaimer", "x" * 300) == "structural"
+
+    def test_legal_notice_title_is_structural(self) -> None:
+        assert classify_section_quality("Legal Notice", "x" * 300) == "structural"
+
+    def test_terms_of_use_title_is_structural(self) -> None:
+        assert classify_section_quality("Terms of Use", "x" * 300) == "structural"
+
+    def test_privacy_policy_title_is_structural(self) -> None:
+        assert classify_section_quality("Privacy Policy", "x" * 300) == "structural"
+
+    def test_warranty_title_is_structural(self) -> None:
+        assert classify_section_quality("Warranty", "x" * 300) == "structural"
+
+    def test_risk_disclosures_title_is_structural(self) -> None:
+        assert classify_section_quality("Risk Disclosures", "x" * 300) == "structural"
+
+    def test_important_notice_title_is_structural(self) -> None:
+        assert classify_section_quality("Important Notice", "x" * 300) == "structural"
+
+    def test_normal_title_is_content(self) -> None:
+        text = "This section explains portfolio diversification and its benefits. " * 20
+        assert classify_section_quality("Portfolio Theory", text) == "content"
+
+    def test_short_text_is_insufficient(self) -> None:
+        assert classify_section_quality("Anything", "Short.") == "insufficient"
+
+    def test_legal_body_text_is_structural(self) -> None:
+        legal_text = (
+            "The information herein is provided without warranty of any kind. "
+            "We shall not be liable for any damages arising from the use of "
+            "this material. All rights reserved. No part of this publication "
+            "may be reproduced without prior written consent. Any representations "
+            "and warranties are hereby disclaimed. "
+        )
+        assert classify_section_quality("Important Information", legal_text) == "structural"
+
+    def test_educational_text_with_single_legal_word_is_content(self) -> None:
+        """A single legal term in educational content should NOT trigger filtering."""
+        text = (
+            "In financial regulation, jurisdiction plays a key role in determining "
+            "which laws apply to cross-border transactions. This chapter examines "
+            "the major regulatory frameworks and how they affect portfolio management. "
+            "We will study the Basel accords, Dodd-Frank Act, and MiFID II, "
+            "comparing their approaches to capital adequacy and risk measurement."
+        )
+        assert classify_section_quality("Regulatory Frameworks", text) == "content"
+
+    def test_existing_structural_titles_still_work(self) -> None:
+        assert classify_section_quality("Table of Contents", "x" * 300) == "structural"
+        assert classify_section_quality("Bibliography", "x" * 300) == "structural"
+        assert classify_section_quality("Index", "x" * 300) == "structural"
+        assert classify_section_quality("Glossary", "x" * 300) == "structural"

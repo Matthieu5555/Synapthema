@@ -9,10 +9,12 @@ Also provides main() as a CLI entry point.
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import json
 import logging
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -23,10 +25,11 @@ from src.config import Config, InputSource
 from src.extraction.multi_doc import extract_corpus, source_slug
 from src.extraction.pdf_parser import extract_book
 from src.extraction.types import Book, Chapter
-from src.rendering.html_generator import _render_course
+from src.rendering.html_generator import RenderContext, render_course
 from src.transformation.analysis_types import ChapterAnalysis, ConceptGraph
 from src.transformation.concept_consolidator import consolidate_concepts
-from src.transformation.content_designer import transform_chapter
+from src.profiles import ContentProfile, get_profile
+from src.transformation.content_designer import TransformContext, transform_chapter
 from src.transformation.content_pre_analyzer import detect_document_type
 from src.transformation.curriculum_planner import (
     find_matching_chapter,
@@ -44,6 +47,19 @@ from src.transformation.types import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+@contextlib.contextmanager
+def _timed_stage(stage_name: str, **extra: object):
+    """Log the duration of a pipeline stage."""
+    logger.info("▶ %s started", stage_name)
+    t0 = time.monotonic()
+    yield
+    elapsed = time.monotonic() - t0
+    parts = [f"◀ {stage_name} completed in {elapsed:.1f}s"]
+    for k, v in extra.items():
+        parts.append(f"{k}={v}")
+    logger.info(", ".join(parts))
 
 
 class _AnalysesCheckpoint(BaseModel):
@@ -82,6 +98,7 @@ def _maybe_create_llm_client(config: Config) -> LLMClient | None:
             temperature=config.llm_temperature,
             base_url=config.llm_base_url,
             model_light=config.llm_model_light,
+            model_creative=config.llm_model_creative,
         )
     except Exception as exc:
         logger.warning("Failed to create LLM client for mermaid fixing: %s", exc)
@@ -212,9 +229,7 @@ def rerender_from_json(
         modules, concept_graph, chapter_analyses, course_title,
     )
 
-    index_path = _render_course(
-        modules=modules,
-        output_dir=config.html_dir,
+    render_ctx = RenderContext(
         extracted_dir=config.extracted_dir,
         embed_images=config.embed_images,
         concept_graph=concept_graph,
@@ -225,6 +240,7 @@ def rerender_from_json(
         chapter_to_module=chapter_to_module,
         capabilities=capabilities,
     )
+    index_path = render_course(modules, config.html_dir, render_ctx)
 
     logger.info("Render-only complete. Open %s in a browser.", index_path)
     return index_path
@@ -255,6 +271,7 @@ def run_pipeline(
     Returns:
         Path to the generated course index.html.
     """
+    pipeline_t0 = time.monotonic()
     source_names = ", ".join(s.path.name for s in config.input_sources)
     mode = f"chapter {chapter_number}" if chapter_number else "full"
     resume_mode = ", resume" if resume else ""
@@ -268,18 +285,22 @@ def run_pipeline(
         temperature=config.llm_temperature,
         base_url=config.llm_base_url,
         model_light=config.llm_model_light,
+        model_creative=config.llm_model_creative,
     )
 
     # Stage 1: Extraction
-    books = _load_or_extract(config.extracted_dir, config.input_sources, client, resume)
+    with _timed_stage("Stage 1: Extraction"):
+        books = _load_or_extract(config.extracted_dir, config.input_sources, client, resume)
 
     total_chapters = sum(len(b.chapters) for b in books)
+    logger.info("Extracted %d book(s), %d chapters total", len(books), total_chapters)
 
     # Stage 1.25: Deep reading + Stage 1.3: Consolidation
-    all_chapter_analyses, concept_graph, global_flat = _load_or_analyze(
-        config.extracted_dir, books, client, total_chapters, resume,
-        max_workers=config.max_concurrent_llm,
-    )
+    with _timed_stage("Stage 1.5: Deep reading & consolidation", chapters=total_chapters):
+        all_chapter_analyses, concept_graph, global_flat = _load_or_analyze(
+            config.extracted_dir, books, client, total_chapters, resume,
+            max_workers=config.max_concurrent_llm,
+        )
 
     # Document type detection (zero-cost heuristic, or manual override)
     if config.document_type == "auto":
@@ -300,10 +321,11 @@ def run_pipeline(
     logger.info("Document type: %s", document_type)
 
     # Stage 1.5: Curriculum planning
-    blueprint = _load_or_plan(
-        config.extracted_dir, books, client, all_chapter_analyses, concept_graph, resume,
-        document_type=document_type,
-    )
+    with _timed_stage("Stage 1.75: Curriculum planning"):
+        blueprint = _load_or_plan(
+            config.extracted_dir, books, client, all_chapter_analyses, concept_graph, resume,
+            document_type=document_type,
+        )
 
     logger.info(
         "Curriculum planned: %d modules, journey: %s",
@@ -322,14 +344,19 @@ def run_pipeline(
     # Compute per-book extraction directories for correct image path resolution
     book_dirs = _book_extracted_dirs(config.extracted_dir, config.input_sources)
 
-    modules = _load_or_transform(
-        config.extracted_dir, config.vision_enabled,
-        blueprint, books, client, analyses_by_book_chapter,
-        chapter_number, resume, concept_graph=concept_graph,
-        document_type=document_type,
-        max_workers=config.max_concurrent_llm,
-        book_extracted_dirs=book_dirs,
-    )
+    profile = get_profile(config.variant)
+
+    with _timed_stage("Stage 2: Transformation", modules=len(blueprint.modules)):
+        modules = _load_or_transform(
+            config.extracted_dir, config.vision_enabled,
+            blueprint, books, client, analyses_by_book_chapter,
+            chapter_number, resume, concept_graph=concept_graph,
+            document_type=document_type,
+            max_workers=config.max_concurrent_llm,
+            book_extracted_dirs=book_dirs,
+            profile=profile,
+            viz_enabled=config.viz_enabled,
+        )
 
     # Build source book title list aligned with modules (index-based).
     # Uses blueprint module order (parallel to the modules list) so the
@@ -395,23 +422,28 @@ def run_pipeline(
     logger.info("Course capabilities: %s", capabilities)
 
     # Stage 3: Render (always re-run — it's instant)
-    index_path = _render_course(
-        modules=modules,
-        output_dir=config.html_dir,
-        extracted_dir=config.extracted_dir,
-        per_module_extracted_dirs=per_module_dirs,
-        embed_images=config.embed_images,
-        concept_graph=concept_graph,
-        chapter_analyses=global_flat,
-        course_title=blueprint.course_title,
-        course_summary=blueprint.course_summary,
-        learner_journey=blueprint.learner_journey,
-        source_book_titles=source_book_titles,
-        chapter_to_module=chapter_to_module,
-        capabilities=capabilities,
-    )
+    with _timed_stage("Stage 3: Rendering", modules=len(modules)):
+        render_ctx = RenderContext(
+            extracted_dir=config.extracted_dir,
+            per_module_extracted_dirs=per_module_dirs,
+            embed_images=config.embed_images,
+            concept_graph=concept_graph,
+            chapter_analyses=global_flat,
+            course_title=blueprint.course_title,
+            course_summary=blueprint.course_summary,
+            learner_journey=blueprint.learner_journey,
+            source_book_titles=source_book_titles,
+            chapter_to_module=chapter_to_module,
+            capabilities=capabilities,
+        )
+        index_path = render_course(modules, config.html_dir, render_ctx)
 
-    logger.info("Pipeline complete. Open %s in a browser.", index_path)
+    total_elapsed = time.monotonic() - pipeline_t0
+    total_elements = sum(len(m.all_elements) for m in modules)
+    logger.info(
+        "Pipeline complete in %.1fs (%d modules, %d elements). Open %s in a browser.",
+        total_elapsed, len(modules), total_elements, index_path,
+    )
     return index_path
 
 
@@ -627,6 +659,8 @@ def _load_or_transform(
     document_type: str | None = None,
     max_workers: int = 4,
     book_extracted_dirs: list[Path] | None = None,
+    profile: ContentProfile | None = None,
+    viz_enabled: bool = False,
 ) -> list[TrainingModule]:
     """Load training modules checkpoint or run transformation.
 
@@ -646,6 +680,11 @@ def _load_or_transform(
             }
             missing = needed_chapters - existing_chapters
 
+            # Detect chapters with fallback sections that need retry
+            for mod in existing:
+                if mod.chapter_number in needed_chapters and _has_fallback_sections(mod):
+                    missing.add(mod.chapter_number)
+
             if not missing:
                 logger.info(
                     "All %d modules found in checkpoint, skipping transformation",
@@ -653,16 +692,20 @@ def _load_or_transform(
                 )
                 return existing
 
+            # Remove modules we're about to re-run so they don't duplicate
+            existing = [m for m in existing if m.chapter_number not in missing]
+
+            good_chapters = existing_chapters - missing
             logger.info(
-                "Resuming transformation: %d/%d modules complete, %d remaining",
-                len(existing_chapters & needed_chapters),
+                "Resuming transformation: %d/%d modules complete, %d to (re)generate",
+                len(good_chapters),
                 len(needed_chapters),
                 len(missing),
             )
 
             new_modules = _transform_modules(
                 blueprint, books, client, analyses_by_book_chapter,
-                chapter_number, skip_chapters=existing_chapters,
+                chapter_number, skip_chapters=good_chapters,
                 training_path=training_path,
                 concept_graph=concept_graph,
                 document_type=document_type,
@@ -670,6 +713,8 @@ def _load_or_transform(
                 vision_enabled=vision_enabled,
                 max_workers=max_workers,
                 existing_modules=existing,
+                profile=profile,
+                viz_enabled=viz_enabled,
             )
             all_modules = sorted(
                 existing + new_modules, key=lambda m: m.chapter_number,
@@ -687,12 +732,28 @@ def _load_or_transform(
         book_extracted_dirs=book_extracted_dirs,
         vision_enabled=vision_enabled,
         max_workers=max_workers,
+        profile=profile,
+        viz_enabled=viz_enabled,
     )
     _save_training_json(modules, training_path)
     return modules
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
+
+
+def _has_fallback_sections(module: TrainingModule) -> bool:
+    """Check if a module contains sections that failed LLM generation."""
+    for section in module.sections:
+        for note in section.verification_notes:
+            if note.startswith("[error] Generation failed:") or note.startswith("[fallback:"):
+                return True
+        # Also detect legacy fallback slides (pre-tagging)
+        if len(section.elements) == 1 and section.elements[0].element_type == "slide":
+            slide = getattr(section.elements[0], "slide", None)
+            if slide and "Content generation failed" in slide.content:
+                return True
+    return False
 
 
 def _regroup_analyses_by_book(
@@ -866,6 +927,8 @@ def _transform_modules(
     vision_enabled: bool = False,
     max_workers: int = 4,
     existing_modules: list[TrainingModule] | None = None,
+    profile: ContentProfile | None = None,
+    viz_enabled: bool = False,
 ) -> list[TrainingModule]:
     """Transform blueprint modules into TrainingModules in parallel.
 
@@ -959,8 +1022,7 @@ def _transform_modules(
                 if asc_bk_idx < len(book_extracted_dirs):
                     additional_extracted_dirs[asc_bk_idx] = book_extracted_dirs[asc_bk_idx]
 
-        module = transform_chapter(
-            chapter, client,
+        ctx = TransformContext(
             blueprint=module_bp,
             chapter_analysis=chapter_analysis,
             prior_concepts=cumulative_concepts,
@@ -972,7 +1034,10 @@ def _transform_modules(
             additional_chapters=additional_chapters or None,
             additional_extracted_dirs=additional_extracted_dirs or None,
             canonical_map=concept_graph.canonical_map if concept_graph else None,
+            profile=profile,
+            viz_enabled=viz_enabled,
         )
+        module = transform_chapter(chapter, client, ctx)
         logger.info(
             "Chapter %d transformed: %d elements",
             chapter.chapter_number,

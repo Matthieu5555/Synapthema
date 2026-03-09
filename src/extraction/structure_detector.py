@@ -14,7 +14,6 @@ The font-based approach was removed because it picks up decorative text
 
 from __future__ import annotations
 
-import json
 import logging
 import math
 import re
@@ -22,11 +21,12 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import fitz
+from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:
-    from src.transformation.llm_client import LLMClient
+    from src.protocols import LLMClient
 
-from src.transformation.llm_client import LLMError
+from src.protocols import LLMError
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +56,35 @@ class TocEntry:
     level: int
     title: str
     page: int
+
+
+# ── Pydantic response models for structured LLM output ───────────────────────
+
+
+class TocEntryResponse(BaseModel):
+    """A single entry from LLM TOC extraction."""
+
+    level: int = Field(default=1, description="Nesting depth (1=chapter, 2=section, 3=subsection)")
+    title: str = Field(description="The heading text, cleaned up")
+    page: int = Field(description="1-indexed page number where this section starts")
+
+
+class TocExtractionResponse(BaseModel):
+    """Complete TOC extraction result from the LLM."""
+
+    entries: list[TocEntryResponse] = Field(
+        default_factory=list,
+        description="All structural headings found in the document, ordered by page number",
+    )
+
+
+class SubsectionExtractionResponse(BaseModel):
+    """Subsection extraction result for a single chapter."""
+
+    entries: list[TocEntryResponse] = Field(
+        default_factory=list,
+        description="Section and subsection headings within this chapter",
+    )
 
 
 # ── TOC-based detection ─────────────────────────────────────────────────────
@@ -105,11 +134,6 @@ Look for:
 3. Section headings within chapters
 4. Any structural markers that indicate document organization
 
-Return a JSON array of objects, each with:
-- "level": integer (1=chapter/module, 2=section, 3=subsection)
-- "title": string (the heading text, cleaned up)
-- "page": integer (1-indexed page number where this section starts)
-
 Rules:
 - Include EVERY structural heading you can find, at all levels
 - Page numbers must be integers, 1-indexed
@@ -118,7 +142,7 @@ Rules:
 - If there's no TOC page, infer structure from headings you see in the text
 - Order entries by page number
 - Do NOT include front matter (cover, copyright, table of contents itself, preface)
-- Return ONLY the JSON array, no other text"""
+- level: 1 = chapter/module, 2 = section, 3 = subsection"""
 
 
 def detect_toc_with_llm(
@@ -128,11 +152,12 @@ def detect_toc_with_llm(
     """Use an LLM to extract document structure from the first pages.
 
     Reads the first LLM_TOC_PAGES pages of text and sends them to the LLM
-    to identify the table of contents / document structure.
+    to identify the table of contents / document structure. Uses structured
+    output (Pydantic model) for automatic validation and retry.
 
     Args:
         doc: An open PyMuPDF document.
-        llm_client: An LLM client with a complete() method.
+        llm_client: An LLM client with a complete_structured_light() method.
 
     Returns:
         Tuple of TocEntry objects. Empty if detection fails.
@@ -163,34 +188,17 @@ def detect_toc_with_llm(
     )
 
     try:
-        raw_response = llm_client.complete_light(_TOC_EXTRACTION_PROMPT, user_prompt)
-
-        # Parse JSON from response (handle markdown code blocks)
-        json_text = _extract_json_from_response(raw_response)
-        toc_data = json.loads(json_text)
-
-        if not isinstance(toc_data, list):
-            logger.warning("LLM TOC response is not a list")
-            return ()
+        result = llm_client.complete_structured_light(
+            _TOC_EXTRACTION_PROMPT, user_prompt, TocExtractionResponse,
+        )
 
         entries: list[TocEntry] = []
-        for item in toc_data:
-            if not isinstance(item, dict):
+        for item in result.entries:
+            if not item.title.strip() or item.page < 1:
                 continue
-            try:
-                level = int(item.get("level", 1))
-                page = int(item.get("page", 0))
-            except (ValueError, TypeError):
-                continue
-            title = str(item.get("title", "")).strip()
+            title = _collapse_spaced_letters(_normalize_title(item.title))
+            entries.append(TocEntry(level=item.level, title=title, page=item.page))
 
-            if not title or page < 1:
-                continue
-
-            title = _collapse_spaced_letters(_normalize_title(title))
-            entries.append(TocEntry(level=level, title=title, page=page))
-
-        # Sort by page
         entries.sort(key=lambda e: (e.page, e.level))
 
         if entries:
@@ -199,24 +207,9 @@ def detect_toc_with_llm(
 
         return ()
 
-    except (LLMError, json.JSONDecodeError, ValueError, TypeError, KeyError) as exc:
+    except (LLMError, ValueError, TypeError, KeyError) as exc:
         logger.warning("LLM TOC detection failed: %s", exc)
         return ()
-
-
-def _extract_json_from_response(text: str) -> str:
-    """Extract JSON from an LLM response that may include markdown fences."""
-    # Try to find JSON in code blocks first
-    match = re.search(r"```(?:json)?\s*\n?(.*?)```", text, re.DOTALL)
-    if match:
-        return match.group(1).strip()
-
-    # Try to find a raw JSON array
-    match = re.search(r"\[.*\]", text, re.DOTALL)
-    if match:
-        return match.group(0)
-
-    return text.strip()
 
 
 # ── LLM-based subsection detection ─────────────────────────────────────────
@@ -233,11 +226,6 @@ Look for:
 2. Named sections with consistent formatting
 3. Any structural markers that indicate subsections within this chapter
 
-Return a JSON array of objects, each with:
-- "level": integer (2=section, 3=subsection — level 1 is the chapter itself)
-- "title": string (the heading text, including any numbering like "2.1")
-- "page": integer (1-indexed page number where this section starts)
-
 Rules:
 - Include EVERY heading you find within this chapter
 - Page numbers must be integers, 1-indexed
@@ -245,8 +233,8 @@ Rules:
 - Order entries by page number
 - Do NOT include the chapter title itself (only its subsections)
 - Do NOT include "Answers", "Solutions", or back-matter sections
-- Return ONLY the JSON array, no other text
-- If you cannot identify clear subsections, return an empty array: []"""
+- level: 2 = section, 3 = subsection (level 1 is the chapter itself)
+- If you cannot identify clear subsections, return an empty entries list"""
 
 
 def detect_subsections_with_llm(
@@ -259,15 +247,15 @@ def detect_subsections_with_llm(
     """Use an LLM to detect subsection structure within a chapter.
 
     Sends the chapter's page text to the LLM and gets back structured
-    section entries with titles, levels, and page numbers. This is the
-    fallback for chapters whose embedded TOC has no subsection entries.
+    section entries with titles, levels, and page numbers. Uses structured
+    output (Pydantic model) for automatic validation and retry.
 
     Args:
         doc: An open PyMuPDF document.
         start_page: 1-indexed first page of the chapter (inclusive).
         end_page: 1-indexed last page of the chapter (inclusive).
         chapter_title: The chapter's title (for prompt context).
-        llm_client: An LLM client with a complete_light() method.
+        llm_client: An LLM client with a complete_structured_light() method.
 
     Returns:
         Tuple of TocEntry objects. Empty if detection fails or finds < 2.
@@ -297,36 +285,19 @@ def detect_subsections_with_llm(
     )
 
     try:
-        raw_response = llm_client.complete_light(
+        result = llm_client.complete_structured_light(
             _SUBSECTION_EXTRACTION_PROMPT, user_prompt,
+            SubsectionExtractionResponse,
         )
 
-        json_text = _extract_json_from_response(raw_response)
-        toc_data = json.loads(json_text)
-
-        if not isinstance(toc_data, list):
-            logger.warning("LLM subsection response is not a list")
-            return ()
-
         entries: list[TocEntry] = []
-        for item in toc_data:
-            if not isinstance(item, dict):
-                continue
-            try:
-                level = int(item.get("level", 2))
-                page = int(item.get("page", 0))
-            except (ValueError, TypeError):
-                continue
-            title = str(item.get("title", "")).strip()
-
-            if not title or page < 1:
+        for item in result.entries:
+            if not item.title.strip() or item.page < 1:
                 continue
             # Clamp to chapter's page range
-            page = max(start_page, min(page, end_page))
+            page = max(start_page, min(item.page, end_page))
+            entries.append(TocEntry(level=item.level, title=item.title, page=page))
 
-            entries.append(TocEntry(level=level, title=title, page=page))
-
-        # Sort by page
         entries.sort(key=lambda e: (e.page, e.level))
 
         if len(entries) < 2:
@@ -342,7 +313,7 @@ def detect_subsections_with_llm(
         )
         return tuple(entries)
 
-    except (LLMError, json.JSONDecodeError, ValueError, TypeError, KeyError) as exc:
+    except (LLMError, ValueError, TypeError, KeyError) as exc:
         logger.warning(
             "LLM subsection detection failed for '%s': %s", chapter_title, exc,
         )
@@ -389,6 +360,8 @@ def identify_chapters(
             if entry.level == min_level
             and len(entry.title) >= MIN_CHAPTER_TITLE_LENGTH
             and entry.title.lower() not in _BACK_MATTER_TITLES
+            and entry.title.lower() not in _FRONT_MATTER_TITLES
+            and not _is_front_matter_title(entry.title.lower())
         ]
 
     # Strategy 3: page-range fallback
@@ -450,10 +423,11 @@ def _page_range_fallback(
 
 # ── Internal helpers ─────────────────────────────────────────────────────────
 
-# Pattern matching common chapter title formats:
-# "Chapter 1", "CHAPTER 1:", "Chapter 1: Title", etc.
+# Pattern matching common chapter/module title formats:
+# "Chapter 1", "CHAPTER 1:", "Learning Module 1: Title",
+# "Module 3", "Unit 2", "Lesson 5", etc.
 _CHAPTER_PATTERN = re.compile(
-    r"^chapter\s+\d+", re.IGNORECASE
+    r"^(?:chapter|(?:learning\s+)?module|unit|lesson)\s+\d+", re.IGNORECASE
 )
 
 
@@ -497,6 +471,14 @@ _BACK_MATTER_TITLES = frozenset({
     "contents",
     "about the author",
     "about the authors",
+    "disclaimer",
+    "legal notice",
+    "terms of use",
+    "terms and conditions",
+    "important notice",
+    "important information",
+    "important disclosures",
+    "risk disclosures",
 })
 
 # Front-matter titles to skip — these appear before substantive content.
@@ -520,6 +502,26 @@ _FRONT_MATTER_TITLES = frozenset({
     "notation",
     "conventions",
     "how to use the cfa program curriculum",
+    "disclaimer",
+    "legal notice",
+    "terms of use",
+    "terms and conditions",
+    "privacy policy",
+    "important notice",
+    "important information",
+    "important disclosures",
+    "general disclosures",
+    "risk disclosures",
+    "risk factors",
+    "about this document",
+    "about this publication",
+    # Study guide / meta-content titles
+    "how to use this book",
+    "how to use this text",
+    "how to use this guide",
+    "other feedback",
+    "errata",
+    "feedback",
 })
 
 
@@ -551,5 +553,12 @@ def _filter_front_matter(entries: tuple[TocEntry, ...]) -> tuple[TocEntry, ...]:
 
 def _is_front_matter_title(title_lower: str) -> bool:
     """Check if a title looks like front matter via substring patterns."""
-    front_patterns = ("program curriculum", "volume", "level ii", "level i ")
+    front_patterns = (
+        "program curriculum", "volume", "level ii", "level i ",
+        "disclaimer", "legal notice", "terms of use",
+        "important notice", "risk disclos",
+        "how to use", "study program", "study guide",
+        "learning ecosystem", "other feedback",
+        "about this curriculum", "about this program",
+    )
     return any(p in title_lower for p in front_patterns)

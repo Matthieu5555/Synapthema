@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from typing import TypeVar
 
 import pytest
@@ -19,6 +20,7 @@ from src.transformation.deep_reader import (
     _smart_truncate,
     _compute_signals,
 )
+from tests.conftest import MockLLMClient
 
 T = TypeVar("T")
 
@@ -26,72 +28,54 @@ T = TypeVar("T")
 # ── Test doubles ─────────────────────────────────────────────────────────────
 
 
-class MockDeepReaderClient:
+def _default_deep_reader_analysis() -> ChapterAnalysis:
+    return ChapterAnalysis(
+        chapter_number=1,
+        chapter_title="Mock Chapter",
+        concepts=[
+            ConceptEntry(
+                name="Bond",
+                definition="A fixed-income instrument.",
+                concept_type="definition",
+                section_title="Intro",
+                importance="core",
+            ),
+            ConceptEntry(
+                name="Yield",
+                definition="Return on a bond.",
+                concept_type="formula",
+                section_title="Returns",
+                importance="supporting",
+            ),
+        ],
+        prerequisites=[
+            PrerequisiteLink(
+                source_concept="Yield",
+                target_concept="Bond",
+                relationship="requires",
+            ),
+        ],
+        section_characterizations=[
+            SectionCharacterization(
+                section_title="Intro",
+                dominant_content_type="conceptual",
+                has_definitions=True,
+            ),
+        ],
+        logical_flow="Starts with definitions, then formulas.",
+        core_learning_outcome="Understand bond basics.",
+    )
+
+
+class MockDeepReaderClient(MockLLMClient):
     """Returns a fixed ChapterAnalysis."""
 
     def __init__(self, analysis: ChapterAnalysis | None = None) -> None:
-        self._analysis = analysis or ChapterAnalysis(
-            chapter_number=1,
-            chapter_title="Mock Chapter",
-            concepts=[
-                ConceptEntry(
-                    name="Bond",
-                    definition="A fixed-income instrument.",
-                    concept_type="definition",
-                    section_title="Intro",
-                    importance="core",
-                ),
-                ConceptEntry(
-                    name="Yield",
-                    definition="Return on a bond.",
-                    concept_type="formula",
-                    section_title="Returns",
-                    importance="supporting",
-                ),
-            ],
-            prerequisites=[
-                PrerequisiteLink(
-                    source_concept="Yield",
-                    target_concept="Bond",
-                    relationship="requires",
-                ),
-            ],
-            section_characterizations=[
-                SectionCharacterization(
-                    section_title="Intro",
-                    dominant_content_type="conceptual",
-                    has_definitions=True,
-                ),
-            ],
-            logical_flow="Starts with definitions, then formulas.",
-            core_learning_outcome="Understand bond basics.",
-        )
-        self.call_count = 0
-        self.last_system_prompt = ""
-        self.last_user_prompt = ""
-
-    def complete(self, system_prompt: str, user_prompt: str) -> str:
-        return "mock"
-
-    def complete_light(self, system_prompt: str, user_prompt: str) -> str:
-        return self.complete(system_prompt, user_prompt)
-
-    def complete_structured(
-        self, system_prompt: str, user_prompt: str, response_model: type[T]
-    ) -> T:
-        self.call_count += 1
-        self.last_system_prompt = system_prompt
-        self.last_user_prompt = user_prompt
-        return self._analysis  # type: ignore[return-value]
-
-    def complete_structured_light(
-        self, system_prompt: str, user_prompt: str, response_model: type[T]
-    ) -> T:
-        return self.complete_structured(system_prompt, user_prompt, response_model)
+        super().__init__(structured_response=analysis or _default_deep_reader_analysis())
 
 
 class FailingDeepReaderClient:
-    """Always fails — tests fallback behavior."""
+    """Always fails with RuntimeError — tests fallback behavior."""
 
     def complete(self, system_prompt: str, user_prompt: str) -> str:
         raise RuntimeError("fail")

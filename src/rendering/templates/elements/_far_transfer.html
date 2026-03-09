@@ -1,0 +1,31 @@
+<span class="element-badge far-transfer-badge">Far Transfer</span>
+{% if element.bloom_level %}<span class="bloom-badge bloom-{{ element.bloom_level }}">{{ element.bloom_level }}</span>{% endif %}
+{% if element.difficulty %}<span class="difficulty-badge difficulty-{{ element.difficulty }}">{{ element.difficulty }}</span>{% endif %}
+<div class="far-transfer-container" data-correct="{{ element.far_transfer.correct_index }}" data-attempts="0">
+    <div class="far-transfer-source">
+        <div class="far-transfer-source-label">Principle you learned</div>
+        <div class="far-transfer-source-principle">{{ element.far_transfer.source_principle|safe }}</div>
+        <div class="far-transfer-source-domain">{{ element.far_transfer.source_domain|safe }}</div>
+    </div>
+    <div class="far-transfer-arrow">&darr; same structure, different world</div>
+    <div class="far-transfer-scenario">
+        <div class="far-transfer-transfer-label">New domain: {{ element.far_transfer.transfer_domain|safe }}</div>
+        <div class="far-transfer-scenario-text">{{ element.far_transfer.scenario|safe }}</div>
+    </div>
+    <div class="far-transfer-question">{{ element.far_transfer.question|safe }}</div>
+    <ul class="quiz-options">
+        {% for option in element.far_transfer.options %}
+        <li class="quiz-option" data-option-index="{{ loop.index0 }}" onclick="selectOption(this)">
+            <span class="quiz-option-marker">{{ ['A','B','C','D','E'][loop.index0] }}</span>
+            <span>{{ option|safe }}</span>
+        </li>
+        {% endfor %}
+    </ul>
+    <button class="quiz-check-btn" onclick="checkFarTransfer(this)" disabled>Check Answer</button>
+    <div class="far-transfer-bridge" style="display:none;">
+        <div class="far-transfer-bridge-label">Bridge Insight</div>
+        <div class="far-transfer-bridge-text">{{ element.far_transfer.bridge_insight|safe }}</div>
+    </div>
+    <div class="quiz-explanation">{{ element.far_transfer.explanation|safe }}</div>
+    <button class="add-review-btn" onclick="addToReview(this)" title="Add to spaced review">+ Review</button>
+</div>

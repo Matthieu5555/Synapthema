@@ -1,12 +1,13 @@
 <span class="element-badge worked-example-badge">Worked Example</span>
 {% if element.bloom_level %}<span class="bloom-badge bloom-{{ element.bloom_level }}">{{ element.bloom_level }}</span>{% endif %}
+{% if element.difficulty %}<span class="difficulty-badge difficulty-{{ element.difficulty }}">{{ element.difficulty }}</span>{% endif %}
 <div class="worked-example-container"
      data-challenge-correct="{{ element.worked_example.challenge_correct_index }}"
      data-step-count="{{ element.worked_example.step_count }}"
      data-steps='{{ element.worked_example.steps_json|safe }}'
      data-challenge-attempted="false"
      data-steps-revealed="0">
-    <div class="worked-example-title">{{ element.worked_example.title }}</div>
+    <div class="worked-example-title">{{ element.worked_example.title|math }}</div>
 
     <!-- Problem Statement -->
     <div class="worked-example-problem">

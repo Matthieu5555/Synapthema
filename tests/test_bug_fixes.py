@@ -19,6 +19,7 @@ from typing import TypeVar
 from unittest.mock import MagicMock
 
 import pytest
+from pydantic import ValidationError
 
 from src.extraction.types import Book, Chapter, Section
 from src.transformation.analysis_types import (
@@ -381,19 +382,19 @@ class TestTagElementConceptsCompleteness:
 
 
 class TestQuizQuestionValidator:
-    """Verify QuizQuestion correct_index and hint_eliminate_index clamping."""
+    """Verify QuizQuestion correct_index raises on invalid, hint soft-fixes."""
 
-    def test_out_of_bounds_correct_index_clamped_to_zero(self) -> None:
-        q = QuizQuestion(
-            question="Q?", options=["A", "B", "C"], correct_index=5,
-        )
-        assert q.correct_index == 0
+    def test_out_of_bounds_correct_index_raises(self) -> None:
+        with pytest.raises(ValidationError, match="correct_index"):
+            QuizQuestion(
+                question="Q?", options=["A", "B", "C"], correct_index=5,
+            )
 
-    def test_negative_correct_index_clamped_to_zero(self) -> None:
-        q = QuizQuestion(
-            question="Q?", options=["A", "B"], correct_index=-3,
-        )
-        assert q.correct_index == 0
+    def test_negative_correct_index_raises(self) -> None:
+        with pytest.raises(ValidationError, match="correct_index"):
+            QuizQuestion(
+                question="Q?", options=["A", "B"], correct_index=-3,
+            )
 
     def test_valid_correct_index_unchanged(self) -> None:
         q = QuizQuestion(
@@ -424,13 +425,13 @@ class TestQuizQuestionValidator:
 
 
 class TestMatchingExerciseValidator:
-    """Verify MatchingExercise truncates to equal lengths."""
+    """Verify MatchingExercise raises on mismatched lengths."""
 
-    def test_mismatched_lengths_truncated(self) -> None:
-        m = MatchingExercise(
-            title="T", left_items=["a", "b", "c"], right_items=["x", "y"],
-        )
-        assert len(m.left_items) == len(m.right_items) == 2
+    def test_mismatched_lengths_raises(self) -> None:
+        with pytest.raises(ValidationError, match="left_items"):
+            MatchingExercise(
+                title="T", left_items=["a", "b", "c"], right_items=["x", "y"],
+            )
 
     def test_equal_lengths_unchanged(self) -> None:
         m = MatchingExercise(
@@ -438,58 +439,72 @@ class TestMatchingExerciseValidator:
         )
         assert len(m.left_items) == len(m.right_items) == 2
 
-    def test_pair_explanations_padded(self) -> None:
-        m = MatchingExercise(
-            title="T", left_items=["a", "b", "c"],
-            right_items=["x", "y", "z"],
-            pair_explanations=["e1"],
-        )
-        assert len(m.pair_explanations) == 3
-        assert m.pair_explanations[1] == ""
+    def test_pair_explanations_mismatch_raises(self) -> None:
+        with pytest.raises(ValidationError, match="pair_explanations"):
+            MatchingExercise(
+                title="T", left_items=["a", "b", "c"],
+                right_items=["x", "y", "z"],
+                pair_explanations=["e1"],
+            )
 
-    def test_pair_explanations_truncated(self) -> None:
-        m = MatchingExercise(
-            title="T", left_items=["a", "b"], right_items=["x", "y"],
-            pair_explanations=["e1", "e2", "e3"],
-        )
-        assert len(m.pair_explanations) == 2
+    def test_pair_explanations_too_many_raises(self) -> None:
+        with pytest.raises(ValidationError, match="pair_explanations"):
+            MatchingExercise(
+                title="T", left_items=["a", "b"], right_items=["x", "y"],
+                pair_explanations=["e1", "e2", "e3"],
+            )
 
 
 class TestFillInTheBlankValidator:
-    """Verify blank count matches answer count."""
+    """Verify blank count must match answer count."""
 
-    def test_fewer_answers_than_blanks_padded(self) -> None:
-        f = FillInTheBlank(
-            statement="The _____ chases the _____",
-            answers=["cat"],
-        )
-        assert len(f.answers) == 2
-        assert f.answers[1] == ""
+    def test_fewer_answers_than_blanks_raises(self) -> None:
+        with pytest.raises(ValidationError, match="blanks"):
+            FillInTheBlank(
+                statement="The [BLANK] chases the [BLANK]",
+                answers=["cat"],
+            )
 
-    def test_more_answers_than_blanks_truncated(self) -> None:
-        f = FillInTheBlank(
-            statement="The _____ is here.",
-            answers=["cat", "dog", "bird"],
-        )
-        assert len(f.answers) == 1
+    def test_more_answers_than_blanks_raises(self) -> None:
+        with pytest.raises(ValidationError, match="blanks"):
+            FillInTheBlank(
+                statement="The [BLANK] is here.",
+                answers=["cat", "dog", "bird"],
+            )
 
     def test_matching_count_unchanged(self) -> None:
         f = FillInTheBlank(
-            statement="_____ and _____",
+            statement="[BLANK] and [BLANK]",
             answers=["alpha", "beta"],
         )
         assert len(f.answers) == 2
 
     def test_no_blanks_in_statement_leaves_answers_unchanged(self) -> None:
-        """When there are no _____ markers, don't touch the answers."""
+        """When there are no [BLANK] markers, don't touch the answers."""
         f = FillInTheBlank(statement="No blanks here", answers=["a"])
         assert len(f.answers) == 1
 
 
 class TestConceptMapValidator:
-    """Verify blank_edge_indices are filtered to valid range."""
+    """Verify blank_edge_indices must reference valid edges."""
 
-    def test_out_of_bounds_indices_removed(self) -> None:
+    def test_out_of_bounds_indices_raises(self) -> None:
+        with pytest.raises(ValidationError, match="blank_edge_indices"):
+            ConceptMap(
+                title="T",
+                nodes=[
+                    ConceptMapNode(id="a", label="A"),
+                    ConceptMapNode(id="b", label="B"),
+                    ConceptMapNode(id="c", label="C"),
+                ],
+                edges=[
+                    ConceptMapEdge(source="a", target="b", label="rel1"),
+                    ConceptMapEdge(source="b", target="c", label="rel2"),
+                ],
+                blank_edge_indices=[0, 5, -1, 1],
+            )
+
+    def test_valid_indices_accepted(self) -> None:
         cmap = ConceptMap(
             title="T",
             nodes=[
@@ -501,7 +516,7 @@ class TestConceptMapValidator:
                 ConceptMapEdge(source="a", target="b", label="rel1"),
                 ConceptMapEdge(source="b", target="c", label="rel2"),
             ],
-            blank_edge_indices=[0, 5, -1, 1],
+            blank_edge_indices=[0, 1],
         )
         assert cmap.blank_edge_indices == [0, 1]
 
@@ -510,8 +525,6 @@ class TestInteractiveEssayThreshold:
     """Verify passing_threshold is constrained to 0.0-1.0."""
 
     def test_threshold_above_one_rejected(self) -> None:
-        from pydantic import ValidationError
-
         with pytest.raises(ValidationError):
             InteractiveEssay(
                 title="T",

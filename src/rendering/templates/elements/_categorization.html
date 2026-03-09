@@ -1,7 +1,8 @@
 <span class="element-badge categorization-badge">Categorize</span>
 {% if element.bloom_level %}<span class="bloom-badge bloom-{{ element.bloom_level }}">{{ element.bloom_level }}</span>{% endif %}
+{% if element.difficulty %}<span class="difficulty-badge difficulty-{{ element.difficulty }}">{{ element.difficulty }}</span>{% endif %}
 <div class="categorization-container" data-items='{{ element.categorization.items_json|safe }}' data-attempts="0">
-    <div class="categorization-title">{{ element.categorization.title }}</div>
+    <div class="categorization-title">{{ element.categorization.title|math }}</div>
     <p class="categorization-instruction">{{ element.categorization.instruction|safe }}</p>
     <div class="categorization-categories">
         {% for name in element.categorization.category_names %}
@@ -16,6 +17,7 @@
     <div class="categorization-hint" style="display:none;">Hint: {{ element.categorization.hint|safe }}</div>
     {% endif %}
     <div class="categorization-explanation" style="display:none;">{{ element.categorization.explanation|safe }}</div>
+    <div class="confidence-container" style="display:none;"></div>
     <button class="quiz-check-btn" onclick="checkCategorization(this)">Check Categories</button>
     <button class="add-review-btn" onclick="addToReview(this)" title="Add to spaced review">+ Review</button>
 </div>

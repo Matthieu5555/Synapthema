@@ -39,6 +39,7 @@ DominantContentType = Literal[
     "theoretical",
     "applied",
     "mixed",
+    "boilerplate",
 ]
 
 PrerequisiteRelationship = Literal[

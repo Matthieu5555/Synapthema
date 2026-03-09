@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 from src.rendering.html_generator import _fix_unicode_escapes
 
 if TYPE_CHECKING:
-    from src.transformation.llm_client import LLMClient
+    from src.protocols import LLMClient
 
 logger = logging.getLogger(__name__)
 

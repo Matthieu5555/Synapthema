@@ -1,6 +1,6 @@
 <span class="element-badge cmap-badge">Concept Map</span>
 {% if element.bloom_level %}<span class="bloom-badge bloom-{{ element.bloom_level }}">{{ element.bloom_level }}</span>{% endif %}
-<h2>{{ element.concept_map.title }}</h2>
+<h2>{{ element.concept_map.title|math }}</h2>
 <div class="concept-map-container"
      id="cmap-{{ element.element_index }}"
      data-nodes='{{ element.concept_map.nodes_json|safe }}'

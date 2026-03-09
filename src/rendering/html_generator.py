@@ -1,13 +1,14 @@
 """HTML rendering — the deep module for Stage 3.
 
-Internal entry point: _render_course(). Takes a sequence of TrainingModules
+Public entry point: render_course(). Takes a sequence of TrainingModules
 from Stage 2 and produces self-contained HTML files — one per chapter plus
 an index page. All CSS and JS are inlined for zero-dependency output.
 
-Supports all 14 element types: section intros, slides, mermaid diagrams, quizzes,
+Supports all 16 element types: section intros, slides, mermaid diagrams, quizzes,
 flashcards, fill-in-the-blank, matching, ordering, categorization, error detection,
-analogy, worked examples, concept maps, and interactive essays. Includes KaTeX for math rendering,
-Bloom's Taxonomy badges, markdown rendering, and currency/LaTeX-aware fill-in-the-blank.
+analogy, far transfer, worked examples, concept maps, interactive essays, and
+interactive visualizations. Includes KaTeX for math rendering, Bloom's Taxonomy badges,
+markdown rendering, and currency/LaTeX-aware fill-in-the-blank.
 """
 
 from __future__ import annotations
@@ -19,10 +20,12 @@ import random
 import re
 from collections import defaultdict
 from collections.abc import Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import markdown as md
 from jinja2 import Environment, FileSystemLoader
+from markupsafe import Markup
 
 from functools import reduce
 
@@ -33,9 +36,11 @@ from src.transformation.types import (
     ConceptMapElement,
     CourseCapabilities,
     ErrorDetectionElement,
+    FarTransferElement,
     FillInBlankElement,
     FlashcardElement,
     InteractiveEssayElement,
+    InteractiveVisualizationElement,
     MatchingElement,
     MermaidElement,
     OrderingElement,
@@ -53,6 +58,21 @@ logger = logging.getLogger(__name__)
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 
 
+def _make_jinja_env(template_dir: str | Path | None = None) -> Environment:
+    """Create a Jinja2 Environment with custom filters.
+
+    The ``math`` filter converts LaTeX math in titles/short strings to
+    KaTeX-ready ``\\(...\\)`` delimiters via the same pipeline used for
+    body content.  Returns ``Markup`` so Jinja2 does not re-escape.
+    """
+    env = Environment(
+        loader=FileSystemLoader(str(template_dir or _TEMPLATES_DIR)),
+        autoescape=True,
+    )
+    env.filters["math"] = lambda text: Markup(_markdown_to_html_inline(text))
+    return env
+
+
 def _json_for_attr(obj: object) -> str:
     """Serialize *obj* to JSON safe for embedding in single-quoted HTML attributes.
 
@@ -63,9 +83,54 @@ def _json_for_attr(obj: object) -> str:
     """
     return json.dumps(obj).replace("'", "&#39;")
 
-def _render_course(
+# Default frontend configuration for the JS runtime.
+# These match the current hardcoded values in base.html.
+# Override via RenderContext.frontend_config to change behavior per course.
+DEFAULT_FRONTEND_CONFIG: dict[str, float | int] = {
+    "mastery_threshold": 0.8,
+    "mastery_good_pct": 80,
+    "mastery_partial_pct": 50,
+    "max_exercise_attempts": 3,
+    "min_score_floor": 0.2,
+    "essay_pass_threshold": 0.7,
+    "tutor_temperature": 0.7,
+    "mastery_update_delay_ms": 600,
+    "fsrs_easy_threshold": 0.85,
+    "fsrs_good_threshold": 0.6,
+    "fsrs_hard_threshold": 0.3,
+}
+
+
+@dataclass(frozen=True)
+class RenderContext:
+    """Bundles the optional parameters for render_course().
+
+    Groups configuration that the caller assembles once — keeps the
+    public API narrow while still exposing full control.
+    """
+
+    extracted_dir: Path | None = None
+    per_module_extracted_dirs: Sequence[Path] | None = None
+    embed_images: bool = True
+    concept_graph: ConceptGraph | None = None
+    chapter_analyses: list[ChapterAnalysis] | None = None
+    course_title: str | None = None
+    course_summary: str | None = None
+    learner_journey: str | None = None
+    source_book_titles: Sequence[str] | None = None
+    chapter_to_module: dict[int, int] | None = None
+    capabilities: CourseCapabilities | None = None
+    frontend_config: dict[str, float | int] = field(
+        default_factory=lambda: dict(DEFAULT_FRONTEND_CONFIG)
+    )
+
+
+def render_course(
     modules: Sequence[TrainingModule],
     output_dir: Path,
+    context: RenderContext | None = None,
+    *,
+    # Legacy keyword arguments — prefer RenderContext.
     extracted_dir: Path | None = None,
     per_module_extracted_dirs: Sequence[Path] | None = None,
     embed_images: bool = True,
@@ -80,42 +145,45 @@ def _render_course(
 ) -> Path:
     """Render training modules as a self-contained interactive HTML course.
 
-    Generates one HTML file per chapter module, plus an index.html landing
-    page linking to all chapters. CSS and JS are embedded inline in each file.
-    Chapters include cross-navigation (prev/next), theme toggle, progress
-    tracking, concept graph visualization, and learner model integration.
-
-    Args:
-        modules: Sequence of TrainingModules from Stage 2 (one per chapter).
-        output_dir: Directory to write HTML files into. Created if missing.
-        extracted_dir: Directory containing extracted images (from Stage 1).
-            Required if embed_images is True.
-        embed_images: If True, images are base64-encoded inline in the HTML.
-            If False, images are copied to output_dir and referenced by path.
-        concept_graph: Consolidated concept dependency graph for visualization.
-        chapter_analyses: Deep reading analyses for concept-to-element tagging.
+    Accepts either a RenderContext or individual keyword arguments.
+    When *context* is provided it takes precedence; keyword args serve as
+    a backward-compatible fallback.
 
     Returns:
         Path to the generated index.html file.
     """
-    if not chapter_analyses:
+    if context is None:
+        context = RenderContext(
+            extracted_dir=extracted_dir,
+            per_module_extracted_dirs=per_module_extracted_dirs,
+            embed_images=embed_images,
+            concept_graph=concept_graph,
+            chapter_analyses=chapter_analyses,
+            course_title=course_title,
+            course_summary=course_summary,
+            learner_journey=learner_journey,
+            source_book_titles=source_book_titles,
+            chapter_to_module=chapter_to_module,
+            capabilities=capabilities,
+        )
+
+    if not context.chapter_analyses:
         logger.warning(
-            "_render_course() called without chapter_analyses — "
+            "render_course() called without chapter_analyses — "
             "learner model, mastery dashboard, and concept-based review will be inert"
         )
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    env = Environment(
-        loader=FileSystemLoader(str(_TEMPLATES_DIR)),
-        autoescape=True,
-    )
+    env = _make_jinja_env()
 
     css = (_TEMPLATES_DIR / "styles.css").read_text(encoding="utf-8")
     graphlib_js = (_TEMPLATES_DIR / "graphlib.min.js").read_text(encoding="utf-8")
     dagre_js = (_TEMPLATES_DIR / "dagre.min.js").read_text(encoding="utf-8")
 
-    course_title = course_title or _derive_course_title(modules)
+    effective_title = context.course_title or _derive_course_title(modules)
+    effective_summary = context.course_summary
+    effective_journey = context.learner_journey
     # Derive slug from dir name. If output_dir is "html" (nested under the
     # course root), use the parent directory name instead.
     # Sanitize to alphanumeric + hyphens to prevent JS injection in templates.
@@ -125,19 +193,19 @@ def _render_course(
     # Load course_meta.json override (takes priority over blueprint values)
     meta_override = _load_course_meta(output_dir)
     if meta_override:
-        course_title = meta_override.get("course_title", course_title)
-        course_summary = meta_override.get("course_summary", course_summary)
-        learner_journey = meta_override.get("learner_journey", learner_journey)
+        effective_title = meta_override.get("course_title", effective_title)
+        effective_summary = meta_override.get("course_summary", effective_summary)
+        effective_journey = meta_override.get("learner_journey", effective_journey)
         logger.info("Applied course_meta.json overrides")
 
     # Build chapter analysis lookup by chapter number
     analyses_by_chapter: dict[int, ChapterAnalysis] = {}
-    if chapter_analyses:
-        for analysis in chapter_analyses:
+    if context.chapter_analyses:
+        for analysis in context.chapter_analyses:
             analyses_by_chapter[analysis.chapter_number] = analysis
 
     # Determine multi-doc status for source book attribution
-    is_multi_doc = bool(source_book_titles and len(set(source_book_titles)) > 1)
+    is_multi_doc = bool(context.source_book_titles and len(set(context.source_book_titles)) > 1)
 
     # First pass: build chapter metadata for cross-navigation.
     # Use sequential 1-based module index for file naming and identity —
@@ -150,7 +218,7 @@ def _render_course(
             "filename": f"chapter_{i + 1:02d}.html",
             "element_count": len(m.all_elements),
             "section_count": len(m.sections),
-            "source_book_title": source_book_titles[i] if source_book_titles and i < len(source_book_titles) else "",
+            "source_book_title": context.source_book_titles[i] if context.source_book_titles and i < len(context.source_book_titles) else "",
         }
         for i, m in enumerate(modules)
     ]
@@ -163,9 +231,9 @@ def _render_course(
 
         # Use per-module extracted dir (multi-doc) or fall back to global
         effective_extracted_dir = (
-            per_module_extracted_dirs[i]
-            if per_module_extracted_dirs and i < len(per_module_extracted_dirs)
-            else extracted_dir
+            context.per_module_extracted_dirs[i]
+            if context.per_module_extracted_dirs and i < len(context.per_module_extracted_dirs)
+            else context.extracted_dir
         )
 
         _render_chapter(
@@ -176,16 +244,17 @@ def _render_course(
             dagre_js=dagre_js,
             output_path=html_path,
             extracted_dir=effective_extracted_dir,
-            embed_images=embed_images,
-            course_title=course_title,
+            embed_images=context.embed_images,
+            course_title=effective_title,
             course_slug=course_slug,
             chapter_count=len(modules),
             prev_chapter=prev_chapter,
             next_chapter=next_chapter,
             chapter_analysis=analyses_by_chapter.get(module.chapter_number),
-            concept_graph=concept_graph,
+            concept_graph=context.concept_graph,
             source_book_title=chapter_info[i]["source_book_title"] if is_multi_doc else "",
             module_number=i + 1,
+            frontend_config=context.frontend_config,
         )
 
         logger.info(
@@ -199,9 +268,9 @@ def _render_course(
     # Prepare concept graph data for the index page
     graph_data = None
     mindmap_data = None
-    if concept_graph and concept_graph.concepts:
-        graph_data = _prepare_graph_data(concept_graph, modules, chapter_to_module)
-        mindmap_data = _prepare_mindmap_data(concept_graph, modules, chapter_to_module)
+    if context.concept_graph and context.concept_graph.concepts:
+        graph_data = _prepare_graph_data(context.concept_graph, modules, context.chapter_to_module)
+        mindmap_data = _prepare_mindmap_data(context.concept_graph, modules, context.chapter_to_module)
 
     subtitle = f"Interactive Training Course \u2014 {len(modules)} Chapters"
     if meta_override and "subtitle" in meta_override:
@@ -212,31 +281,35 @@ def _render_course(
         env=env,
         css=css,
         chapters=chapter_info,
-        course_title=course_title,
+        course_title=effective_title,
         course_slug=course_slug,
         output_path=index_path,
         graph_data=graph_data,
         mindmap_data=mindmap_data,
-        course_summary=course_summary,
-        learner_journey=learner_journey,
+        course_summary=effective_summary,
+        learner_journey=effective_journey,
         subtitle=subtitle,
-        capabilities=capabilities,
+        capabilities=context.capabilities,
     )
 
     _render_review_pages(
         env=env,
         css=css,
-        course_title=course_title,
+        course_title=effective_title,
         course_slug=course_slug,
         chapters=chapter_info,
         output_dir=output_dir,
     )
 
     # Write course_meta.json for user editing (only if it doesn't exist)
-    _write_course_meta(output_dir, course_title, course_summary, learner_journey, subtitle)
+    _write_course_meta(output_dir, effective_title, effective_summary, effective_journey, subtitle)
 
     logger.info("Course rendered: %d chapters + index at %s", len(modules), output_dir)
     return index_path
+
+
+# Backward-compatible alias.
+_render_course = render_course
 
 
 # ── Internal: chapter rendering ──────────────────────────────────────────────
@@ -260,6 +333,7 @@ def _render_chapter(
     concept_graph: ConceptGraph | None = None,
     source_book_title: str = "",
     module_number: int | None = None,
+    frontend_config: dict[str, float | int] | None = None,
 ) -> None:
     """Render a single chapter's training module to an HTML file."""
     template = env.get_template("base.html")
@@ -277,6 +351,8 @@ def _render_chapter(
         env=env,
     )
 
+    fc = frontend_config or DEFAULT_FRONTEND_CONFIG
+
     html = template.render(
         module_title=module.title,
         css=css,
@@ -291,6 +367,7 @@ def _render_chapter(
         prev_chapter=prev_chapter,
         next_chapter=next_chapter,
         source_book_title=source_book_title,
+        fc=fc,
     )
 
     output_path.write_text(html, encoding="utf-8")
@@ -540,6 +617,29 @@ def _prep_analogy(elem: AnalogyElement, _ed: Path | None, _ei: bool) -> dict:
     }}
 
 
+def _prep_far_transfer(elem: FarTransferElement, _ed: Path | None, _ei: bool) -> dict:
+    ft = elem.far_transfer
+    options = list(ft.options)
+    rng = random.Random(ft.source_principle)
+    indexed = list(enumerate(options))
+    rng.shuffle(indexed)
+    shuffled_options = [text for _, text in indexed]
+    correct_shuffled = next(
+        i for i, (orig_i, _) in enumerate(indexed) if orig_i == ft.correct_index
+    )
+    return {"far_transfer": {
+        "source_principle": _markdown_to_html_inline(ft.source_principle),
+        "source_domain": _markdown_to_html_inline(ft.source_domain),
+        "transfer_domain": _markdown_to_html_inline(ft.transfer_domain),
+        "scenario": _markdown_to_html(ft.scenario),
+        "question": _markdown_to_html_inline(ft.question),
+        "options": [_markdown_to_html_inline(opt) for opt in shuffled_options],
+        "correct_index": correct_shuffled,
+        "bridge_insight": _markdown_to_html(ft.bridge_insight),
+        "explanation": _markdown_to_html(ft.explanation),
+    }}
+
+
 def _prep_mermaid(elem: MermaidElement, _ed: Path | None, _ei: bool) -> dict:
     d = elem.mermaid
     code = _fix_unicode_escapes(d.diagram_code)
@@ -619,6 +719,19 @@ def _prep_interactive_essay(elem: InteractiveEssayElement, _ed: Path | None, _ei
     }}
 
 
+def _prep_interactive_visualization(elem: InteractiveVisualizationElement, _ed: Path | None, _ei: bool) -> dict:
+    viz = elem.interactive_visualization
+    # HTML-escape the html_code for safe embedding in srcdoc attribute.
+    # The template uses {{ html_code }} which Jinja2 auto-escapes.
+    return {"interactive_visualization": {
+        "title": viz.title,
+        "description": viz.description,
+        "html_code": viz.html_code,
+        "viz_type": viz.viz_type,
+        "fallback_text": viz.fallback_text,
+    }}
+
+
 # Dispatch table: element_type → preparer function.
 _ELEMENT_PREPARERS: dict[str, callable] = {
     "section_intro": _prep_section_intro,
@@ -631,10 +744,12 @@ _ELEMENT_PREPARERS: dict[str, callable] = {
     "categorization": _prep_categorization,
     "error_detection": _prep_error_detection,
     "analogy": _prep_analogy,
+    "far_transfer": _prep_far_transfer,
     "mermaid": _prep_mermaid,
     "concept_map": _prep_concept_map,
     "worked_example": _prep_worked_example,
     "interactive_essay": _prep_interactive_essay,
+    "interactive_visualization": _prep_interactive_visualization,
 }
 
 
@@ -642,7 +757,8 @@ def _prepare_element(
     elem: SectionIntroElement | SlideElement | QuizElement | FlashcardElement
     | FillInBlankElement | MatchingElement | OrderingElement | MermaidElement
     | ConceptMapElement | CategorizationElement | ErrorDetectionElement
-    | AnalogyElement | WorkedExampleElement | InteractiveEssayElement,
+    | AnalogyElement | WorkedExampleElement | FarTransferElement
+    | InteractiveEssayElement | InteractiveVisualizationElement,
     extracted_dir: Path | None,
     embed_images: bool,
 ) -> dict:
@@ -654,6 +770,9 @@ def _prepare_element(
         "element_type": elem.element_type,
         "bloom_level": elem.bloom_level,
     }
+    # Include difficulty for exercise elements that have it
+    if hasattr(elem, "difficulty"):
+        result["difficulty"] = elem.difficulty
     preparer = _ELEMENT_PREPARERS.get(elem.element_type)
     if preparer:
         result.update(preparer(elem, extracted_dir, embed_images))
@@ -692,7 +811,8 @@ RENDERERS: dict[str, _Callable[[dict, Environment], str]] = {
     for etype in [
         "section_intro", "slide", "quiz", "flashcard", "fill_in_the_blank",
         "matching", "ordering", "categorization", "error_detection",
-        "analogy", "mermaid", "concept_map", "worked_example", "interactive_essay",
+        "analogy", "far_transfer", "mermaid", "concept_map", "worked_example",
+        "interactive_essay", "interactive_visualization",
     ]
 }
 
@@ -1107,15 +1227,25 @@ def _prepare_mindmap_data(
 
 
 def _render_fill_blanks(statement: str) -> str:
-    """Replace _____ placeholders with HTML input elements."""
-    counter = [0]
+    """Replace [BLANK] placeholders with HTML input elements.
 
-    def replacer(match: re.Match) -> str:
+    Also handles legacy ``_____`` (3+ underscores) for backward compatibility
+    with existing JSON data.
+    """
+    # Normalise legacy markers first
+    statement = re.sub(r"_{3,}", "[BLANK]", statement)
+
+    counter = [0]
+    parts: list[str] = []
+    last_end = 0
+    for m in re.finditer(re.escape("[BLANK]"), statement):
+        parts.append(statement[last_end:m.start()])
         idx = counter[0]
         counter[0] += 1
-        return f'<input type="text" class="fitb-blank" data-blank-index="{idx}" placeholder="...">'
-
-    return re.sub(r"_{3,}", replacer, statement)
+        parts.append(f'<input type="text" class="fitb-blank" data-blank-index="{idx}" placeholder="...">')
+        last_end = m.end()
+    parts.append(statement[last_end:])
+    return "".join(parts)
 
 
 # Currency pattern: $ immediately followed by a digit (e.g. $90, $1,000, $3.14).
@@ -1139,6 +1269,23 @@ def _fix_currency_in_latex_braces(text: str) -> str:
 # NOTE: Use [$] instead of \$ — Python 3.13+ treats \$ as end-of-string anchor.
 _LATEX_DISPLAY_RE = re.compile(r"[$][$].+?[$][$]", re.DOTALL)
 _LATEX_INLINE_RE = re.compile(r"[$](?![$]).+?[$]")
+
+# LaTeX-heavy inline: only matches $...$ between CONSECUTIVE $ signs (no $ in content).
+# The lookahead requires the content to contain a LaTeX indicator (^, _, or \command),
+# ensuring we only extract spans that are unambiguously math.
+# This prevents non-greedy .+? from pairing currency $N with a later $, skipping
+# the real math expression.  Example:
+#   "...that $1 is worth less than $1 / (1 + 0.07)^1 = 0.9346$"
+# Non-greedy would match "$1 is worth less than $" (wrong).
+# This regex skips "$1 is worth" (no markers) and correctly matches
+# "$1 / (1 + 0.07)^1 = 0.9346$" (has ^).
+_LATEX_HEAVY_INLINE_RE = re.compile(
+    r"[$](?![$])(?=[^$]*?(?:\\[a-zA-Z]|[\^_]))[^$]+[$]"
+)
+# FITB variant: only \commands, not ^/_ (FITB blanks ___ false-positive as subscript).
+_LATEX_HEAVY_INLINE_FITB_RE = re.compile(
+    r"[$](?![$])(?=[^$]*?\\[a-zA-Z])[^$]+[$]"
+)
 
 # LaTeX \(...\) and \[...\] delimiter patterns.
 # The LLM is told to use $...$ but sometimes produces these instead.
@@ -1356,18 +1503,11 @@ def _markdown_to_html(text: str) -> str:
     protected = _LATEX_BRACKET_RE.sub(_save_math, protected)   # \[...\]
 
     # Extract $...$ pairs containing \commands — definitely LaTeX, not currency.
-    # A $...$  pair with a backslash-command like \frac, \times, \approx is
-    # ALWAYS LaTeX, never currency.  Extracting these first prevents currency
-    # regex from consuming the opening $ of expressions like $931.08 = \frac{60}{X}$.
-    _LATEX_CMD_PROBE = re.compile(r"\\[a-zA-Z]|[\^_]")
-
-    def _save_if_latex_heavy(match: re.Match) -> str:
-        inner = match.group(0)[1:-1]
-        if _LATEX_CMD_PROBE.search(inner):
-            return _save_math(match)       # has \command or ^/_ → extract as LaTeX
-        return match.group(0)              # no math markers → leave for currency pass
-
-    protected = _LATEX_INLINE_RE.sub(_save_if_latex_heavy, protected)
+    # Uses _LATEX_HEAVY_INLINE_RE which only matches between consecutive $ signs
+    # ([^$]+ not .+?) AND requires a LaTeX indicator (^ _ \cmd) in the content.
+    # This prevents non-greedy pairing of currency $N with a later $, which would
+    # skip the real math expression (see regex definition for example).
+    protected = _LATEX_HEAVY_INLINE_RE.sub(_save_math, protected)
 
     # --- Now currency protection is safe (LaTeX-heavy spans already extracted) ---
     protected, currency_spans = _protect_currency(protected)
@@ -1408,18 +1548,24 @@ def _markdown_to_html_inline(text: str) -> str:
 def _render_fitb_statement(statement: str, answers: list[str] | None = None) -> str:
     """Process a FITB statement with LaTeX-aware blank handling and markdown.
 
-    Blanks (``_{3,}``) inside LaTeX blocks are replaced with KaTeX-renderable
+    Blanks (``[BLANK]``) inside LaTeX blocks are replaced with KaTeX-renderable
     ``\\underline{\\hspace{3em}}`` markers since ``<input>`` HTML cannot
     appear inside KaTeX math.  Blanks outside LaTeX become interactive
     ``<input>`` elements with per-blank hint buttons.  The whole statement
     then receives markdown conversion with LaTeX and currency protection.
 
+    Legacy ``_____`` (3+ underscores) markers are also supported for backward
+    compatibility with existing JSON data.
+
     Args:
-        statement: The FITB statement with ``_____`` marking each blank.
+        statement: The FITB statement with ``[BLANK]`` marking each blank.
         answers: Optional list of correct answers (one per blank, in order).
             When provided, each ``<input>`` gets a ``data-answer`` attribute
             and a hint button for progressive letter reveal.
     """
+    # Step 0: normalise legacy underscore markers to [BLANK]
+    statement = re.sub(r"_{3,}", "[BLANK]", statement)
+
     # Step 1: strip currency $ inside LaTeX braces
     text = _fix_currency_in_latex_braces(statement)
 
@@ -1431,7 +1577,8 @@ def _render_fitb_statement(statement: str, answers: list[str] | None = None) -> 
 
     def _save_math(match: re.Match) -> str:
         # Replace blanks inside LaTeX with KaTeX markers before saving
-        content = re.sub(r"_{3,}", r"\\underline{\\hspace{3em}}", match.group(0))
+        content = match.group(0).replace("[BLANK]", r"\underline{\hspace{3em}}")
+        content = re.sub(r"_{3,}", r"\\underline{\\hspace{3em}}", content)  # legacy fallback
         idx = len(math_spans)
         span = _fix_double_escaped_latex(content)
         math_spans.append(_escape_latex_percent(span))
@@ -1440,18 +1587,10 @@ def _render_fitb_statement(statement: str, answers: list[str] | None = None) -> 
     # First pass: display math
     protected = _LATEX_DISPLAY_RE.sub(_save_math, text)
 
-    # Extract $...$ with \commands before currency protection.
-    # NOTE: We do NOT expand the probe to include _ here because FITB blanks
-    # (___) would false-positive as math subscripts.
-    _LATEX_CMD_PROBE = re.compile(r"\\[a-zA-Z]")
-
-    def _save_if_latex_heavy(match: re.Match) -> str:
-        inner = match.group(0)[1:-1]
-        if _LATEX_CMD_PROBE.search(inner):
-            return _save_math(match)
-        return match.group(0)
-
-    protected = _LATEX_INLINE_RE.sub(_save_if_latex_heavy, protected)
+    # Extract $...$ with \commands before currency protection (consecutive-$
+    # variant, see _LATEX_HEAVY_INLINE_FITB_RE).  Uses \commands only — not
+    # ^ or _ because FITB blanks (___) would false-positive as subscripts.
+    protected = _LATEX_HEAVY_INLINE_FITB_RE.sub(_save_math, protected)
 
     # Now currency protection is safe
     protected, currency_spans = _protect_currency(protected)
@@ -1485,7 +1624,7 @@ def _render_fitb_statement(statement: str, answers: list[str] | None = None) -> 
             f'{hint_btn}'
         )
 
-    protected = re.sub(r"_{3,}", _input_replacer, protected)
+    protected = re.sub(re.escape("[BLANK]"), _input_replacer, protected)
 
     # Also protect <input> tags from markdown
     input_spans: list[str] = []
@@ -1515,7 +1654,11 @@ def _fitb_interactive_answer_indices(statement: str) -> list[int]:
     Blanks inside LaTeX become visual-only markers; blanks outside become
     interactive inputs.  Returns 0-based indices into the original answer
     list for the blanks that will be interactive.
+
+    Handles both ``[BLANK]`` and legacy ``_____`` (3+ underscores) markers.
     """
+    # Normalise legacy markers
+    statement = re.sub(r"_{3,}", "[BLANK]", statement)
     text, _ = _protect_currency(statement)
 
     # Build LaTeX region spans
@@ -1531,7 +1674,7 @@ def _fitb_interactive_answer_indices(statement: str) -> list[int]:
 
     return [
         i
-        for i, m in enumerate(re.finditer(r"_{3,}", text))
+        for i, m in enumerate(re.finditer(re.escape("[BLANK]"), text))
         if not _is_in_latex(m.start())
     ]
 

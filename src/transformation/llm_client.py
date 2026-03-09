@@ -13,62 +13,48 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Protocol, TypeVar, Union
+from typing import TypeVar
 
 import instructor
 import openai
 import pydantic
 from instructor.core.exceptions import InstructorError
 
+# Re-export shared types so existing imports keep working.
+from src.protocols import LLMClient, LLMError, UserPrompt  # noqa: F401
+
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
-# User prompt can be a plain string or a list of multimodal content blocks
-# (text + image_url) for vision-enabled calls.
-UserPrompt = Union[str, list[dict]]
-
 # Maximum number of retry attempts for transient API failures
 # (rate limits, 5xx errors). Used by both complete() and complete_structured().
+# Lower: faster failure but less resilient to transient API issues.
+# Higher: more resilient but total wait grows exponentially (sum of backoff delays).
 MAX_API_RETRIES = 3
 
 # Base delay in seconds for exponential backoff between retries.
-# Actual delays: 2s, 4s, 8s.
+# Actual delays: 2s, 4s, 8s. Lower: faster retries but risks hitting rate limits
+# again. Higher: more polite to the API but slows recovery.
 BASE_RETRY_DELAY = 2.0
 
 # Number of Instructor-managed retries on Pydantic validation failure.
 # Each retry sends the validation error back to the LLM for self-correction.
+# Lower: saves tokens but more sections fail validation entirely.
+# Higher: more chances to fix output but each retry costs a full LLM call.
 VALIDATION_RETRIES = 2
 
 # HTTP timeout in seconds for LLM API calls. Prevents indefinite hangs
 # when the API is unresponsive. 300s accommodates long structured responses
 # for large chapters (e.g. 50+ page chapters with dense content).
+# Lower: risks timing out on legitimately large chapters.
+# Higher: hangs longer on genuinely unresponsive APIs.
 REQUEST_TIMEOUT = 300.0
 
 
-class LLMClient(Protocol):
-    """Protocol for LLM completion clients.
 
-    Any implementation must provide complete() for raw text responses,
-    complete_structured() for Pydantic-validated responses, and light
-    variants of each that route to a cheaper model for simple tasks.
-    """
-
-    def complete(self, system_prompt: str, user_prompt: UserPrompt) -> str: ...
-
-    def complete_light(self, system_prompt: str, user_prompt: UserPrompt) -> str: ...
-
-    def complete_structured(
-        self, system_prompt: str, user_prompt: UserPrompt, response_model: type[T]
-    ) -> T: ...
-
-    def complete_structured_light(
-        self, system_prompt: str, user_prompt: UserPrompt, response_model: type[T]
-    ) -> T: ...
-
-
-class LLMError(Exception):
-    """Raised when an LLM API call fails."""
+# LLMClient protocol and LLMError are defined in src.protocols and
+# re-exported above for backward compatibility.
 
 
 class OpenAIClient:
@@ -87,9 +73,11 @@ class OpenAIClient:
         temperature: float,
         base_url: str = "https://openrouter.ai/api/v1",
         model_light: str = "",
+        model_creative: str = "",
     ) -> None:
         self._model = model
         self._model_light = model_light or model
+        self._model_creative = model_creative or model
         self._max_tokens = max_tokens
         self._temperature = temperature
 
@@ -194,6 +182,18 @@ class OpenAIClient:
         logger.debug("Using light model (%s) for structured completion", self._model_light)
         return self._structured(self._model_light, system_prompt, user_prompt, response_model)
 
+    def complete_creative(self, system_prompt: str, user_prompt: UserPrompt) -> str:
+        """Raw text completion using the creative model (for code generation)."""
+        logger.debug("Using creative model (%s) for raw completion", self._model_creative)
+        return self._complete(self._model_creative, system_prompt, user_prompt)
+
+    def complete_structured_creative(
+        self, system_prompt: str, user_prompt: UserPrompt, response_model: type[T]
+    ) -> T:
+        """Schema-constrained completion using the creative model."""
+        logger.debug("Using creative model (%s) for structured completion", self._model_creative)
+        return self._structured(self._model_creative, system_prompt, user_prompt, response_model)
+
 
 def create_llm_client(
     api_key: str,
@@ -202,6 +202,7 @@ def create_llm_client(
     temperature: float,
     base_url: str = "https://openrouter.ai/api/v1",
     model_light: str = "",
+    model_creative: str = "",
 ) -> LLMClient:
     """Create an OpenAI-backed LLM client.
 
@@ -217,13 +218,15 @@ def create_llm_client(
         base_url: API base URL.
         model_light: Model identifier for simple tasks. Falls back to
             model if empty.
+        model_creative: Model identifier for creative code generation tasks
+            (e.g. interactive visualizations). Falls back to model if empty.
 
     Returns:
         An OpenAIClient satisfying the LLMClient protocol.
     """
     logger.info(
-        "Creating LLM client: model=%s, model_light=%s, base_url=%s, max_tokens=%d",
-        model, model_light or model, base_url, max_tokens,
+        "Creating LLM client: model=%s, model_light=%s, model_creative=%s, base_url=%s, max_tokens=%d",
+        model, model_light or model, model_creative or model, base_url, max_tokens,
     )
     return OpenAIClient(
         api_key=api_key,
@@ -232,4 +235,5 @@ def create_llm_client(
         temperature=temperature,
         base_url=base_url,
         model_light=model_light,
+        model_creative=model_creative,
     )

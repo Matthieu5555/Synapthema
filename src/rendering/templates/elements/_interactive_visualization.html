@@ -1,0 +1,17 @@
+<span class="element-badge viz-badge">Interactive Visualization</span>
+{% if element.bloom_level %}<span class="bloom-badge bloom-{{ element.bloom_level }}">{{ element.bloom_level }}</span>{% endif %}
+<div class="viz-container">
+  <h3 class="viz-title">{{ element.interactive_visualization.title|math }}</h3>
+  <p class="viz-description">{{ element.interactive_visualization.description }}</p>
+  <iframe
+    srcdoc="{{ element.interactive_visualization.html_code|e }}"
+    sandbox="allow-scripts"
+    referrerpolicy="no-referrer"
+    class="viz-iframe"
+    loading="lazy"
+    title="{{ element.interactive_visualization.title }}"
+  ></iframe>
+  <noscript>
+    <p class="viz-fallback">{{ element.interactive_visualization.fallback_text }}</p>
+  </noscript>
+</div>

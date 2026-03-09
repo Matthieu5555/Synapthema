@@ -1,16 +1,19 @@
 """Tests for the structure detector — TOC parsing and chapter identification."""
 
-import json
 from unittest.mock import MagicMock
 
 from src.extraction.structure_detector import (
+    SubsectionExtractionResponse,
     TocEntry,
+    TocEntryResponse,
+    TocExtractionResponse,
     _collapse_spaced_letters,
     _filter_front_matter,
     _is_chapter_entry,
     _normalize_title,
     _page_range_fallback,
     detect_subsections_with_llm,
+    detect_toc_with_llm,
     identify_chapters,
 )
 from src.transformation.llm_client import LLMError
@@ -152,6 +155,23 @@ class TestIdentifyChapters:
         assert len(ch1_children) == 2  # L2 sections
         assert ch1_children[0].title == "SPOT RATES AND FORWARD RATES"
 
+    def test_book_title_excluded_when_modules_present(self) -> None:
+        """A book/subject title at the same level as 'Learning Module N'
+        entries should not become its own chapter."""
+        entries = (
+            TocEntry(level=1, title="Fixed Income", page=1),
+            TocEntry(level=1, title="Learning Module 1: The Term Structure", page=10),
+            TocEntry(level=2, title="Spot Rates", page=11),
+            TocEntry(level=1, title="Learning Module 2: Credit Analysis", page=30),
+            TocEntry(level=2, title="Credit Risk", page=31),
+        )
+        result = identify_chapters(entries, total_pages=50)
+
+        # Only the "Learning Module" entries should be chapters
+        assert len(result) == 2
+        assert result[0][0].title == "Learning Module 1: The Term Structure"
+        assert result[1][0].title == "Learning Module 2: Credit Analysis"
+
 
 class TestCollapseSpacedLetters:
     def test_collapses_spaced_word(self) -> None:
@@ -209,16 +229,18 @@ def _make_mock_doc(pages: dict[int, str]) -> MagicMock:
 
 
 class TestDetectSubsectionsWithLLM:
-    """Tests for the LLM-based subsection detection."""
+    """Tests for the LLM-based subsection detection (structured output)."""
 
     def test_returns_entries_on_success(self) -> None:
         doc = _make_mock_doc({0: "page 1 text", 1: "page 2 text"})
         llm = MagicMock()
-        llm.complete_light.return_value = json.dumps([
-            {"level": 2, "title": "2.1 Random Variables", "page": 1},
-            {"level": 2, "title": "2.2 Distributions", "page": 2},
-            {"level": 3, "title": "2.2.1 Normal", "page": 2},
-        ])
+        llm.complete_structured_light.return_value = SubsectionExtractionResponse(
+            entries=[
+                TocEntryResponse(level=2, title="2.1 Random Variables", page=1),
+                TocEntryResponse(level=2, title="2.2 Distributions", page=2),
+                TocEntryResponse(level=3, title="2.2.1 Normal", page=2),
+            ]
+        )
 
         result = detect_subsections_with_llm(doc, 1, 2, "Chapter 2", llm)
 
@@ -232,7 +254,7 @@ class TestDetectSubsectionsWithLLM:
     def test_returns_empty_on_llm_failure(self) -> None:
         doc = _make_mock_doc({0: "page 1 text"})
         llm = MagicMock()
-        llm.complete_light.side_effect = LLMError("API error")
+        llm.complete_structured_light.side_effect = LLMError("API error")
 
         result = detect_subsections_with_llm(doc, 1, 1, "Chapter 1", llm)
 
@@ -241,18 +263,20 @@ class TestDetectSubsectionsWithLLM:
     def test_returns_empty_when_fewer_than_2_entries(self) -> None:
         doc = _make_mock_doc({0: "page 1 text"})
         llm = MagicMock()
-        llm.complete_light.return_value = json.dumps([
-            {"level": 2, "title": "Only One Section", "page": 1},
-        ])
+        llm.complete_structured_light.return_value = SubsectionExtractionResponse(
+            entries=[
+                TocEntryResponse(level=2, title="Only One Section", page=1),
+            ]
+        )
 
         result = detect_subsections_with_llm(doc, 1, 1, "Chapter 1", llm)
 
         assert result == ()
 
-    def test_returns_empty_on_invalid_json(self) -> None:
+    def test_returns_empty_on_validation_error(self) -> None:
         doc = _make_mock_doc({0: "page 1 text"})
         llm = MagicMock()
-        llm.complete_light.return_value = "not valid json at all"
+        llm.complete_structured_light.side_effect = LLMError("Validation failed")
 
         result = detect_subsections_with_llm(doc, 1, 1, "Chapter 1", llm)
 
@@ -261,11 +285,13 @@ class TestDetectSubsectionsWithLLM:
     def test_clamps_pages_to_chapter_range(self) -> None:
         doc = _make_mock_doc({0: "p1", 1: "p2", 2: "p3"})
         llm = MagicMock()
-        llm.complete_light.return_value = json.dumps([
-            {"level": 2, "title": "Section A", "page": 1},
-            {"level": 2, "title": "Section B", "page": 2},
-            {"level": 2, "title": "Section C", "page": 99},  # above range
-        ])
+        llm.complete_structured_light.return_value = SubsectionExtractionResponse(
+            entries=[
+                TocEntryResponse(level=2, title="Section A", page=1),
+                TocEntryResponse(level=2, title="Section B", page=2),
+                TocEntryResponse(level=2, title="Section C", page=99),
+            ]
+        )
 
         result = detect_subsections_with_llm(doc, 1, 3, "Chapter", llm)
 
@@ -277,11 +303,13 @@ class TestDetectSubsectionsWithLLM:
     def test_sorts_by_page_and_level(self) -> None:
         doc = _make_mock_doc({0: "p1", 1: "p2"})
         llm = MagicMock()
-        llm.complete_light.return_value = json.dumps([
-            {"level": 2, "title": "Late Section", "page": 2},
-            {"level": 2, "title": "Early Section", "page": 1},
-            {"level": 3, "title": "Subsection of Early", "page": 1},
-        ])
+        llm.complete_structured_light.return_value = SubsectionExtractionResponse(
+            entries=[
+                TocEntryResponse(level=2, title="Late Section", page=2),
+                TocEntryResponse(level=2, title="Early Section", page=1),
+                TocEntryResponse(level=3, title="Subsection of Early", page=1),
+            ]
+        )
 
         result = detect_subsections_with_llm(doc, 1, 2, "Chapter", llm)
 
@@ -296,4 +324,99 @@ class TestDetectSubsectionsWithLLM:
         result = detect_subsections_with_llm(doc, 1, 2, "Chapter", llm)
 
         assert result == ()
-        llm.complete_light.assert_not_called()
+        llm.complete_structured_light.assert_not_called()
+
+
+class TestDetectTocWithLLM:
+    """Tests for the LLM-based TOC detection (structured output)."""
+
+    def test_returns_entries_on_success(self) -> None:
+        doc = _make_mock_doc({i: f"page {i+1} text" for i in range(3)})
+        llm = MagicMock()
+        llm.complete_structured_light.return_value = TocExtractionResponse(
+            entries=[
+                TocEntryResponse(level=1, title="Chapter 1: Introduction", page=1),
+                TocEntryResponse(level=2, title="1.1 Background", page=2),
+                TocEntryResponse(level=1, title="Chapter 2: Methods", page=3),
+            ]
+        )
+
+        result = detect_toc_with_llm(doc, llm)
+
+        assert len(result) == 3
+        assert result[0].title == "Chapter 1: Introduction"
+        assert result[0].level == 1
+
+    def test_returns_empty_on_llm_failure(self) -> None:
+        doc = _make_mock_doc({0: "text"})
+        llm = MagicMock()
+        llm.complete_structured_light.side_effect = LLMError("API error")
+
+        result = detect_toc_with_llm(doc, llm)
+
+        assert result == ()
+
+    def test_returns_empty_for_empty_pages(self) -> None:
+        doc = _make_mock_doc({0: "", 1: ""})
+        llm = MagicMock()
+
+        result = detect_toc_with_llm(doc, llm)
+
+        assert result == ()
+        llm.complete_structured_light.assert_not_called()
+
+    def test_filters_front_matter(self) -> None:
+        doc = _make_mock_doc({0: "page 1 text"})
+        llm = MagicMock()
+        llm.complete_structured_light.return_value = TocExtractionResponse(
+            entries=[
+                TocEntryResponse(level=1, title="Preface", page=1),
+                TocEntryResponse(level=1, title="Chapter 1: Real Content", page=5),
+            ]
+        )
+
+        result = detect_toc_with_llm(doc, llm)
+
+        assert len(result) == 1
+        assert result[0].title == "Chapter 1: Real Content"
+
+
+class TestFilterLegalFrontMatter:
+    """Verify legal/disclaimer titles are filtered as front matter."""
+
+    def test_disclaimer_filtered_as_front_matter(self) -> None:
+        entries = (
+            TocEntry(level=1, title="Disclaimer", page=1),
+            TocEntry(level=1, title="Chapter 1: Introduction", page=5),
+        )
+        result = _filter_front_matter(entries)
+        assert len(result) == 1
+        assert result[0].title == "Chapter 1: Introduction"
+
+    def test_legal_notice_filtered(self) -> None:
+        entries = (
+            TocEntry(level=1, title="Legal Notice", page=1),
+            TocEntry(level=1, title="Important Information", page=3),
+            TocEntry(level=1, title="Chapter 1: Bonds", page=10),
+        )
+        result = _filter_front_matter(entries)
+        assert len(result) == 1
+        assert result[0].title == "Chapter 1: Bonds"
+
+    def test_terms_of_use_filtered(self) -> None:
+        entries = (
+            TocEntry(level=1, title="Terms of Use", page=1),
+            TocEntry(level=1, title="Chapter 1: Getting Started", page=5),
+        )
+        result = _filter_front_matter(entries)
+        assert len(result) == 1
+        assert result[0].title == "Chapter 1: Getting Started"
+
+    def test_risk_disclosures_filtered(self) -> None:
+        entries = (
+            TocEntry(level=1, title="Risk Disclosures", page=1),
+            TocEntry(level=1, title="Chapter 1: Portfolio Theory", page=10),
+        )
+        result = _filter_front_matter(entries)
+        assert len(result) == 1
+        assert result[0].title == "Chapter 1: Portfolio Theory"

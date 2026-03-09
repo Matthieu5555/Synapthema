@@ -17,7 +17,7 @@ from src.extraction.pdf_parser import extract_book
 from src.extraction.types import Book
 
 if TYPE_CHECKING:
-    from src.transformation.llm_client import LLMClient
+    from src.protocols import LLMClient
 
 logger = logging.getLogger(__name__)
 

@@ -1,6 +1,6 @@
 <span class="element-badge intro-badge">Introduction</span>
 <div class="section-intro-container">
-    <h1>{{ element.section_intro.title }}</h1>
+    <h1>{{ element.section_intro.title|math }}</h1>
     <div class="section-intro-content">
         {{ element.section_intro.content_html|safe }}
     </div>

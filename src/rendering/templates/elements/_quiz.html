@@ -1,7 +1,8 @@
 <span class="element-badge quiz-badge">Quiz</span>
 {% if element.bloom_level %}<span class="bloom-badge bloom-{{ element.bloom_level }}">{{ element.bloom_level }}</span>{% endif %}
+{% if element.difficulty %}<span class="difficulty-badge difficulty-{{ element.difficulty }}">{{ element.difficulty }}</span>{% endif %}
 <div class="quiz-container">
-    <div class="quiz-title">{{ element.quiz.title }}</div>
+    <div class="quiz-title">{{ element.quiz.title|math }}</div>
     {% for q in element.quiz.questions %}
     <div class="quiz-question" data-correct="{{ q.correct_index }}"
          data-hint-meta="{{ q.hint_metacognitive }}"
@@ -20,17 +21,7 @@
         <button class="quiz-check-btn" onclick="checkAnswer(this)" disabled>Check Answer</button>
         <div class="quiz-hint hint-metacognitive"></div>
         <div class="quiz-hint hint-strategic"></div>
-        <div class="quiz-confidence" style="display:none;">
-            <div class="confidence-prompt">How confident are you?</div>
-            <div class="confidence-dots">
-                <span class="confidence-dot" data-value="1" onclick="selectConfidence(this)">1</span>
-                <span class="confidence-dot" data-value="2" onclick="selectConfidence(this)">2</span>
-                <span class="confidence-dot" data-value="3" onclick="selectConfidence(this)">3</span>
-                <span class="confidence-dot" data-value="4" onclick="selectConfidence(this)">4</span>
-                <span class="confidence-dot" data-value="5" onclick="selectConfidence(this)">5</span>
-            </div>
-            <button class="quiz-check-btn confidence-confirm-btn" onclick="confirmWithConfidence(this)" disabled>Confirm</button>
-        </div>
+        <div class="quiz-confidence" style="display:none;"></div>
         <div class="quiz-explanation">{{ q.explanation|safe }}</div>
         <div class="quiz-hypercorrection" style="display:none;"></div>
     </div>

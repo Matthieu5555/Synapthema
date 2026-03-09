@@ -1,7 +1,8 @@
 <span class="element-badge ordering-badge">Ordering</span>
 {% if element.bloom_level %}<span class="bloom-badge bloom-{{ element.bloom_level }}">{{ element.bloom_level }}</span>{% endif %}
+{% if element.difficulty %}<span class="difficulty-badge difficulty-{{ element.difficulty }}">{{ element.difficulty }}</span>{% endif %}
 <div class="ordering-container" data-correct-order='{{ element.ordering.correct_order_json|safe }}' data-attempts="0">
-    <div class="ordering-title">{{ element.ordering.title }}</div>
+    <div class="ordering-title">{{ element.ordering.title|math }}</div>
     <p class="ordering-instruction">{{ element.ordering.instruction|safe }}</p>
     <ol class="ordering-list">
         {% for item in element.ordering.shuffled_items %}
@@ -19,6 +20,7 @@
     <div class="ordering-hint" style="display:none;">Hint: {{ element.ordering.hint|safe }}</div>
     {% endif %}
     <div class="ordering-explanation" style="display:none;">{{ element.ordering.explanation|safe }}</div>
+    <div class="confidence-container" style="display:none;"></div>
     <button class="quiz-check-btn" onclick="checkOrdering(this)">Check Order</button>
     <button class="add-review-btn" onclick="addToReview(this)" title="Add to spaced review">+ Review</button>
 </div>

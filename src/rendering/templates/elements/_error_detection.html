@@ -1,7 +1,8 @@
 <span class="element-badge error-detect-badge">Spot the Error</span>
 {% if element.bloom_level %}<span class="bloom-badge bloom-{{ element.bloom_level }}">{{ element.bloom_level }}</span>{% endif %}
+{% if element.difficulty %}<span class="difficulty-badge difficulty-{{ element.difficulty }}">{{ element.difficulty }}</span>{% endif %}
 <div class="error-detection-container">
-    <div class="error-detection-title">{{ element.error_detection.title }}</div>
+    <div class="error-detection-title">{{ element.error_detection.title|math }}</div>
     <p class="error-detection-instruction">{{ element.error_detection.instruction|safe }}</p>
     {% if element.error_detection.context %}
     <p class="error-detection-context">{{ element.error_detection.context|safe }}</p>

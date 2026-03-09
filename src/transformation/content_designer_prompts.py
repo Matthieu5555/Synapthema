@@ -83,15 +83,14 @@ TEMPLATE_DESCRIPTIONS = {
         "independently. The sequence is: struggle → explain → practice."
     ),
     "socratic": (
-        "SOCRATIC: Build understanding through a chain of questions. Structure "
-        "this as ALTERNATING elements: a slide poses a guiding question and gives "
-        "just enough context to think about it, then a quiz or fill-in-the-blank "
-        "element asks the learner to commit to an answer, then the NEXT slide "
-        "reveals the answer and uses it to pose the next deeper question. "
-        "CRITICAL: a slide must NEVER pose a question and answer it in the same "
-        "slide. The learner must be forced to think before seeing the resolution. "
-        "Each question should build on the previous answer: 'Now that you see X "
-        "is true, what does that imply about Y?'"
+        "SOCRATIC: Build understanding through a chain of questions. The single "
+        "slide poses a guiding question, gives just enough context to think about "
+        "it, and sets up the core tension WITHOUT resolving it. Then a sequence "
+        "of exercises (quiz, fill-in-the-blank, matching) forces the learner to "
+        "commit to answers that progressively resolve the question. Each exercise "
+        "builds on the previous: 'Now that you see X is true, what does that "
+        "imply about Y?' The learner discovers the answer through practice, not "
+        "by reading another slide."
     ),
     "visual_walkthrough": (
         "VISUAL WALKTHROUGH: If source images are attached, examine them and "
@@ -147,7 +146,7 @@ You believe that **understanding comes before memorization**. Every concept has 
 ## Section Design Principles
 
 - Each section teaches ONE concept through ONE slide, then drills it with exercises
-- A section is: 1 section_intro + 1 slide (80-200 words) + 2-3 exercises + 2-3 flashcards
+- A section is: 1 section_intro + 1 slide (80-200 words) + 4-5 exercises (easy→hard) + 2-3 flashcards
 - The slide is the ONLY teaching element. Keep it dense, focused, and short.
 - When the "problem_first" template is assigned, present a challenge BEFORE the explanation
 
@@ -167,16 +166,17 @@ You MUST AVOID these common LLM failure modes:
 3. **Trivial recall questions**: No more than 20% of quiz questions should be "What is the definition of X?" type. Questions should test understanding, application, and analysis.
 4. **Obvious wrong answers**: Every quiz distractor must be PLAUSIBLE. A wrong answer should represent a REAL misconception, not a joke. Explain why each wrong answer is wrong.
 5. **Missing intuition**: If you explain what something IS without explaining WHY it matters, HOW it works intuitively, and WHAT would happen without it, you have failed.
-6. **Disconnected slides**: When a section has multiple slides, each slide must connect to the next. End a slide by setting up what comes next ("This raises a question: ...") or start the next slide by linking back ("Now that we understand X, we can tackle Y"). The learner should never feel a jarring topic-jump between consecutive slides in the same section.
+6. **Disconnected elements**: The slide should set up the exercises that follow. End the slide by posing a question or challenge ("This raises a question: ...") that the next exercise answers. The learner should never feel a jarring topic-jump between the slide and the drill sequence.
 7. **Repetitive structure**: Vary your approach. Not every section should be slide-quiz-flashcard. Follow the content template specified in the prompt.
 8. **Letter references in explanations**: NEVER refer to quiz options by letter (A, B, C, D) or by position ("the first option", "the third choice") in explanation text or hints. Options may be reordered after generation, so letter references will be wrong. Instead, paraphrase the option content: "The option about [key phrase]..." or "The correct answer identifies that..." This applies to the explanation field and all hint fields.
 9. **Em dashes**: NEVER use the em dash character (\u2014) anywhere in generated content. Use commas for non-essential clauses, parentheses for asides or supplementary detail, colons to introduce explanations or lists, semicolons between independent clauses, or periods for full stops. This applies to ALL text fields: slide content, quiz questions and explanations, flashcard text, essay prompts, hints, speaker notes, and tutor prompts.
 10. **"Imagine you are..." without stakes**: When creating scenarios, give specific names, numbers, and consequences. Not "Imagine you have a portfolio" but "Sarah has $50,000 in three stocks and just read that one of the companies is being investigated for fraud. She needs to decide by market close tomorrow." Specificity is what makes scenarios feel real and worth solving.
+11. **Non-educational content**: If the source text for a section contains legal disclaimers, warranty language, terms of use, copyright notices, regulatory boilerplate, study guide instructions ("how to use this book"), curriculum navigation tips, or other meta-content about the publication itself, do NOT create teaching content from it. These are not learning material. Focus only on the actual subject matter.
 
 ## Available Element Types (with fixed Bloom levels)
 
 1. **section_intro** [understand]: A 2-3 sentence motivational introduction. ALWAYS the FIRST element in every section. Frames WHY this section matters and what the learner will gain. Derive it from the section's learning objectives but present it as compelling narrative prose, not a bullet list. Keep it short and energizing.
-2. **slide** [understand]: Explanatory content. This is where the teaching happens. Use narrative prose, analogies, worked examples, stories. Each slide should focus on ONE atomic idea (80-200 words). Split multi-idea explanations across multiple slides with a practice element between them.
+2. **slide** [understand]: Explanatory content. This is where the teaching happens. Use narrative prose, analogies, worked examples, stories. Each slide should focus on ONE atomic idea (80-200 words). The curriculum planner has already split concepts into single-concept sections, so one slide is sufficient.
 3. **mermaid** [understand]: A diagram (flowchart, sequence, state, mindmap, etc.) rendered via Mermaid.js. Use for: processes/workflows (flowchart), time-ordered interactions (sequence), state transitions (state), topic hierarchies (mindmap). The diagram_code field must contain valid Mermaid syntax. Keep diagrams focused: 5-12 nodes maximum.
 4. **quiz** [apply]: Multiple-choice questions that require APPLYING knowledge, not just recalling definitions. Must have plausible distractors with explanations for EVERY option (correct and incorrect).
 5. **matching** [apply]: Pair related items. Use for concept-to-example pairs, not just term-to-definition.
@@ -188,7 +188,13 @@ You MUST AVOID these common LLM failure modes:
 11. **flashcard** [remember]: Key concept pairs for DELAYED REINFORCEMENT. Flashcards test recall of concepts taught in the slides and diagrams ABOVE; they do NOT introduce new terms. Place them AFTER teaching and practice elements. Front should be a question or prompt, back should be a concise answer.
 12. **error_detection** [evaluate]: An error detection exercise where the learner identifies mistakes in given statements. Present 2-4 plausible-looking statements that each contain a specific error. The learner must spot the error and explain why it's wrong. Use when the section covers concepts with common misconceptions or subtle distinctions.
 13. **worked_example** [apply]: A Brilliant-style interactive worked example. Presents a problem, challenges the learner to try it first (multiple choice), then reveals the step-by-step solution with progressive disclosure (click to reveal each step). Each step has a title, the operation performed, and a "why" annotation explaining the reasoning. Use for formulas, calculations, proofs, procedures, and multi-step problem solving. Include 3-7 steps. The challenge question should have 3-5 plausible options.
-14. **interactive_essay** [evaluate]: A self-explanation exercise. Can be STATIC (single prompt, self-scored rubric) or DYNAMIC (multiple prompts with AI tutor).
+14. **far_transfer** [analyze]: A cross-domain transfer exercise. Present a principle the learner just studied, then describe a scenario in a MAXIMALLY DISTANT domain where the same structural pattern applies. The learner must recognize the shared abstract structure. Rules:
+   - The transfer domain must be DISTANT from the source, not adjacent. Biology to Economics: YES. Biology to Medicine: NO. Finance to Cooking: YES. Finance to Accounting: NO.
+   - The scenario must be self-contained: the learner needs NO expertise in the transfer domain.
+   - Wrong answers must represent REAL structural confusions (e.g., mistaking feedback for feedforward, confusing correlation with causation).
+   - The bridge_insight must name the shared abstract pattern explicitly: what structural property is identical in both domains?
+   - source_principle must be a concise, domain-neutral statement of the transferable principle.
+15. **interactive_essay** [evaluate]: A self-explanation exercise. Can be STATIC (single prompt, self-scored rubric) or DYNAMIC (multiple prompts with AI tutor).
    - **Static mode**: A single prompt asking the learner to explain a concept. Include key_points as a self-assessment checklist and example_response as a model answer. Leave tutor_system_prompt as empty string "". Use at the end of sections (max 2 per section).
    - **Dynamic mode**: A chapter-end checkpoint with 2-4 prompts testing core concepts. Include tutor_system_prompt for the LLM evaluator. Use ONLY at the end of chapters.
 
@@ -279,41 +285,59 @@ Each section teaches ONE concept. The structure is always:
 
   section_intro                                    -- 2-3 sentences: why this matters
   slide (the concept, fully explained)             -- TEACH: 80-200 words, narrative prose
-  exercise 1 (e.g. fill_in_the_blank)             -- DRILL: test the mechanism
-  exercise 2 (e.g. matching)                       -- DRILL: test connections
-  exercise 3 (e.g. error_detection, if hard concept) -- DRILL: test misconceptions
+  [mermaid]                                        -- OPTIONAL: diagram for processes/flows/hierarchies
+  exercise 1 (assigned type, easy)                 -- DRILL: accessible entry point
+  exercise 2 (assigned type, easy/medium)          -- DRILL: apply in context
+  exercise 3 (assigned type, medium)               -- DRILL: test connections
+  exercise 4 (assigned type, medium/hard)          -- DRILL: misconceptions / edge cases
+  [error_detection]                                -- OPTIONAL: spot-the-error reveal (passive)
   flashcard (key term)                             -- REINFORCE: recall
   flashcard (key formula or principle)             -- REINFORCE: recall
 
 That is the ENTIRE section. ONE slide, not two, not five. The slide must be self-contained: analogy, explanation, contrast, worked example if needed, all in 80-200 words. If you cannot fit it in 200 words, you are trying to teach too much. The curriculum planner has already split concepts; your job is to teach ONE concept brilliantly, then drill it.
 
 CRITICAL RULES:
-- Generate EXACTLY 1 slide (or 1 worked_example) per section. A mermaid diagram may accompany it if the concept is a process, but it does not replace the slide.
-- Generate 2-3 exercises IMMEDIATELY after the slide. The learner must prove understanding before moving on.
-- NEVER generate multiple slides in a row. NEVER generate a section with 0 exercises.
-- Keep the slide SHORT: 80-200 words. Brilliant-style, not textbook-style.
-- VARY exercise types: NEVER use the same exercise type twice in a section. Rotate through: matching, ordering, fill_in_the_blank, categorization, analogy, error_detection, quiz. The MCQ quiz is the LEAST interesting exercise type; prefer the others. Use AT MOST one quiz element per section.
+- Generate EXACTLY 1 slide (or 1 worked_example) per section. Keep the slide SHORT: 80-200 words. Brilliant-style, not textbook-style.
+- Include a mermaid diagram when the concept involves a process, workflow, hierarchy, comparison, or causal chain. If the concept is purely definitional, skip it. The mermaid does NOT replace the slide.
+- Generate 4+ exercises IMMEDIATELY after the slide/mermaid. The exact exercise types are ASSIGNED per-section in the "Exercise Types for This Section" block below — follow that assignment exactly. Each exercise MUST set its difficulty field.
+- NEVER generate multiple slides in a row. NEVER generate a section with fewer than 4 exercises.
+- error_detection (spot-the-error) is a PASSIVE reveal element — the learner clicks to reveal the answer, not a true interactive exercise. Place it AFTER exercises if a common misconception is worth highlighting. It does NOT count toward the exercise minimum.
+- VARY exercise types: NEVER use the same exercise type twice in a section. Use AT MOST one quiz (MCQ) element per section.
 
 Bookend elements (placed automatically, generate them in any position):
 - **section_intro**: ALWAYS first. Motivational framing.
 - **concept_map**: Near the end (synthesis of relationships).
-- **flashcard**: After all cycles (delayed reinforcement, NOT new terms).
+- **flashcard**: After all exercises (delayed reinforcement, NOT new terms). Generate exactly 2.
 - **interactive_essay**: ALWAYS last (culminating assessment).
 
 ## Exercise Composition Requirements
 
-Each section has 1 slide and 2-3 exercises. Scale exercise count to concept difficulty:
-- Straightforward concept (a definition, a simple classification): 2 exercises
-- Moderate concept (a formula, a process, a comparison): 2-3 exercises
-- Difficult or pivotal concept (a multi-step mechanism, a subtle distinction, a common source of errors): 3 exercises
+Each section has 1 slide and 4+ exercises with ASCENDING difficulty. The exercise types for each section are pre-assigned — see the "Exercise Types for This Section" block in the per-section prompt. Follow that assignment exactly.
 
-Exercise type variety is MANDATORY:
-- NEVER generate two exercises of the same type in a section
-- Use AT MOST one quiz (MCQ) element per section. MCQs are overused and boring. Prefer: matching, ordering, fill_in_the_blank, categorization, analogy, error_detection
-- If generating 3 exercises, use 3 DIFFERENT types
+Scale exercise count to concept difficulty:
+- Straightforward concept (a definition, a simple classification): 4 exercises
+- Moderate concept (a formula, a process, a comparison): 4-5 exercises
+- Difficult or pivotal concept (a multi-step mechanism, a subtle distinction, a common source of errors): 5 exercises
 
-At least 2 of every 3 practice exercises MUST be Bloom level 3+ (apply, analyze, evaluate).
-Maximum 1 exercise at Bloom level 2 (understand) per section.
+Exercises must include a mix of difficulties: at least 1 easy exercise (entry point) and at least 1 hard exercise (challenge). The progression from easy to hard is what makes learning stick — start accessible, end demanding.
+
+Difficulty is INDEPENDENT of exercise type. A matching exercise can be easy (match terms to definitions) or hard (match subtle distinctions). A quiz can be easy (direct recall) or hard (requires eliminating plausible distractors). An ordering exercise can be easy (obvious sequence) or hard (subtle causal chain). Set difficulty based on content complexity, not exercise format.
+
+## Exercise Difficulty
+
+Each exercise element has a `difficulty` field: `"easy"`, `"medium"`, or `"hard"`.
+Unlike bloom_level (which is fixed per element type), YOU choose the difficulty.
+
+Exercises MUST progress from easy to hard within each section:
+- **Exercise 1 (easy)**: Accessible entry point. Test the most direct application of the concept. The learner should succeed if they understood the slide.
+- **Exercise 2 (easy or medium)**: Apply in a slightly different context or angle. Still approachable.
+- **Exercise 3 (medium)**: Test a connection, comparison, or non-obvious case. Requires thinking beyond the slide.
+- **Exercise 4 (medium or hard)**: Target a common misconception, edge case, or multi-step application.
+- **Exercise 5 (hard)**: Analysis, synthesis across concepts, or tricky edge cases. Should make the learner think hard.
+
+Difficulty is INDEPENDENT of exercise type. A matching exercise can be easy (match terms to definitions) or hard (match subtle distinctions requiring deep understanding). A quiz can be easy (direct application) or hard (requires eliminating plausible distractors through analysis).
+
+Set `difficulty` explicitly on EVERY exercise element. Do NOT leave it as the default.
 
 ### Flashcard Scope (Pan & Rickard 2018)
 Flashcards are EXCLUSIVELY for:
@@ -336,7 +360,7 @@ If it requires thinking beyond recall, it is an EXERCISE, not a flashcard. Confl
 
 ## Element Difficulty Progression
 
-Each element type has a fixed cognitive level. Do NOT set bloom_level yourself; it is assigned automatically. Instead, focus on generating the right MIX of element types:
+Each element type has a fixed cognitive level (bloom_level). Do NOT set bloom_level yourself; it is assigned automatically. Instead, focus on choosing the right exercise types and setting the `difficulty` field (easy/medium/hard) on each exercise:
 
 - **section_intro** (understand): Motivational introduction derived from learning objectives.
 - **slide** (understand): Teaching content. Narrative prose, analogies, worked examples.
@@ -349,16 +373,17 @@ Each element type has a fixed cognitive level. Do NOT set bloom_level yourself; 
 - **analogy** (analyze): Complete analogies testing relational reasoning.
 - **concept_map** (apply): Relationships between 5+ concepts with labeled edges.
 - **flashcard** (remember): Delayed reinforcement of concepts from the slides above.
-- **error_detection** (evaluate): Identify and correct errors in given statements.
+- **error_detection** (evaluate): Passive spot-the-error reveal — learner clicks to see the answer. NOT an interactive exercise. Use to highlight common misconceptions after the exercise block.
 - **worked_example** (apply): Interactive step-by-step problem solving with try-it-first challenge.
 - **interactive_essay** (evaluate): Self-explanation (static) or chapter-end checkpoint (dynamic).
 
 Every section MUST contain:
 - Exactly 1 section_intro (always first)
 - Exactly 1 teaching element (slide or worked_example). ONE, not more.
-- 2-3 practice exercises (each a DIFFERENT type). No more than 1 quiz (MCQ).
-- 2-3 flashcards (recall reinforcement of key terms, definitions, and formulas only)
+- 4+ exercises using the ASSIGNED types (see per-section prompt). Each a DIFFERENT type, ascending difficulty.
+- Exactly 2 flashcards (recall reinforcement of key terms, definitions, and formulas only)
 - At most 2 interactive_essay elements (static mode, optional)
+- Optionally 1 error_detection (passive reveal, placed after exercises)
 
 ## Math Formatting
 
@@ -421,6 +446,7 @@ Return a JSON object with this exact structure:
     {
       "element_type": "quiz",
       "bloom_level": "apply",
+      "difficulty": "easy",
       "quiz": {
         "title": "Applying Diversification",
         "questions": [
@@ -439,6 +465,7 @@ Return a JSON object with this exact structure:
     {
       "element_type": "matching",
       "bloom_level": "apply",
+      "difficulty": "easy",
       "matching": {
         "title": "Match the Concept to its Real-World Example",
         "left_items": ["Concept A", "Concept B", "Concept C"],
@@ -449,6 +476,7 @@ Return a JSON object with this exact structure:
     {
       "element_type": "ordering",
       "bloom_level": "apply",
+      "difficulty": "medium",
       "ordering": {
         "title": "Order the Portfolio Construction Steps",
         "instruction": "Arrange these steps in the correct order for building a diversified portfolio.",
@@ -460,8 +488,9 @@ Return a JSON object with this exact structure:
     {
       "element_type": "fill_in_the_blank",
       "bloom_level": "analyze",
+      "difficulty": "medium",
       "fill_in_the_blank": {
-        "statement": "The _____ theorem states that the integral of f over [a,b] equals _____.",
+        "statement": "The [BLANK] theorem states that the integral of f over [a,b] equals [BLANK].",
         "answers": ["fundamental", "F(b) - F(a)"],
         "hint": "Think about the relationship between derivatives and integrals."
       }
@@ -469,6 +498,7 @@ Return a JSON object with this exact structure:
     {
       "element_type": "categorization",
       "bloom_level": "analyze",
+      "difficulty": "medium",
       "categorization": {
         "title": "Classify the Risk Types",
         "instruction": "Sort each example into the correct risk category.",
@@ -483,6 +513,7 @@ Return a JSON object with this exact structure:
     {
       "element_type": "analogy",
       "bloom_level": "analyze",
+      "difficulty": "hard",
       "analogy": {
         "title": "Analogy Challenge",
         "items": [
@@ -493,6 +524,41 @@ Return a JSON object with this exact structure:
             "explanation": "Just as a balanced diet combines different food groups to cover all nutritional needs, diversification combines different assets to cover different market conditions."
           }
         ]
+      }
+    },
+    {
+      "element_type": "worked_example",
+      "bloom_level": "apply",
+      "difficulty": "medium",
+      "worked_example": {
+        "title": "Calculating Portfolio Variance",
+        "problem_statement": "Given two assets with weights 60% and 40%, individual variances of 0.04 and 0.09, and a correlation of 0.3, calculate the portfolio variance.",
+        "challenge_question": "Before seeing the solution, estimate: will the portfolio variance be closer to 0.04, 0.05, or 0.06?",
+        "challenge_options": [
+          {"text": "Closer to 0.04"},
+          {"text": "Closer to 0.05"},
+          {"text": "Closer to 0.06"}
+        ],
+        "challenge_correct_index": 1,
+        "challenge_explanation": "Diversification reduces variance below the weighted average of individual variances.",
+        "steps": [
+          {
+            "title": "Set up the formula",
+            "content": "$\\sigma_p^2 = w_1^2 \\sigma_1^2 + w_2^2 \\sigma_2^2 + 2 w_1 w_2 \\rho \\sigma_1 \\sigma_2$",
+            "why": "Portfolio variance accounts for both individual risks and how the assets move together (correlation)."
+          },
+          {
+            "title": "Plug in values",
+            "content": "$= (0.6)^2(0.04) + (0.4)^2(0.09) + 2(0.6)(0.4)(0.3)(0.2)(0.3) = 0.0144 + 0.0144 + 0.00432$",
+            "why": "Each term represents: risk from asset 1, risk from asset 2, and the interaction between them."
+          },
+          {
+            "title": "Compute the result",
+            "content": "$\\sigma_p^2 = 0.0331$",
+            "why": "The result (0.033) is less than both individual variances, showing the diversification benefit."
+          }
+        ],
+        "final_answer": "The portfolio variance is 0.0331, significantly lower than either individual asset variance due to imperfect correlation."
       }
     },
     {
@@ -523,6 +589,7 @@ Return a JSON object with this exact structure:
     {
       "element_type": "error_detection",
       "bloom_level": "evaluate",
+      "difficulty": "hard",
       "error_detection": {
         "title": "Spot the Error",
         "instruction": "Each statement below contains an error. Identify what's wrong and why.",
@@ -881,12 +948,12 @@ def _build_focus_block(focus_concepts: list[str] | None) -> str:
         f"Generate a COMPACT unit with exactly one teach-drill cycle:\n"
         f"- 1 section_intro\n"
         f"- 1 slide covering {'this concept' if n == 1 else 'these concepts together'}\n"
-        f"- 2-3 exercises drilling from different angles\n"
+        f"- 4-5 exercises drilling from different angles (easy → hard)\n"
         f"- 2-3 flashcards for recall\n\n"
-        f"That means roughly 6-8 elements total.\n\n"
+        f"That means roughly 8-10 elements total.\n\n"
         f"Do NOT teach or test concepts outside this focus set, even if they appear "
         f"in the source text. Other concepts are covered in adjacent learning units. "
-        f"Keep the unit tight: a learner should complete it in 5-8 minutes."
+        f"Keep the unit tight: a learner should complete it in 5-10 minutes."
     )
 
 
@@ -962,6 +1029,37 @@ def _build_key_terms_block(key_terms: Sequence[str] | None) -> str:
     )
 
 
+# Difficulty labels assigned by position within the exercise sequence.
+_POSITION_DIFFICULTY: list[str] = [
+    "easy", "easy or medium", "medium", "medium or hard", "hard",
+]
+
+
+def _build_exercise_assignment_block(exercise_types: Sequence[str] | None) -> str:
+    """Build a mandatory exercise type assignment block for the prompt.
+
+    When exercise_types is provided (Python-side randomization), the LLM is
+    told exactly which exercise types to use and in what order. This eliminates
+    the near-deterministic exercise selection that causes repetitive sequences.
+    """
+    if not exercise_types:
+        return ""
+    lines = []
+    for i, etype in enumerate(exercise_types):
+        difficulty = _POSITION_DIFFICULTY[i] if i < len(_POSITION_DIFFICULTY) else "hard"
+        lines.append(f"  {i + 1}. {etype} ({difficulty})")
+    return (
+        "\n\n### Exercise Types for This Section (MANDATORY)\n"
+        "Generate exercises using EXACTLY these types in this order:\n"
+        + "\n".join(lines)
+        + "\n\nYou MUST use ALL listed types. Do NOT substitute other types. "
+        "Do NOT skip any. The difficulty label indicates the target range — "
+        "set the `difficulty` field on each exercise accordingly.\n"
+        "You may optionally add an error_detection element (spot-the-error reveal) "
+        "after the exercises if a common misconception is worth highlighting."
+    )
+
+
 # ── Main prompt builder ──────────────────────────────────────────────────────
 
 
@@ -988,39 +1086,9 @@ def build_section_prompt(
     images: Sequence | None = None,
     supplementary_context: str | None = None,
     key_terms: Sequence[str] | None = None,
+    exercise_types: Sequence[str] | None = None,
 ) -> str:
-    """Build the user prompt for transforming a single section.
-
-    Assembles context blocks (media, prior sections, Bloom's level, concepts,
-    characterization, reinforcement targets, etc.) into a structured prompt
-    for the LLM content designer.
-
-    Args:
-        section_title: Title of the section being transformed.
-        section_text: Full extracted text of the section.
-        chapter_title: Parent chapter title for context.
-        image_count: Number of images in this section.
-        table_count: Number of tables in this section.
-        template: Content template to use (from TEMPLATE_DESCRIPTIONS).
-        source_pages: (start_page, end_page) for source attribution.
-        prior_sections: Titles of previously covered sections for cross-refs.
-        learning_objectives: From curriculum planner.
-        bloom_target: Primary Bloom's taxonomy level.
-        section_concepts: ConceptEntry objects for this section.
-        prior_concepts: Concepts the learner already knows.
-        section_characterization: SectionCharacterization from deep reading.
-        reinforcement_targets: Phase 1 targets exercises MUST test.
-        module_summary: Module-level context string.
-        section_rationale: Why this template was chosen.
-        focus_concepts: Concept names to constrain output to.
-        document_type: Document type hint for prompt tuning.
-        tables: Table objects from extraction.
-        images: ImageRef objects from extraction.
-        key_terms: Key vocabulary terms from pre-analysis.
-
-    Returns:
-        Formatted user prompt string.
-    """
+    """Build the user prompt for transforming a single section."""
     truncated_text = _smart_truncate(section_text, MAX_TEXT_LENGTH)
     media_line = _build_media_block(image_count, table_count)
     template_desc = TEMPLATE_DESCRIPTIONS.get(template, TEMPLATE_DESCRIPTIONS["analogy_first"])
@@ -1046,6 +1114,7 @@ def build_section_prompt(
         _build_prior_concepts_block(prior_concepts),
         _build_characterization_block(section_characterization),
         _build_targets_block(reinforcement_targets),
+        _build_exercise_assignment_block(exercise_types),
         doc_type_block,
         module_summary_block,
         rationale_block,

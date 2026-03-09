@@ -25,6 +25,9 @@ test = [
 embeddings = [
     "sentence-transformers>=3.0",
 ]
+marker = [
+    "marker-pdf>=1.0.0",
+]
 
 [project.scripts]
 learningxp = "src.pipeline:main"

@@ -245,7 +245,7 @@ window.__lxpToggleTheme = function() {
     function itemPriority(entry) {
         var concepts = entry.concepts;
         var minPriority = 3;
-        var hasHypercorrections = false;
+        var hasMiscalibration = false;
         concepts.forEach(function(c) {
             var cm = conceptMastery[c];
             if (cm) {
@@ -253,10 +253,13 @@ window.__lxpToggleTheme = function() {
                         cm.mastery === 'new' ? 1 :
                         cm.mastery === 'progressing' ? 2 : 3;
                 if (p < minPriority) minPriority = p;
-                if (cm.hypercorrections > 0) hasHypercorrections = true;
+                // Boost priority for miscalibrated concepts
+                var sureWrong = cm.sure_wrong || cm.hypercorrections || 0;
+                var unsureCorrect = cm.unsure_correct || 0;
+                if (sureWrong > 0 || unsureCorrect > 0) hasMiscalibration = true;
             }
         });
-        if (hasHypercorrections && minPriority > 0) minPriority -= 0.5;
+        if (hasMiscalibration && minPriority > 0) minPriority -= 0.5;
         return minPriority;
     }
 

@@ -1,6 +1,6 @@
 <span class="element-badge slide-badge">Slide</span>
 {% if element.bloom_level %}<span class="bloom-badge bloom-{{ element.bloom_level }}">{{ element.bloom_level }}</span>{% endif %}
-<h1>{{ element.slide.title }}</h1>
+<h1>{{ element.slide.title|math }}</h1>
 <div class="slide-content">
     {{ element.slide.content_html|safe }}
 </div>

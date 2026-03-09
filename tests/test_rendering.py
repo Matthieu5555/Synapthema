@@ -11,12 +11,14 @@ import pytest
 
 from src.rendering.html_generator import (
     RENDERERS,
+    RenderContext,
     _deduplicate_math,
     _derive_course_title,
     _element_id,
     _fitb_interactive_answer_indices,
     _generate_chapter_colors,
     _load_course_meta,
+    _make_jinja_env,
     _markdown_to_html,
     _markdown_to_html_inline,
     _prepare_graph_data,
@@ -27,6 +29,7 @@ from src.rendering.html_generator import (
     _to_katex_delimiters,
     _write_course_meta,
     _render_course,
+    render_course,
 )
 from src.transformation.analysis_types import (
     ChapterAnalysis,
@@ -130,13 +133,13 @@ class TestRenderFillBlanks:
     """Tests for fill-in-the-blank placeholder replacement."""
 
     def test_single_blank(self) -> None:
-        result = _render_fill_blanks("The _____ is blue.")
+        result = _render_fill_blanks("The [BLANK] is blue.")
         assert '<input type="text"' in result
         assert 'data-blank-index="0"' in result
-        assert "_____" not in result
+        assert "[BLANK]" not in result
 
     def test_multiple_blanks(self) -> None:
-        result = _render_fill_blanks("_____ and _____")
+        result = _render_fill_blanks("[BLANK] and [BLANK]")
         assert 'data-blank-index="0"' in result
         assert 'data-blank-index="1"' in result
 
@@ -144,7 +147,8 @@ class TestRenderFillBlanks:
         text = "No blanks here."
         assert _render_fill_blanks(text) == text
 
-    def test_varying_underscore_lengths(self) -> None:
+    def test_legacy_underscore_markers(self) -> None:
+        """Legacy _____ markers are normalised to [BLANK] for backward compat."""
         result = _render_fill_blanks("___ and ________")
         assert result.count("<input") == 2
 
@@ -218,7 +222,7 @@ class TestRenderCourse:
             FillInBlankElement(
                 bloom_level="apply",
                 fill_in_the_blank=FillInTheBlank(
-                    statement="The _____ theorem.",
+                    statement="The [BLANK] theorem.",
                     answers=["fundamental"],
                     hint="Think about calculus.",
                 ),
@@ -649,7 +653,7 @@ class TestRenderCourse:
         assert "lxp_" in chapter_html
 
     def test_autoescape_prevents_xss(self, tmp_path: Path) -> None:
-        """User-controlled strings with HTML should be escaped in the output."""
+        """User-controlled strings with HTML should be sanitized in the output."""
         xss_title = '<img src=x onerror="alert(1)">'
         section = TrainingSection(
             title="Safe Section",
@@ -673,11 +677,10 @@ class TestRenderCourse:
 
         chapter_html = (output_dir / "chapter_01.html").read_text(encoding="utf-8")
 
-        # The raw <img> tag from the slide title should be escaped
+        # The raw XSS payload must not survive into the output
         assert xss_title not in chapter_html
+        # The event handler must be stripped (via sanitization or escaping)
         assert 'onerror="alert' not in chapter_html
-        # The escaped version should be present instead
-        assert "&lt;img" in chapter_html
 
     def test_elements_have_deterministic_ids(self, tmp_path: Path) -> None:
         """Each element should have a data-element-id attribute in HTML."""
@@ -1214,6 +1217,23 @@ class TestCurrencyLatexInteraction:
         assert "&#36;50" in result
         assert "&#36;1,000" in result
 
+    def test_currency_before_math_with_caret(self) -> None:
+        """Currency $1 before a math expression $1/(1+r)^n$ must not break pairing."""
+        text = (
+            "that $1 is worth less than $1 today. "
+            "The DF would be $1 / (1 + 0.07)^1 = 0.9346$. "
+            "This means that $1 received is equivalent to $0.9346$ today."
+        )
+        result = _markdown_to_html(text)
+        # Math expression should render with KaTeX delimiters
+        assert r"\(1 / (1 + 0.07)^1 = 0.9346\)" in result
+        # Currency $1 should be entity-escaped
+        assert "&#36;1 is worth" in result
+        assert "&#36;1 today" in result
+        assert "&#36;1 received" in result
+        # The sentence should NOT be inside \( \) delimiters
+        assert r"\(." not in result  # no orphaned \( after period
+
     def test_fix_currency_in_braces_function(self) -> None:
         from src.rendering.html_generator import _fix_currency_in_latex_braces
 
@@ -1288,41 +1308,41 @@ class TestRenderFitbStatement:
     """Tests for LaTeX-aware FITB statement rendering."""
 
     def test_blanks_outside_latex_become_inputs(self) -> None:
-        result = _render_fitb_statement("The _____ theorem.")
+        result = _render_fitb_statement("The [BLANK] theorem.")
         assert '<input type="text"' in result
-        assert "_____" not in result
+        assert "[BLANK]" not in result
 
     def test_blanks_inside_latex_become_katex_markers(self) -> None:
-        result = _render_fitb_statement(r"$\Delta z \sim N(0, _____) $")
+        result = _render_fitb_statement(r"$\Delta z \sim N(0, [BLANK]) $")
         assert "<input" not in result
         assert r"\underline" in result
         assert r"\hspace{3em}" in result
 
     def test_mixed_blanks_inside_and_outside_latex(self) -> None:
         result = _render_fitb_statement(
-            r"The _____ is $\Delta z \sim N(0, _____)$"
+            r"The [BLANK] is $\Delta z \sim N(0, [BLANK])$"
         )
         assert "<input" in result  # outside blank
         assert r"\underline" in result  # inside-latex blank
 
     def test_markdown_preserved_in_fitb(self) -> None:
-        result = _render_fitb_statement("The **important** _____ value.")
+        result = _render_fitb_statement("The **important** [BLANK] value.")
         assert "<strong>important</strong>" in result
         assert "<input" in result
 
     def test_currency_in_fitb(self) -> None:
-        result = _render_fitb_statement("The price is $50 and _____ dollars.")
+        result = _render_fitb_statement("The price is $50 and [BLANK] dollars.")
         assert "&#36;50" in result
         assert "<input" in result
 
     def test_multiple_blanks_indexing(self) -> None:
-        result = _render_fitb_statement("_____ and _____")
+        result = _render_fitb_statement("[BLANK] and [BLANK]")
         assert 'data-blank-index="0"' in result
         assert 'data-blank-index="1"' in result
 
     def test_hint_button_onclick_preserved(self) -> None:
         """Hint buttons must keep their onclick handler after sanitization."""
-        result = _render_fitb_statement("The _____ theorem.", answers=["central"])
+        result = _render_fitb_statement("The [BLANK] theorem.", answers=["central"])
         assert 'onclick="revealNextLetters' in result
         assert 'class="hint-letter-btn fitb-hint-letter-btn"' in result
 
@@ -1331,12 +1351,12 @@ class TestFitbInteractiveAnswerIndices:
     """Tests for identifying which FITB blanks are interactive."""
 
     def test_all_outside_latex(self) -> None:
-        indices = _fitb_interactive_answer_indices("_____ and _____")
+        indices = _fitb_interactive_answer_indices("[BLANK] and [BLANK]")
         assert indices == [0, 1]
 
     def test_blank_inside_latex_excluded(self) -> None:
         indices = _fitb_interactive_answer_indices(
-            r"The _____ is $N(0, _____)$"
+            r"The [BLANK] is $N(0, [BLANK])$"
         )
         assert indices == [0]
 
@@ -1345,7 +1365,7 @@ class TestFitbInteractiveAnswerIndices:
         assert indices == []
 
     def test_all_inside_latex(self) -> None:
-        indices = _fitb_interactive_answer_indices(r"$_____ + _____$")
+        indices = _fitb_interactive_answer_indices(r"$[BLANK] + [BLANK]$")
         assert indices == []
 
 
@@ -1450,7 +1470,7 @@ class TestMarkdownInAllElements:
                         FillInBlankElement(
                             bloom_level="apply",
                             fill_in_the_blank=FillInTheBlank(
-                                statement="Buy for $90 and the _____ is $100.",
+                                statement="Buy for $90 and the [BLANK] is $100.",
                                 answers=["price"],
                                 hint="Think about it.",
                             ),
@@ -1574,7 +1594,8 @@ class TestElementRendererDispatch:
         expected = {
             "section_intro", "slide", "quiz", "flashcard", "fill_in_the_blank",
             "matching", "ordering", "categorization", "error_detection",
-            "analogy", "mermaid", "concept_map", "worked_example", "interactive_essay",
+            "analogy", "far_transfer", "mermaid", "concept_map", "worked_example",
+            "interactive_essay", "interactive_visualization",
         }
         assert set(RENDERERS.keys()) == expected
 
@@ -1583,18 +1604,12 @@ class TestElementRendererDispatch:
             assert callable(renderer), f"RENDERERS['{etype}'] is not callable"
 
     def test_unknown_element_type_returns_empty(self) -> None:
-        from jinja2 import Environment, FileSystemLoader
-        env = Environment(loader=FileSystemLoader(
-            str(Path(__file__).parent.parent / "src" / "rendering" / "templates")
-        ))
+        env = _make_jinja_env()
         result = _render_element({"element_type": "nonexistent"}, env)
         assert result == ""
 
     def test_render_slide_returns_html(self) -> None:
-        from jinja2 import Environment, FileSystemLoader
-        env = Environment(loader=FileSystemLoader(
-            str(Path(__file__).parent.parent / "src" / "rendering" / "templates")
-        ))
+        env = _make_jinja_env()
         data = {
             "element_type": "slide",
             "bloom_level": "understand",
@@ -1610,3 +1625,147 @@ class TestElementRendererDispatch:
         assert "<p>Hello</p>" in html
         assert "slide-badge" in html
         assert "bloom-understand" in html
+
+    def test_math_filter_renders_latex_in_title(self) -> None:
+        """Titles with LaTeX math should produce KaTeX delimiters, not escaped $."""
+        env = _make_jinja_env()
+        data = {
+            "element_type": "slide",
+            "bloom_level": "understand",
+            "slide": {
+                "title": "Forward Price $F_{A,B-A}$",
+                "content_html": "<p>Content</p>",
+                "image_data": None,
+                "source_pages": "",
+            },
+        }
+        html = _render_element(data, env)
+        # LaTeX should be converted to KaTeX delimiters, not HTML-escaped
+        assert "&#36;" not in html or "Forward Price" in html
+        assert r"\(F_{A,B-A}\)" in html
+        assert "Forward Price" in html
+
+
+# ── Integration test: render_course with RenderContext ──────────────────────
+
+
+class TestRenderCoursePublicAPI:
+    """Integration tests using the public render_course() + RenderContext API.
+
+    These tests provide a safety net for refactoring the renderer — if
+    the output changes unexpectedly, at least one of these will fail.
+    """
+
+    def _make_full_module(self) -> TrainingModule:
+        """Build a realistic TrainingModule with multiple sections."""
+        section_a = TrainingSection(
+            title="Fundamentals",
+            elements=[
+                SectionIntroElement(
+                    bloom_level="understand",
+                    section_intro=SectionIntro(title="Overview", content="Introduction to fundamentals."),
+                ),
+                SlideElement(
+                    bloom_level="understand",
+                    slide=Slide(title="Core Concepts", content="**Key** concepts explained."),
+                ),
+                QuizElement(
+                    bloom_level="apply",
+                    quiz=Quiz(
+                        title="Quick Check",
+                        questions=[
+                            QuizQuestion(question="1+1?", options=["1", "2", "3"], correct_index=1, explanation="Basic math."),
+                        ],
+                    ),
+                ),
+                FlashcardElement(bloom_level="remember", flashcard=Flashcard(front="Concept A", back="Definition of A")),
+            ],
+        )
+        section_b = TrainingSection(
+            title="Applications",
+            elements=[
+                SlideElement(
+                    bloom_level="understand",
+                    slide=Slide(title="Applied Methods", content="How to apply the concepts."),
+                ),
+                FillInBlankElement(
+                    bloom_level="apply",
+                    fill_in_the_blank=FillInTheBlank(statement="The [BLANK] principle.", answers=["fundamental"], hint="Think about basics."),
+                ),
+                MatchingElement(
+                    bloom_level="apply",
+                    matching=MatchingExercise(title="Match", left_items=["X", "Y"], right_items=["1", "2"]),
+                ),
+            ],
+        )
+        return TrainingModule(chapter_number=1, title="Test Module", sections=[section_a, section_b])
+
+    def test_render_course_produces_valid_output(self, tmp_path: Path) -> None:
+        """render_course() with RenderContext produces chapter + index HTML."""
+        module = self._make_full_module()
+        output_dir = tmp_path / "course-output"
+
+        ctx = RenderContext(embed_images=False, course_title="Integration Test Course")
+        index_path = render_course([module], output_dir, ctx)
+
+        assert index_path.exists()
+        assert (output_dir / "chapter_01.html").exists()
+
+        index_html = index_path.read_text(encoding="utf-8")
+        assert "Integration Test Course" in index_html
+        assert "chapter_01.html" in index_html
+
+        chapter_html = (output_dir / "chapter_01.html").read_text(encoding="utf-8")
+        assert "Fundamentals" in chapter_html
+        assert "Applications" in chapter_html
+        assert "Core Concepts" in chapter_html
+
+    def test_render_course_produces_review_pages(self, tmp_path: Path) -> None:
+        """render_course() should produce review.html and mixed_review.html."""
+        module = self._make_full_module()
+        output_dir = tmp_path / "course-output"
+
+        ctx = RenderContext(embed_images=False)
+        render_course([module], output_dir, ctx)
+
+        assert (output_dir / "review.html").exists()
+        assert (output_dir / "mixed_review.html").exists()
+
+    def test_render_course_multi_module(self, tmp_path: Path) -> None:
+        """Multiple modules produce multiple chapter files and correct navigation."""
+        m1 = TrainingModule(
+            chapter_number=1, title="Module One",
+            sections=[TrainingSection(title="S1", elements=[
+                SlideElement(bloom_level="understand", slide=Slide(title="Slide1", content="Content1")),
+            ])],
+        )
+        m2 = TrainingModule(
+            chapter_number=2, title="Module Two",
+            sections=[TrainingSection(title="S2", elements=[
+                SlideElement(bloom_level="understand", slide=Slide(title="Slide2", content="Content2")),
+            ])],
+        )
+        output_dir = tmp_path / "multi"
+        ctx = RenderContext(embed_images=False)
+        render_course([m1, m2], output_dir, ctx)
+
+        assert (output_dir / "chapter_01.html").exists()
+        assert (output_dir / "chapter_02.html").exists()
+
+        ch1 = (output_dir / "chapter_01.html").read_text(encoding="utf-8")
+        assert "chapter_02.html" in ch1  # next chapter link
+
+    def test_backward_compat_keyword_args(self, tmp_path: Path) -> None:
+        """render_course() still works with legacy keyword arguments."""
+        module = self._make_full_module()
+        output_dir = tmp_path / "legacy"
+
+        index_path = render_course(
+            [module], output_dir,
+            embed_images=False,
+            course_title="Legacy Title",
+        )
+
+        assert index_path.exists()
+        index_html = index_path.read_text(encoding="utf-8")
+        assert "Legacy Title" in index_html

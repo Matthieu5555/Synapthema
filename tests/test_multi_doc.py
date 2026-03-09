@@ -8,9 +8,10 @@ and backward compatibility with single-PDF mode.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TypeVar
 
 import pytest
+
+from tests.conftest import FailingLLMClient, MockLLMClient
 
 from src.config import Config, InputSource, _resolve_input_sources, _slugify_pdf_name
 from src.extraction.types import Book, Chapter, Section
@@ -23,8 +24,6 @@ from src.transformation.types import (
     ModuleBlueprint,
     SectionBlueprint,
 )
-
-T = TypeVar("T")
 
 
 # ── Test fixtures ─────────────────────────────────────────────────────────────
@@ -122,102 +121,73 @@ def _make_two_books() -> list[Book]:
     return [book_a, book_b]
 
 
-class MockMultiDocClient:
+def _multi_doc_blueprint() -> CurriculumBlueprint:
+    return CurriculumBlueprint(
+        course_title="Unified Widgets & Gadgets",
+        course_summary="A unified course covering widgets and gadgets.",
+        learner_journey="Foundations → Applications → Comparisons",
+        modules=[
+            ModuleBlueprint(
+                title="What are Widgets",
+                source_chapter_number=1,
+                source_book_index=0,
+                summary="Intro to widgets",
+                sections=[
+                    SectionBlueprint(
+                        title="Widget History",
+                        source_section_title="Widget History",
+                        source_book_index=0,
+                        template="narrative",
+                        bloom_target="understand",
+                    ),
+                ],
+            ),
+            ModuleBlueprint(
+                title="Gadget Fundamentals",
+                source_chapter_number=1,
+                source_book_index=1,
+                summary="Gadget basics",
+                sections=[
+                    SectionBlueprint(
+                        title="Gadget Theory",
+                        source_section_title="Gadget Theory",
+                        source_book_index=1,
+                        template="socratic",
+                        bloom_target="understand",
+                    ),
+                ],
+            ),
+            ModuleBlueprint(
+                title="Gadget Applications",
+                source_chapter_number=2,
+                source_book_index=1,
+                summary="Applied gadgets",
+                sections=[
+                    SectionBlueprint(
+                        title="Gadget vs Widget",
+                        source_section_title="Gadget vs Widget",
+                        source_book_index=1,
+                        template="compare_contrast",
+                        bloom_target="analyze",
+                    ),
+                ],
+            ),
+        ],
+    )
+
+
+class MockMultiDocClient(MockLLMClient):
     """Returns a multi-doc CurriculumBlueprint."""
 
     def __init__(self) -> None:
-        self._blueprint = CurriculumBlueprint(
-            course_title="Unified Widgets & Gadgets",
-            course_summary="A unified course covering widgets and gadgets.",
-            learner_journey="Foundations → Applications → Comparisons",
-            modules=[
-                ModuleBlueprint(
-                    title="What are Widgets",
-                    source_chapter_number=1,
-                    source_book_index=0,
-                    summary="Intro to widgets",
-                    sections=[
-                        SectionBlueprint(
-                            title="Widget History",
-                            source_section_title="Widget History",
-                            source_book_index=0,
-                            template="narrative",
-                            bloom_target="understand",
-                        ),
-                    ],
-                ),
-                ModuleBlueprint(
-                    title="Gadget Fundamentals",
-                    source_chapter_number=1,
-                    source_book_index=1,
-                    summary="Gadget basics",
-                    sections=[
-                        SectionBlueprint(
-                            title="Gadget Theory",
-                            source_section_title="Gadget Theory",
-                            source_book_index=1,
-                            template="socratic",
-                            bloom_target="understand",
-                        ),
-                    ],
-                ),
-                ModuleBlueprint(
-                    title="Gadget Applications",
-                    source_chapter_number=2,
-                    source_book_index=1,
-                    summary="Applied gadgets",
-                    sections=[
-                        SectionBlueprint(
-                            title="Gadget vs Widget",
-                            source_section_title="Gadget vs Widget",
-                            source_book_index=1,
-                            template="compare_contrast",
-                            bloom_target="analyze",
-                        ),
-                    ],
-                ),
-            ],
-        )
-        self.call_count = 0
-
-    def complete(self, system_prompt: str, user_prompt: str) -> str:
-        return "mock"
-
-    def complete_light(self, system_prompt: str, user_prompt: str) -> str:
-        return self.complete(system_prompt, user_prompt)
-
-    def complete_structured(
-        self, system_prompt: str, user_prompt: str, response_model: type[T]
-    ) -> T:
-        self.call_count += 1
-        return self._blueprint  # type: ignore[return-value]
-
-    def complete_structured_light(
-        self, system_prompt: str, user_prompt: str, response_model: type[T]
-    ) -> T:
-        return self.complete_structured(system_prompt, user_prompt, response_model)
+        super().__init__(structured_response=_multi_doc_blueprint())
 
 
-class FailingClient:
+class FailingClient(FailingLLMClient):
     """Always raises an error."""
 
-    def complete(self, system_prompt: str, user_prompt: str) -> str:
-        raise RuntimeError("fail")
-
-    def complete_light(self, system_prompt: str, user_prompt: str) -> str:
-        raise RuntimeError("fail")
-
-    def complete_structured(
-        self, system_prompt: str, user_prompt: str, response_model: type[T]
-    ) -> T:
-        from src.transformation.llm_client import LLMError
-        raise LLMError("Planning failed")
-
-    def complete_structured_light(
-        self, system_prompt: str, user_prompt: str, response_model: type[T]
-    ) -> T:
-        from src.transformation.llm_client import LLMError
-        raise LLMError("Planning failed")
+    def __init__(self) -> None:
+        super().__init__(message="Planning failed")
 
 
 # ── Tests: multi-doc curriculum planning ──────────────────────────────────────
@@ -361,10 +331,12 @@ class TestInputSourceConfig:
             llm_base_url="http://example.com",
             llm_model="test",
             llm_model_light="test",
+            llm_model_creative="test",
             llm_temperature=0.3,
             llm_max_tokens=8192,
             embed_images=True,
             vision_enabled=False,
+            viz_enabled=False,
             document_type="auto",
             max_concurrent_llm=4,
         )

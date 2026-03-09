@@ -15,9 +15,14 @@ a concrete class, and Pydantic auto-dispatches on the element_type field.
 
 from __future__ import annotations
 
-from typing import Annotated, Literal, TypedDict, Union
+import logging
+import re
+from collections import Counter
+from typing import Annotated, ClassVar, Literal, TypedDict, Union
 
 from pydantic import BaseModel, Discriminator, Field, model_validator
+
+logger = logging.getLogger(__name__)
 
 
 # ── Bloom's Taxonomy cognitive levels ────────────────────────────────────────
@@ -31,6 +36,23 @@ BloomLevel = Literal[
     "evaluate",     # Judge, justify, defend a position
     "create",       # Synthesize, design, construct
 ]
+
+# ── Exercise difficulty (LLM-chosen, independent of Bloom level) ─────────────
+# Unlike bloom_level (deterministic per element type), difficulty is chosen by
+# the LLM to create a progression within each section: easy → medium → hard.
+ExerciseDifficulty = Literal["easy", "medium", "hard"]
+DIFFICULTY_ORDER: dict[str, int] = {"easy": 1, "medium": 2, "hard": 3}
+
+# ── Exercise element types ───────────────────────────────────────────────────
+# Element types that count as practice exercises (used in validators).
+EXERCISE_ELEMENT_TYPES: frozenset[str] = frozenset({
+    "quiz", "fill_in_the_blank", "matching", "ordering",
+    "categorization", "analogy", "worked_example", "far_transfer",
+})
+
+# Element types that are passive/reveal-based (click to reveal, not interactive).
+# These are placed after exercises alongside flashcards, not counted as exercises.
+REVEAL_ELEMENT_TYPES: frozenset[str] = frozenset({"error_detection"})
 
 # ── Canonical element → Bloom mapping (source of truth) ─────────────────────
 # Element type determines bloom level deterministically. The LLM does NOT
@@ -50,6 +72,8 @@ ELEMENT_BLOOM_MAP: dict[str, BloomLevel] = {
     "error_detection": "evaluate",
     "interactive_essay": "evaluate",
     "worked_example": "apply",
+    "interactive_visualization": "apply",
+    "far_transfer": "analyze",
 }
 
 # ── Element role classification ──────────────────────────────────────────────
@@ -65,9 +89,11 @@ ELEMENT_ROLE: dict[str, str] = {
     "fill_in_the_blank": "practice",  # Core: LLM order preserved
     "categorization": "practice",   # Core: LLM order preserved
     "analogy": "practice",          # Core: LLM order preserved
-    "error_detection": "practice",  # Core: LLM order preserved
+    "error_detection": "reveal",    # Passive reveal — anchored after exercises
     "concept_map": "synthesis",     # Anchored near end
     "worked_example": "teach",      # Core: LLM order preserved
+    "interactive_visualization": "teach",  # Core: LLM order preserved
+    "far_transfer": "practice",     # Core: LLM order preserved
     "flashcard": "reinforce",       # Anchored after practice
     "interactive_essay": "assess",  # Always last
 }
@@ -80,12 +106,14 @@ ReinforcementAngle = Literal[
     "edge_case",      # When does X fail?
     "contrast",       # How is X different from Y?
     "consequence",    # What follows from X?
+    "far_transfer",   # Does the principle hold in a distant domain?
 ]
 
 # Element types suitable for assessment (used in reinforcement target suggestions).
 AssessmentElementType = Literal[
     "quiz", "flashcard", "fill_in_the_blank", "matching", "ordering",
     "categorization", "error_detection", "analogy", "interactive_essay",
+    "far_transfer",
 ]
 
 
@@ -166,7 +194,12 @@ class QuizQuestion(BaseModel):
     def _validate_indices(self) -> QuizQuestion:
         n = len(self.options)
         if self.correct_index < 0 or self.correct_index >= n:
-            self.correct_index = 0
+            raise ValueError(
+                f"correct_index {self.correct_index} is out of range for "
+                f"{n} options (valid range: 0 to {n - 1}). "
+                f"Set correct_index to the 0-based index of the correct answer."
+            )
+        # hint_eliminate_index is a UI hint — soft fix is acceptable
         if self.hint_eliminate_index >= 0:
             if self.hint_eliminate_index >= n:
                 self.hint_eliminate_index = -1
@@ -192,7 +225,7 @@ class Flashcard(BaseModel):
 class FillInTheBlank(BaseModel):
     """A fill-in-the-blank exercise testing recall in context."""
 
-    statement: str = Field(description="The statement with _____ marking each blank")
+    statement: str = Field(description="The statement with [BLANK] marking each blank")
     answers: list[str] = Field(description="Correct answers for each blank, in order", min_length=1)
     hint: str = Field(default="", description="Optional hint shown to the learner")
     hint_first_letter: bool = Field(
@@ -202,13 +235,14 @@ class FillInTheBlank(BaseModel):
 
     @model_validator(mode="after")
     def _validate_blank_count(self) -> FillInTheBlank:
-        blank_count = self.statement.count("_____")
+        blank_count = self.statement.count("[BLANK]")
         if blank_count > 0 and blank_count != len(self.answers):
-            # Pad or truncate answers to match blank count
-            if len(self.answers) < blank_count:
-                self.answers = self.answers + [""] * (blank_count - len(self.answers))
-            else:
-                self.answers = self.answers[:blank_count]
+            raise ValueError(
+                f"Number of blanks ({blank_count}) in statement does not match "
+                f"number of answers ({len(self.answers)}). "
+                f"Provide exactly {blank_count} answers to match the [BLANK] "
+                f"markers in the statement."
+            )
         return self
 
 
@@ -225,14 +259,18 @@ class MatchingExercise(BaseModel):
 
     @model_validator(mode="after")
     def _validate_matching_lengths(self) -> MatchingExercise:
-        # Truncate to the shorter list so pairs always align
-        min_len = min(len(self.left_items), len(self.right_items))
         if len(self.left_items) != len(self.right_items):
-            self.left_items = self.left_items[:min_len]
-            self.right_items = self.right_items[:min_len]
-        if self.pair_explanations and len(self.pair_explanations) != min_len:
-            # Pad with empty strings or truncate
-            self.pair_explanations = (self.pair_explanations + [""] * min_len)[:min_len]
+            raise ValueError(
+                f"left_items has {len(self.left_items)} items but right_items "
+                f"has {len(self.right_items)} items. They must have the same "
+                f"length so each left item maps to exactly one right item."
+            )
+        if self.pair_explanations and len(self.pair_explanations) != len(self.left_items):
+            raise ValueError(
+                f"pair_explanations has {len(self.pair_explanations)} entries "
+                f"but there are {len(self.left_items)} pairs. Provide exactly "
+                f"one explanation per pair, or omit pair_explanations entirely."
+            )
         return self
 
 
@@ -284,7 +322,13 @@ class ConceptMap(BaseModel):
     @model_validator(mode="after")
     def _validate_blank_edge_indices(self) -> ConceptMap:
         n = len(self.edges)
-        self.blank_edge_indices = [i for i in self.blank_edge_indices if 0 <= i < n]
+        invalid = [i for i in self.blank_edge_indices if i < 0 or i >= n]
+        if invalid:
+            raise ValueError(
+                f"blank_edge_indices contains invalid indices {invalid}. "
+                f"Valid range is 0 to {n - 1} (there are {n} edges). "
+                f"Only include indices that reference existing edges."
+            )
         return self
 
 
@@ -428,6 +472,57 @@ class AnalogyExercise(BaseModel):
     )
 
 
+# ── Far transfer exercise ──────────────────────────────────────────────────
+
+
+class FarTransferExercise(BaseModel):
+    """A far transfer exercise testing cross-domain application of a principle.
+
+    Presents a principle learned in one domain and asks the learner to
+    identify or apply the same structural pattern in a maximally distant domain.
+    """
+
+    source_principle: str = Field(
+        description="The underlying transferable principle (e.g., 'Negative feedback loops maintain equilibrium')"
+    )
+    source_domain: str = Field(
+        description="Domain where the principle was taught (e.g., 'Biology — thermoregulation')"
+    )
+    transfer_domain: str = Field(
+        description="A distant domain for transfer (e.g., 'Economics — monetary policy'). "
+        "Must NOT be adjacent to source_domain."
+    )
+    scenario: str = Field(
+        description="A self-contained scenario in the transfer domain. The learner should NOT "
+        "need expertise in this domain to understand the scenario."
+    )
+    question: str = Field(description="What the learner must identify or apply")
+    options: list[str] = Field(
+        description="Answer choices (3-5)", min_length=3, max_length=5
+    )
+    correct_index: int = Field(description="0-based index of the correct answer")
+    distractors_reasoning: list[str] = Field(
+        description="Why each wrong answer is plausible (same length as options minus 1)",
+    )
+    bridge_insight: str = Field(
+        description="The structural mapping connecting both domains — names the shared abstract pattern"
+    )
+    explanation: str = Field(
+        description="Full explanation shown after the learner answers"
+    )
+
+    @model_validator(mode="after")
+    def _validate_indices(self) -> "FarTransferExercise":
+        n = len(self.options)
+        if self.correct_index < 0 or self.correct_index >= n:
+            raise ValueError(
+                f"correct_index {self.correct_index} is out of range for "
+                f"{n} options (valid range: 0 to {n - 1}). "
+                f"Set correct_index to the 0-based index of the correct answer."
+            )
+        return self
+
+
 # ── Worked example (Brilliant-style) ─────────────────────────────────────────
 
 
@@ -518,6 +613,7 @@ class QuizElement(BaseModel):
 
     element_type: Literal["quiz"] = "quiz"
     bloom_level: BloomLevel = Field(description="Bloom's Taxonomy cognitive level")
+    difficulty: ExerciseDifficulty = Field(default="medium", description="Exercise difficulty: easy, medium, or hard")
     quiz: Quiz
 
 
@@ -534,6 +630,7 @@ class FillInBlankElement(BaseModel):
 
     element_type: Literal["fill_in_the_blank"] = "fill_in_the_blank"
     bloom_level: BloomLevel = Field(description="Bloom's Taxonomy cognitive level")
+    difficulty: ExerciseDifficulty = Field(default="medium", description="Exercise difficulty: easy, medium, or hard")
     fill_in_the_blank: FillInTheBlank
 
 
@@ -542,6 +639,7 @@ class MatchingElement(BaseModel):
 
     element_type: Literal["matching"] = "matching"
     bloom_level: BloomLevel = Field(description="Bloom's Taxonomy cognitive level")
+    difficulty: ExerciseDifficulty = Field(default="medium", description="Exercise difficulty: easy, medium, or hard")
     matching: MatchingExercise
 
 
@@ -566,6 +664,7 @@ class OrderingElement(BaseModel):
 
     element_type: Literal["ordering"] = "ordering"
     bloom_level: BloomLevel = Field(description="Bloom's Taxonomy cognitive level")
+    difficulty: ExerciseDifficulty = Field(default="medium", description="Exercise difficulty: easy, medium, or hard")
     ordering: OrderingExercise
 
 
@@ -574,6 +673,7 @@ class CategorizationElement(BaseModel):
 
     element_type: Literal["categorization"] = "categorization"
     bloom_level: BloomLevel = Field(description="Bloom's Taxonomy cognitive level")
+    difficulty: ExerciseDifficulty = Field(default="medium", description="Exercise difficulty: easy, medium, or hard")
     categorization: CategorizationExercise
 
 
@@ -582,6 +682,7 @@ class ErrorDetectionElement(BaseModel):
 
     element_type: Literal["error_detection"] = "error_detection"
     bloom_level: BloomLevel = Field(description="Bloom's Taxonomy cognitive level")
+    difficulty: ExerciseDifficulty = Field(default="medium", description="Exercise difficulty: easy, medium, or hard")
     error_detection: ErrorDetectionExercise
 
 
@@ -590,6 +691,7 @@ class AnalogyElement(BaseModel):
 
     element_type: Literal["analogy"] = "analogy"
     bloom_level: BloomLevel = Field(description="Bloom's Taxonomy cognitive level")
+    difficulty: ExerciseDifficulty = Field(default="medium", description="Exercise difficulty: easy, medium, or hard")
     analogy: AnalogyExercise
 
 
@@ -598,7 +700,17 @@ class WorkedExampleElement(BaseModel):
 
     element_type: Literal["worked_example"] = "worked_example"
     bloom_level: BloomLevel = Field(description="Bloom's Taxonomy cognitive level")
+    difficulty: ExerciseDifficulty = Field(default="medium", description="Exercise difficulty: easy, medium, or hard")
     worked_example: WorkedExample
+
+
+class FarTransferElement(BaseModel):
+    """A far transfer exercise training element."""
+
+    element_type: Literal["far_transfer"] = "far_transfer"
+    bloom_level: BloomLevel = Field(description="Bloom's Taxonomy cognitive level")
+    difficulty: ExerciseDifficulty = Field(default="medium", description="Exercise difficulty: easy, medium, or hard")
+    far_transfer: FarTransferExercise
 
 
 class InteractiveEssayElement(BaseModel):
@@ -609,12 +721,48 @@ class InteractiveEssayElement(BaseModel):
     interactive_essay: InteractiveEssay
 
 
+class InteractiveVisualization(BaseModel):
+    """LLM-generated interactive HTML visualization (explorable explanation).
+
+    Contains a complete self-contained HTML document with embedded JS that
+    renders an interactive parameter explorer, process stepper, or similar
+    visualization. Displayed in a sandboxed iframe.
+    """
+
+    title: str = Field(description="Short descriptive title for the visualization")
+    description: str = Field(
+        description="One-sentence description of what the learner explores",
+    )
+    html_code: str = Field(
+        description="Complete self-contained HTML with embedded JS (rendered in sandboxed iframe)",
+    )
+    viz_type: str = Field(
+        description="Visualization category: parameter_explorer, process_stepper, comparison, system_dynamics, data_explorer",
+    )
+    fallback_text: str = Field(
+        default="",
+        description="Plain-text description shown if visualization cannot render",
+    )
+
+
+class InteractiveVisualizationElement(BaseModel):
+    """An LLM-generated interactive visualization element."""
+
+    element_type: Literal["interactive_visualization"] = "interactive_visualization"
+    bloom_level: BloomLevel = Field(
+        default="apply",
+        description="Bloom's Taxonomy cognitive level",
+    )
+    interactive_visualization: InteractiveVisualization
+
+
 TrainingElement = Annotated[
     Union[
         SectionIntroElement, SlideElement, QuizElement, FlashcardElement,
         FillInBlankElement, MatchingElement, OrderingElement, MermaidElement,
         ConceptMapElement, CategorizationElement, ErrorDetectionElement,
-        AnalogyElement, WorkedExampleElement, InteractiveEssayElement,
+        AnalogyElement, WorkedExampleElement, FarTransferElement,
+        InteractiveEssayElement, InteractiveVisualizationElement,
     ],
     Discriminator("element_type"),
 ]
@@ -765,3 +913,243 @@ class CourseCapabilities(TypedDict):
     has_learning_objectives: bool
     chapter_count: int
     element_types_present: list[str]
+
+
+# ── LLM response schema ──────────────────────────────────────────────────────
+
+
+class SectionResponse(BaseModel):
+    """Pydantic model for the LLM's structured response.
+
+    Instructor validates the LLM output against this schema automatically.
+    If validation fails, Instructor re-prompts with the error for self-correction.
+
+    Validation thresholds can be overridden via class attributes before
+    construction (e.g. by a ContentProfile) without subclassing.
+    """
+
+    # ── Configurable validation thresholds (class-level) ─────────────────
+    # These ClassVars are set by content_designer.py from the active profile
+    # before each LLM call.  They are NOT Pydantic fields — ClassVar tells
+    # Pydantic to leave them alone.
+    _min_exercises: ClassVar[int] = 4
+    _min_exercise_types: ClassVar[int] = 3
+    _max_quizzes: ClassVar[int] = 1
+    _max_interactive_essays: ClassVar[int] = 2
+
+    elements: list[TrainingElement] = Field(
+        description="Ordered sequence of interactive training elements"
+    )
+
+    @model_validator(mode="after")
+    def fix_bloom_levels(self) -> "SectionResponse":
+        """Override LLM-chosen bloom levels with the canonical mapping."""
+        for element in self.elements:
+            correct = ELEMENT_BLOOM_MAP.get(element.element_type)
+            if correct and element.bloom_level != correct:
+                object.__setattr__(element, "bloom_level", correct)
+        return self
+
+    @model_validator(mode="after")
+    def enforce_element_distribution(self) -> "SectionResponse":
+        """Enforce 1-slide-then-drill section structure.
+
+        Architecture: each section = 1 concept = 1 slide + 4-5 exercises + 2-3 flashcards.
+        Hard errors catch truly bad outputs (triggers Instructor retry).
+        Warnings flag aspirational targets that are not worth a retry.
+        """
+        counts = Counter(e.element_type for e in self.elements)
+
+        teach_types = {"slide", "mermaid", "worked_example"}
+        # Exercise types (excludes flashcard and error_detection — both are passive)
+        exercise_types = {
+            "quiz", "fill_in_the_blank", "matching", "ordering",
+            "categorization", "analogy", "far_transfer",
+        }
+
+        teach_count = sum(counts.get(t, 0) for t in teach_types)
+        exercise_count = sum(counts.get(t, 0) for t in exercise_types)
+        flashcard_count = counts.get("flashcard", 0)
+
+        # Count distinct exercise types used
+        exercise_types_used = {
+            t for t in exercise_types if counts.get(t, 0) > 0
+        }
+
+        # ── Hard constraints (trigger Instructor retry) ──────────────────
+
+        if teach_count < 1:
+            raise ValueError("Section must contain at least 1 teaching element (slide/mermaid)")
+
+        # Max 1 slide per section. Auto-fix by merging extra slides into the
+        # first one (content the LLM split across slides is still valuable).
+        # worked_examples are structurally different, so extras are dropped.
+        slide_count = counts.get("slide", 0) + counts.get("worked_example", 0)
+        if slide_count > 1:
+            first_slide: SlideElement | None = None
+            kept: list[TrainingElement] = []
+            for el in self.elements:
+                if el.element_type == "slide":
+                    if first_slide is None:
+                        first_slide = el  # pyright: ignore[reportAssignmentType]
+                        kept.append(el)
+                    else:
+                        # Merge content into the first slide
+                        merged = first_slide.slide.content + "\n\n" + el.slide.content  # pyright: ignore[reportAttributeAccessIssue]
+                        object.__setattr__(first_slide.slide, "content", merged)  # pyright: ignore[reportAttributeAccessIssue]
+                        logger.info("Merged extra slide into first slide")
+                elif el.element_type == "worked_example":
+                    if first_slide is None:
+                        first_slide = el  # pyright: ignore[reportAssignmentType]
+                        kept.append(el)
+                    else:
+                        logger.warning("Dropped extra worked_example element")
+                else:
+                    kept.append(el)
+            self.elements = kept
+
+        # Minimum exercises — accept what the LLM produced rather than
+        # throwing away all content.  The LLM already had Instructor retries
+        # to self-correct; if it still can't meet the target, the exercises
+        # it did generate are still valuable.
+        min_ex = self._min_exercises
+        if exercise_count < min_ex:
+            logger.warning(
+                "Section has %d exercise(s) (target: %d) — accepting as-is",
+                exercise_count, min_ex,
+            )
+
+        # Trim excess interactive essays — keep first N, drop the rest
+        max_essays = self._max_interactive_essays
+        essay_count = counts.get("interactive_essay", 0)
+        if essay_count > max_essays:
+            logger.warning(
+                "Trimming interactive essays: %d → %d", essay_count, max_essays,
+            )
+            seen_essays = 0
+            kept: list[TrainingElement] = []
+            for el in self.elements:
+                if el.element_type == "interactive_essay":
+                    seen_essays += 1
+                    if seen_essays <= max_essays:
+                        kept.append(el)
+                else:
+                    kept.append(el)
+            self.elements = kept
+
+        # Low exercise variety — accept, just warn
+        min_types = self._min_exercise_types
+        if exercise_count >= min_ex and len(exercise_types_used) < min_types:
+            logger.warning(
+                "Low exercise variety: %d type(s) with %d exercises (target: %d types)",
+                len(exercise_types_used), exercise_count, min_types,
+            )
+
+        # Trim excess quizzes — keep first N, drop the rest
+        quiz_count = counts.get("quiz", 0)
+        if quiz_count > self._max_quizzes:
+            logger.warning(
+                "Trimming quizzes: %d → %d", quiz_count, self._max_quizzes,
+            )
+            seen_quizzes = 0
+            kept2: list[TrainingElement] = []
+            for el in self.elements:
+                if el.element_type == "quiz":
+                    seen_quizzes += 1
+                    if seen_quizzes <= self._max_quizzes:
+                        kept2.append(el)
+                else:
+                    kept2.append(el)
+            self.elements = kept2
+
+        # ── Warnings (aspirational targets, not worth a retry) ───────────
+
+        # Target: 5 exercises for hard concepts
+        if exercise_count < 5:
+            logger.warning(
+                "Section has %d exercises (target: 5 for difficult concepts)",
+                exercise_count,
+            )
+
+        # Target: 4+ different exercise types when 4+ exercises
+        if exercise_count >= 4 and len(exercise_types_used) < 4:
+            logger.warning(
+                "Low exercise variety: %d types used with %d exercises (target: all different types)",
+                len(exercise_types_used), exercise_count,
+            )
+
+        # Warn on flashcard count (target: 2-3 per section)
+        if flashcard_count < 2:
+            logger.warning(
+                "Low flashcard count: %d (target: 2-3 per section)",
+                flashcard_count,
+            )
+        elif flashcard_count > 4:
+            logger.warning(
+                "High flashcard count: %d (target: 2-3 per section)",
+                flashcard_count,
+            )
+
+        return self
+
+    @model_validator(mode="after")
+    def enforce_interleaved_order(self) -> "SectionResponse":
+        """Preserve LLM's teach-practice interleaving while anchoring bookend elements.
+
+        Core elements (slides + practice) keep their LLM-generated order intact
+        so teach-practice cycles are not destroyed. Only bookend elements are
+        moved to fixed positions: section_intro first, concept_map/flashcard/
+        interactive_essay at the end.
+        """
+        if not self.elements:
+            return self
+
+        anchor_end_roles = {"synthesis", "reveal", "reinforce", "assess"}
+        intro = [e for e in self.elements if e.element_type == "section_intro"]
+        core = [
+            e for e in self.elements
+            if ELEMENT_ROLE.get(e.element_type) not in ({"intro"} | anchor_end_roles)
+        ]
+        synthesis = [e for e in self.elements if e.element_type == "concept_map"]
+        reveals = [e for e in self.elements if e.element_type == "error_detection"]
+        flashcards = [e for e in self.elements if e.element_type == "flashcard"]
+        essays = [e for e in self.elements if e.element_type == "interactive_essay"]
+
+        self.elements = intro + core + synthesis + reveals + flashcards + essays
+        return self
+
+    @model_validator(mode="after")
+    def enforce_difficulty_progression(self) -> "SectionResponse":
+        """Sort exercises by difficulty (easy → hard), keeping teach elements in place.
+
+        Only reorders practice elements relative to each other.
+        Teaching elements and bookend elements keep their positions.
+        """
+        if not self.elements:
+            return self
+
+        # Identify indices of exercise elements within the element list
+        practice_indices = [
+            i for i, e in enumerate(self.elements)
+            if e.element_type in EXERCISE_ELEMENT_TYPES
+        ]
+
+        if len(practice_indices) <= 1:
+            return self
+
+        # Extract practice elements, sort by difficulty (stable sort preserves
+        # relative order when difficulties are equal)
+        practice_elements = [self.elements[i] for i in practice_indices]
+        practice_elements.sort(
+            key=lambda e: DIFFICULTY_ORDER.get(
+                getattr(e, "difficulty", "medium"), 2
+            )
+        )
+
+        # Put sorted practice elements back into their original positions
+        new_elements = list(self.elements)
+        for slot_idx, practice_el in zip(practice_indices, practice_elements):
+            new_elements[slot_idx] = practice_el
+        self.elements = new_elements
+
+        return self

@@ -439,7 +439,7 @@ class TestFocusConceptsPromptBlock:
         assert "**basis**" in result
         assert "**span**" in result
         assert "ONLY" in result
-        assert "5-8 minutes" in result
+        assert "5-10 minutes" in result
         # Multi-concept case: should still request exactly 1 slide
         assert "SINGLE slide" in result
 
@@ -496,3 +496,41 @@ class TestFocusConceptsPromptBlock:
         assert "WORKED EXAMPLE" in result
         assert "Understand X" in result
         assert "**concept_a**" in result
+
+
+class TestExerciseAssignmentBlock:
+    """Tests for _build_exercise_assignment_block()."""
+
+    def test_empty_when_none(self) -> None:
+        from src.transformation.content_designer_prompts import _build_exercise_assignment_block
+        assert _build_exercise_assignment_block(None) == ""
+        assert _build_exercise_assignment_block([]) == ""
+
+    def test_includes_all_assigned_types(self) -> None:
+        from src.transformation.content_designer_prompts import _build_exercise_assignment_block
+        types = ["matching", "fill_in_the_blank", "ordering", "analogy"]
+        result = _build_exercise_assignment_block(types)
+        assert "MANDATORY" in result
+        for t in types:
+            assert t in result
+
+    def test_difficulty_labels_assigned(self) -> None:
+        from src.transformation.content_designer_prompts import _build_exercise_assignment_block
+        types = ["matching", "quiz", "categorization", "analogy"]
+        result = _build_exercise_assignment_block(types)
+        assert "easy)" in result
+        assert "medium)" in result
+
+    def test_exercise_types_in_build_section_prompt(self) -> None:
+        from src.transformation.content_designer_prompts import build_section_prompt
+        result = build_section_prompt(
+            section_title="Sec",
+            section_text="Content " * 50,
+            chapter_title="Ch",
+            image_count=0,
+            table_count=0,
+            exercise_types=["matching", "ordering", "quiz", "categorization"],
+        )
+        assert "MANDATORY" in result
+        assert "matching" in result
+        assert "ordering" in result

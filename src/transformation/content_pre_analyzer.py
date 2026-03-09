@@ -40,9 +40,13 @@ SectionQuality = Literal[
 
 # Minimum total score to confidently assign a document type.
 # Below this threshold, the document is classified as "mixed".
+# Lower: more documents get specific types, risking wrong template weights.
+# Higher: more documents fall back to "mixed" (safe but generic).
 _MIN_DETECTION_CONFIDENCE = 3.0
 
 # Maximum characters sampled from the book for heuristic detection.
+# Lower: faster but may miss signals concentrated later in the document.
+# Higher: slower and may hit rate limit noise from repetitive content.
 _MAX_SAMPLE_LENGTH = 10_000
 
 # Recommended template weight distributions per document type.
@@ -230,6 +234,8 @@ def analyze_chapter_sections(
 # ── Section quality classification ────────────────────────────────────────────
 
 # Minimum stripped text length for a section to be worth transforming.
+# Lower: includes near-empty sections (captions, lists) that produce weak exercises.
+# Higher: skips concise but substantive sections (definitions, theorems).
 _MIN_CONTENT_LENGTH = 200
 
 # Titles that indicate structural (non-content) pages.
@@ -253,6 +259,28 @@ _STRUCTURAL_TITLE_PATTERNS = re.compile(
     r"|further\s+reading"
     r"|suggested\s+reading"
     r"|notes"
+    # Study guide / meta-content titles
+    r"|how\s+to\s+use\s+(?:this|the)\s+\w+"
+    r"|designing\s+your\s+(?:personal\s+)?study"
+    r"|learning\s+ecosystem"
+    r"|other\s+feedback"
+    r"|errata"
+    # Legal / disclaimer / boilerplate titles
+    r"|disclaimer"
+    r"|legal\s+(?:notice|information|terms)"
+    r"|terms\s+(?:of\s+(?:use|service)|and\s+conditions)"
+    r"|privacy\s+(?:policy|notice|statement)"
+    r"|warranty"
+    r"|limitation\s+of\s+liability"
+    r"|intellectual\s+property"
+    r"|confidential(?:ity)?"
+    r"|compliance\s+notice"
+    r"|regulatory\s+notice"
+    r"|safe\s+harbor"
+    r"|risk\s+(?:factors|disclosures?|warnings?)"
+    r"|important\s+(?:notice|information|disclosures?)"
+    r"|general\s+(?:information|disclosures?)"
+    r"|about\s+this\s+(?:document|publication|book)"
     r")$"
 )
 
@@ -262,6 +290,33 @@ _TOC_LINE_PATTERN = re.compile(
     r"|^.{5,}\s{2,}\d+\s*$",       # spaces + page number
     re.MULTILINE,
 )
+
+# Legal boilerplate body-text patterns. If >= _LEGAL_DENSITY_THRESHOLD distinct
+# matches appear in a section's text, it is classified as structural regardless
+# of the title. This catches sections with innocuous titles (e.g., "Important
+# Information") that contain legal text rather than educational content.
+# Used by: classify_section_quality()
+_LEGAL_BOILERPLATE_PATTERNS = re.compile(
+    r"(?i)(?:"
+    r"\b(?:hereby|herein|hereinafter|thereof|therein|thereto|hereunder)\b"
+    r"|\bwarrant(?:y|ies)\b.*\b(?:express|implied|disclaim)\b"
+    r"|\bshall\s+not\s+be\s+(?:liable|responsible)\b"
+    r"|\blimitation\s+of\s+liability\b"
+    r"|\bindemnif(?:y|ication|ied)\b"
+    r"|\bgoverning\s+law\b"
+    r"|\bjurisdiction\b"
+    r"|\barbitration\b"
+    r"|\bforce\s+majeure\b"
+    r"|\b(?:all\s+rights?\s+reserved|no\s+part\s+of\s+this)\b"
+    r"|\bwithout\s+(?:the\s+)?(?:prior\s+)?written\s+(?:consent|permission)\b"
+    r"|\bthis\s+(?:document|publication|material)\s+(?:is\s+provided|does\s+not)\b"
+    r"|\brepresentations?\s+(?:and|or)\s+warranties?\b"
+    r")"
+)
+# Minimum legal-pattern hits to classify a section as structural/boilerplate.
+# Lower: aggressively filters legal text, may catch legitimate legal content.
+# Higher: lets more boilerplate through to the LLM (wasted tokens, bad exercises).
+_LEGAL_DENSITY_THRESHOLD = 3
 
 
 def classify_section_quality(title: str, text: str) -> SectionQuality:
@@ -295,6 +350,11 @@ def classify_section_quality(title: str, text: str) -> SectionQuality:
         toc_lines = len(_TOC_LINE_PATTERN.findall(stripped))
         if toc_lines / len(non_empty_lines) > 0.5:
             return "structural"
+
+    # Check for legal/boilerplate body text
+    legal_hits = len(_LEGAL_BOILERPLATE_PATTERNS.findall(stripped))
+    if legal_hits >= _LEGAL_DENSITY_THRESHOLD:
+        return "structural"
 
     return "content"
 
@@ -443,7 +503,9 @@ _CAPITALIZED_PHRASE = re.compile(
     r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})\b"
 )
 
-# Minimum length for a key term to be meaningful
+# Minimum length for a key term to be meaningful.
+# Lower: catches abbreviations (GDP, ROI) but also noise (the, and).
+# Higher: misses valid short terms. 4 filters most English stop words.
 _MIN_TERM_LENGTH = 4
 
 # Common words to exclude from key terms

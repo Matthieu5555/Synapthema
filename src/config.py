@@ -65,6 +65,13 @@ class Config:
         max_concurrent_llm: Maximum number of parallel LLM calls. Controls
             thread pool size for deep reading, section transformation, and
             chapter processing. Set to 1 for sequential execution.
+        llm_model_creative: Model for creative code generation tasks (interactive
+            visualizations). Falls back to llm_model if empty. Should be a
+            highly capable model (e.g. claude-opus-4-6).
+        viz_enabled: If True, the interactive visualization pipeline is active.
+            Sections are assessed for visualization potential and, when
+            appropriate, an interactive HTML visualization is generated using
+            the creative model. Default False (opt-in).
     """
 
     input_sources: list[InputSource]
@@ -74,12 +81,15 @@ class Config:
     llm_base_url: str
     llm_model: str
     llm_model_light: str
+    llm_model_creative: str
     llm_temperature: float
     llm_max_tokens: int
     embed_images: bool
     vision_enabled: bool
+    viz_enabled: bool
     document_type: str
     max_concurrent_llm: int
+    variant: str = "general_purpose"
 
     @property
     def pdf_path(self) -> Path:
@@ -134,6 +144,7 @@ def load_config(
 
     llm_model = os.getenv("LLM_MODEL", default_model)
     llm_model_light = os.getenv("LLM_MODEL_LIGHT", llm_model)
+    llm_model_creative = os.getenv("LLM_MODEL_CREATIVE", llm_model)
 
     # Temperature — 0.3 balances consistency with some creativity for training content
     llm_temperature = float(os.getenv("LLM_TEMPERATURE", "0.3"))
@@ -153,6 +164,9 @@ def load_config(
     # Concurrency — max parallel LLM calls (deep reading, section transformation)
     max_concurrent_llm = int(os.getenv("MAX_CONCURRENT_LLM", "4"))
 
+    # Interactive visualizations — opt-in, generates explorable HTML via creative model
+    viz_enabled = os.getenv("VIZ_ENABLED", "false").lower() in ("true", "1", "yes")
+
     config = Config(
         input_sources=sources,
         extracted_dir=resolved_extracted,
@@ -161,10 +175,12 @@ def load_config(
         llm_base_url=base_url,
         llm_model=llm_model,
         llm_model_light=llm_model_light,
+        llm_model_creative=llm_model_creative,
         llm_temperature=llm_temperature,
         llm_max_tokens=llm_max_tokens,
         embed_images=embed_images,
         vision_enabled=vision_enabled,
+        viz_enabled=viz_enabled,
         document_type=document_type,
         max_concurrent_llm=max_concurrent_llm,
     )

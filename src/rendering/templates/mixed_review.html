@@ -204,11 +204,15 @@ window.__lxpToggleTheme = function() {
         return ta - tb;  // least recently practiced first
     });
 
-    // Sort by Bloom level for difficulty ramp
+    // Sort by Bloom level for difficulty ramp, then by exercise difficulty within each tier
+    var DIFFICULTY_ORDER = { 'easy': 1, 'medium': 2, 'hard': 3 };
     exercises.sort(function(a, b) {
         var aLevel = BLOOM_ORDER[a.bloom.toLowerCase()] || 3;
         var bLevel = BLOOM_ORDER[b.bloom.toLowerCase()] || 3;
-        return aLevel - bLevel;
+        if (aLevel !== bLevel) return aLevel - bLevel;
+        var aDiff = DIFFICULTY_ORDER[(a.exerciseDifficulty || 'medium').toLowerCase()] || 2;
+        var bDiff = DIFFICULTY_ORDER[(b.exerciseDifficulty || 'medium').toLowerCase()] || 2;
+        return aDiff - bDiff;
     });
 
     // Interleave: ensure adjacent exercises are from different chapters

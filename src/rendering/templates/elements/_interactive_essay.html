@@ -41,7 +41,7 @@
      data-threshold="{{ element.interactive_essay.passing_threshold }}"
      data-tutor-prompt='{{ element.interactive_essay.tutor_system_prompt_json|safe }}'>
     <div class="essay-header">
-        <h2>{{ element.interactive_essay.title }}</h2>
+        <h2>{{ element.interactive_essay.title|math }}</h2>
         <p class="essay-subtitle">Synthesize and explain what you've learned</p>
         <div class="concepts-tested">
             <strong>Concepts tested:</strong>

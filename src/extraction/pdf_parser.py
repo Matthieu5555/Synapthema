@@ -19,8 +19,18 @@ import fitz
 import pdfplumber
 import pymupdf4llm
 
+# Optional: marker-pdf for math-aware extraction (requires PyTorch)
+try:
+    from marker.converters.pdf import PdfConverter as _MarkerPdfConverter
+    from marker.models import create_model_dict as _marker_create_model_dict
+    from marker.output import text_from_rendered as _marker_text_from_rendered
+
+    _MARKER_AVAILABLE = True
+except ImportError:
+    _MARKER_AVAILABLE = False
+
 if TYPE_CHECKING:
-    from src.transformation.llm_client import LLMClient
+    from src.protocols import LLMClient
 
 from src.extraction.structure_detector import (
     TocEntry,
@@ -71,6 +81,10 @@ def extract_book(pdf_path: Path, output_dir: Path, llm_client: LLMClient | None 
     doc = fitz.open(str(pdf_path))
     total_pages = len(doc)
 
+    # Pre-extract full document text with marker if available (math-aware).
+    # Returns a dict mapping 0-indexed page number → markdown text.
+    marker_pages = _extract_with_marker(pdf_path, total_pages)
+
     title, author = _extract_metadata(doc)
     logger.info("Extracting '%s' by %s (%d pages)", title, author, total_pages)
 
@@ -98,6 +112,7 @@ def extract_book(pdf_path: Path, output_dir: Path, llm_client: LLMClient | None 
             all_images=all_images,
             all_tables=all_tables,
             llm_client=llm_client,
+            marker_pages=marker_pages,
         )
         for idx, (chapter_entry, children, start, end) in enumerate(chapter_groups)
     )
@@ -260,19 +275,78 @@ def _normalize_unicode_math(text: str) -> str:
 # ── Internal: text extraction ────────────────────────────────────────────────
 
 
+def _extract_with_marker(pdf_path: Path, total_pages: int) -> dict[int, str] | None:
+    """Extract full document text using marker-pdf (math-aware).
+
+    Returns a dict mapping 0-indexed page numbers to markdown text,
+    or None if marker is not available or extraction fails.
+    """
+    if not _MARKER_AVAILABLE:
+        return None
+
+    try:
+        logger.info("Using marker-pdf for math-aware text extraction")
+        converter = _MarkerPdfConverter(
+            artifact_dict=_marker_create_model_dict(),
+        )
+        rendered = converter(str(pdf_path))
+        full_md, _, _ = _marker_text_from_rendered(rendered)
+
+        if not full_md or not full_md.strip():
+            logger.warning("marker-pdf returned empty text, falling back to pymupdf4llm")
+            return None
+
+        # marker returns a single markdown string. Split by page markers if
+        # present, otherwise store as page 0 (whole-document).
+        # marker inserts page break comments: <!-- Page N -->
+        page_pattern = re.compile(r"<!--\s*Page\s+(\d+)\s*-->")
+        pages: dict[int, str] = {}
+        current_page = 0
+        current_chunks: list[str] = []
+
+        for line in full_md.split("\n"):
+            m = page_pattern.match(line)
+            if m:
+                if current_chunks:
+                    pages[current_page] = "\n".join(current_chunks)
+                current_page = int(m.group(1)) - 1  # Convert to 0-indexed
+                current_chunks = []
+            else:
+                current_chunks.append(line)
+
+        if current_chunks:
+            pages[current_page] = "\n".join(current_chunks)
+
+        # If no page markers found, store all text under page 0
+        if not pages:
+            pages[0] = full_md
+
+        logger.info(
+            "marker-pdf extracted %d pages of text",
+            len(pages),
+        )
+        return pages
+    except Exception as exc:
+        logger.warning("marker-pdf extraction failed, falling back to pymupdf4llm: %s", exc)
+        return None
+
+
 def _extract_text_for_page_range(
-    doc: fitz.Document, start_page: int, end_page: int
+    doc: fitz.Document,
+    start_page: int,
+    end_page: int,
+    marker_pages: dict[int, str] | None = None,
 ) -> str:
     """Extract and concatenate text from a range of pages.
 
-    Uses pymupdf4llm for markdown-formatted extraction (preserves structure,
-    headings, tables). Falls back to plain PyMuPDF text if pymupdf4llm fails.
-    Unicode math symbols are normalized to LaTeX on both paths.
+    Priority: marker-pdf (math-aware) → pymupdf4llm (markdown) → plain PyMuPDF.
+    Unicode math symbols are normalized to LaTeX on all paths.
 
     Args:
         doc: Open PyMuPDF document.
         start_page: 1-indexed first page (inclusive).
         end_page: 1-indexed last page (inclusive).
+        marker_pages: Pre-extracted marker text by 0-indexed page, or None.
 
     Returns:
         Extracted text with Unicode math normalized to LaTeX.
@@ -281,7 +355,15 @@ def _extract_text_for_page_range(
     if not pages:
         return ""
 
-    # Primary path: pymupdf4llm markdown extraction
+    # Primary path: marker-pdf (math-aware, pre-extracted)
+    if marker_pages is not None:
+        chunks = [marker_pages[p] for p in pages if p in marker_pages]
+        if chunks:
+            return _normalize_unicode_math("\n\n".join(chunks))
+        # If marker has no page-level data but has full-doc text (page 0),
+        # fall through to pymupdf4llm for page-level extraction.
+
+    # Secondary path: pymupdf4llm markdown extraction
     try:
         md_text: str = pymupdf4llm.to_markdown(doc, pages=pages)
         if md_text.strip():
@@ -487,6 +569,7 @@ def _build_chapter(
     all_images: dict[int, list[ImageRef]],
     all_tables: dict[int, list[Table]],
     llm_client: LLMClient | None = None,
+    marker_pages: dict[int, str] | None = None,
 ) -> Chapter:
     """Construct a Chapter dataclass from a TOC entry and its children.
 
@@ -508,11 +591,14 @@ def _build_chapter(
                 chapter_number, chapter_entry.title, len(detected_entries),
             )
             sections = _build_sections(
-                detected_entries, end_page, doc, all_images, all_tables
+                detected_entries, end_page, doc, all_images, all_tables,
+                marker_pages=marker_pages,
             )
         else:
             # Genuine single-section chapter: treat entire chapter as one section
-            text = _extract_text_for_page_range(doc, start_page, end_page)
+            text = _extract_text_for_page_range(
+                doc, start_page, end_page, marker_pages=marker_pages,
+            )
             images = _collect_items_for_page_range(all_images, start_page, end_page)
             tables = _collect_items_for_page_range(all_tables, start_page, end_page)
 
@@ -529,7 +615,8 @@ def _build_chapter(
             )
     else:
         sections = _build_sections(
-            child_toc_entries, end_page, doc, all_images, all_tables
+            child_toc_entries, end_page, doc, all_images, all_tables,
+            marker_pages=marker_pages,
         )
 
     return Chapter(
@@ -547,6 +634,7 @@ def _build_sections(
     doc: fitz.Document,
     all_images: dict[int, list[ImageRef]],
     all_tables: dict[int, list[Table]],
+    marker_pages: dict[int, str] | None = None,
 ) -> tuple[Section, ...]:
     """Build Section dataclasses from TOC entries within a chapter.
 
@@ -578,7 +666,9 @@ def _build_sections(
             section_end = chapter_end
         section_end = max(parent_entry.page, section_end)
 
-        text = _extract_text_for_page_range(doc, parent_entry.page, section_end)
+        text = _extract_text_for_page_range(
+            doc, parent_entry.page, section_end, marker_pages=marker_pages,
+        )
         images = _collect_items_for_page_range(all_images, parent_entry.page, section_end)
         tables = _collect_items_for_page_range(all_tables, parent_entry.page, section_end)
 
@@ -591,7 +681,9 @@ def _build_sections(
                 child_end = section_end
             child_end = max(child_entry.page, child_end)
 
-            child_text = _extract_text_for_page_range(doc, child_entry.page, child_end)
+            child_text = _extract_text_for_page_range(
+                doc, child_entry.page, child_end, marker_pages=marker_pages,
+            )
             child_images = _collect_items_for_page_range(all_images, child_entry.page, child_end)
             child_tables = _collect_items_for_page_range(all_tables, child_entry.page, child_end)
 

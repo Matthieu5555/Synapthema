@@ -57,7 +57,7 @@
     <div class="course-header-left">
         <a href="index.html" class="breadcrumb-home" title="Back to course index">{{ course_title }}</a>
         <span class="breadcrumb-sep">/</span>
-        <span class="breadcrumb-current">Chapter {{ chapter_number }}: {{ module_title }}</span>
+        <span class="breadcrumb-current">Chapter {{ chapter_number }}: {{ module_title|math }}</span>
         {% if source_book_title %}
         <span class="source-badge" title="{{ source_book_title }}">&#128214;</span>
         {% endif %}
@@ -92,7 +92,7 @@
 
     <!-- Sidebar navigation -->
     <nav class="sidebar" id="sidebar" aria-label="Section navigation">
-        <div class="sidebar-header">{{ module_title }}</div>
+        <div class="sidebar-header">{{ module_title|math }}</div>
         <div class="sidebar-sections">
             {% for section in sections %}
             <div class="sidebar-section{% if loop.first %} active{% endif %}"
@@ -101,17 +101,17 @@
                  data-count="{{ section.element_count }}"
                  onclick="goToSection({{ section.start_index }})">
                 <div class="sidebar-section-status">{{ loop.index }}</div>
-                <div class="sidebar-section-title">{{ section.title }}</div>
+                <div class="sidebar-section-title">{{ section.title|math }}</div>
                 <div class="sidebar-section-count">{{ section.element_count }}</div>
             </div>
             {% endfor %}
         </div>
         <div class="sidebar-footer">
             {% if prev_chapter %}
-            <a href="{{ prev_chapter.filename }}" class="sidebar-chapter-link">&#8592; {{ prev_chapter.title }}</a>
+            <a href="{{ prev_chapter.filename }}" class="sidebar-chapter-link">&#8592; {{ prev_chapter.title|math }}</a>
             {% endif %}
             {% if next_chapter %}
-            <a href="{{ next_chapter.filename }}" class="sidebar-chapter-link">{{ next_chapter.title }} &#8594;</a>
+            <a href="{{ next_chapter.filename }}" class="sidebar-chapter-link">{{ next_chapter.title|math }} &#8594;</a>
             {% endif %}
             <a href="mixed_review.html" class="sidebar-chapter-link">Mixed Practice</a>
             <a href="review.html" class="sidebar-chapter-link">Spaced Review</a>
@@ -126,7 +126,7 @@
             {# Insert section divider at section boundaries #}
             {% if sections and ns.section_idx < sections|length and loop.index0 == sections[ns.section_idx].start_index %}
             <div class="section-divider" data-section="{{ ns.section_idx }}" {% if loop.first %}style="display:block"{% else %}style="display:none"{% endif %}>
-                <div class="section-divider-title">{{ sections[ns.section_idx].title }}</div>
+                <div class="section-divider-title">{{ sections[ns.section_idx].title|math }}</div>
                 {% if sections[ns.section_idx].source_pages %}
                 <div class="section-divider-pages">{{ sections[ns.section_idx].source_pages }}</div>
                 {% endif %}
@@ -224,19 +224,18 @@ window.__lxpToggleTheme = function() {
     var PROGRESS_KEY = 'lxp_' + COURSE_SLUG + '_progress';
     var nextChapterUrl = {{ ("'" + next_chapter.filename + "'")|safe if next_chapter else 'null' }};
 
-    // ── Named constants ───────────────────────────────────────────────────
-    var MASTERY_THRESHOLD = 0.8;          // Score >= this means concept "mastered"; affects mastery checks and progress gating
-    var MASTERY_GOOD_PCT = 80;            // Percentage displayed as mastery threshold; must match MASTERY_THRESHOLD * 100
-    var MASTERY_PARTIAL_PCT = 50;         // Score below this shows red in mastery bar; between this and MASTERY_GOOD_PCT shows yellow
-    var MAX_EXERCISE_ATTEMPTS = 3;        // Max wrong attempts before revealing the answer; applies to quiz, matching, ordering, etc.
-    var MIN_SCORE_FLOOR = 0.2;            // Minimum score awarded for a correct answer on late attempts; prevents 0 scores
-    var ESSAY_PASS_THRESHOLD = 0.7;       // Fraction of key points needed to pass a static essay; 0.7 = 70%
-    var TUTOR_TEMPERATURE = 0.7;          // LLM temperature for dynamic essay tutor responses; higher = more creative
-    var MASTERY_UPDATE_DELAY_MS = 600;    // Delay before updating mastery indicator after answer; lets animation settle
-    var CONFIDENCE_HYPER_THRESHOLD = 4;   // Confidence level at which a wrong answer triggers hypercorrection tagging
-    var FSRS_EASY_THRESHOLD = 0.85;       // Score >= this maps to FSRS Easy (grade 4)
-    var FSRS_GOOD_THRESHOLD = 0.6;        // Score >= this maps to FSRS Good (grade 3)
-    var FSRS_HARD_THRESHOLD = 0.3;        // Score >= this maps to FSRS Hard (grade 2); below = Again (grade 1)
+    // ── Named constants (configurable from Python via RenderContext.frontend_config) ──
+    var MASTERY_THRESHOLD = {{ fc.mastery_threshold }};          // Score >= this means concept "mastered"
+    var MASTERY_GOOD_PCT = {{ fc.mastery_good_pct }};            // Percentage displayed as mastery threshold
+    var MASTERY_PARTIAL_PCT = {{ fc.mastery_partial_pct }};      // Score below this shows red in mastery bar
+    var MAX_EXERCISE_ATTEMPTS = {{ fc.max_exercise_attempts }};  // Max wrong attempts before revealing the answer
+    var MIN_SCORE_FLOOR = {{ fc.min_score_floor }};              // Minimum score awarded for a correct answer on late attempts
+    var ESSAY_PASS_THRESHOLD = {{ fc.essay_pass_threshold }};    // Fraction of key points needed to pass a static essay
+    var TUTOR_TEMPERATURE = {{ fc.tutor_temperature }};          // LLM temperature for dynamic essay tutor responses
+    var MASTERY_UPDATE_DELAY_MS = {{ fc.mastery_update_delay_ms }};  // Delay before updating mastery indicator after answer
+    var FSRS_EASY_THRESHOLD = {{ fc.fsrs_easy_threshold }};      // Score >= this maps to FSRS Easy (grade 4)
+    var FSRS_GOOD_THRESHOLD = {{ fc.fsrs_good_threshold }};      // Score >= this maps to FSRS Good (grade 3)
+    var FSRS_HARD_THRESHOLD = {{ fc.fsrs_hard_threshold }};      // Score >= this maps to FSRS Hard (grade 2)
 
     // ── Learner model instance ───────────────────────────────────────────
     var learnerModel = __lxpCreateLearnerModel(COURSE_SLUG);
@@ -429,6 +428,7 @@ window.__lxpToggleTheme = function() {
             });
             if (sectionStart >= 0 && parseInt(d.dataset.section) === sectionStart) {
                 d.style.display = 'block';
+                renderMath(d);
             }
         });
 
@@ -534,6 +534,17 @@ window.__lxpToggleTheme = function() {
         if (e.key === 'ArrowLeft') { e.preventDefault(); navigate(-1); }
     });
 
+    // ── Accelerated slide: click to expand ──────────────────────────────
+    document.querySelectorAll('.slide').forEach(function(s) {
+        s.addEventListener('click', function(e) {
+            if (s.classList.contains('accelerated') && !s.classList.contains('expanded')) {
+                // Only expand on click on the slide itself, not interactive elements
+                if (e.target.closest('button, input, select, textarea, .quiz-option, li')) return;
+                s.classList.add('expanded');
+            }
+        });
+    });
+
     // ── Swipe navigation (mobile) ──────────────────────────────────────
     (function() {
         var startX = 0, startY = 0, tracking = false;
@@ -625,28 +636,34 @@ window.__lxpToggleTheme = function() {
 
     // ── Score tracking (continuous scoring) ──────────────────────────
     // score: float 0.0–1.0 (e.g. 3/5 matching correct = 0.6)
-    // confidence: optional 0-5 from confidence prompt
+    // confidence: 1 = sure, 0 = unsure, null = not collected
     function recordScore(slideIndex, score, confidence, bloomLevel) {
         var isCorrect = score >= 0.5;
+        var hasConfidence = confidence !== null && confidence !== undefined;
         var slideEl = slides[slideIndex];
         if (slideEl) {
             var info = getSlideConceptsAndBloom(slideEl);
             learnerModel.recordAnswer(
                 info.concepts, info.bloom || bloomLevel, isCorrect,
-                typeof confidence === 'number' ? confidence : undefined,
+                hasConfidence ? confidence : undefined,
                 score
             );
             updateMasteryNavIndicator();
 
-            // Update FSRS card — grade derived from continuous score
+            // Update FSRS card — grade derived from score + confidence
             var flashcardKey = 'lxp_' + COURSE_SLUG + '_flashcards';
             try {
                 var flashcards = JSON.parse(localStorage.getItem(flashcardKey) || '{}');
                 var elemId = slideEl.getAttribute('data-element-id');
                 if (elemId && flashcards[elemId] && typeof FSRS !== 'undefined') {
-                    var grade = score >= FSRS_EASY_THRESHOLD ? 4 :
-                                score >= FSRS_GOOD_THRESHOLD ? 3 :
-                                score >= FSRS_HARD_THRESHOLD ? 2 : 1;
+                    var baseGrade = score >= FSRS_EASY_THRESHOLD ? 4 :
+                                    score >= FSRS_GOOD_THRESHOLD ? 3 :
+                                    score >= FSRS_HARD_THRESHOLD ? 2 : 1;
+                    // Confidence modulation: unsure + correct → demote (fragile knowledge)
+                    var grade = baseGrade;
+                    if (hasConfidence && confidence === 0 && isCorrect) {
+                        grade = Math.max(1, baseGrade - 1);
+                    }
                     flashcards[elemId] = FSRS.scheduleCard(flashcards[elemId], grade);
                     localStorage.setItem(flashcardKey, JSON.stringify(flashcards));
                 }
@@ -695,7 +712,7 @@ window.__lxpToggleTheme = function() {
 
     // ── Quiz interaction (multi-attempt with graduated hints) ────────────
     window.selectOption = function(el) {
-        var question = el.closest('.quiz-question');
+        var question = el.closest('.quiz-question') || el.closest('.far-transfer-container');
         if (question.classList.contains('answered')) return;
         if (el.classList.contains('eliminated') || el.classList.contains('attempted-wrong')) return;
         question.querySelectorAll('.quiz-option').forEach(function(o) {
@@ -704,7 +721,8 @@ window.__lxpToggleTheme = function() {
             }
         });
         el.classList.add('selected');
-        question.querySelector('.quiz-check-btn').disabled = false;
+        var checkBtn = question.querySelector('.quiz-check-btn');
+        if (checkBtn) checkBtn.disabled = false;
     };
 
     window.checkAnswer = function(btn) {
@@ -760,62 +778,101 @@ window.__lxpToggleTheme = function() {
         }
     };
 
+    // ── Shared binary confidence prompt ─────────────────────────────────
+    // confidence: 1 = sure, 0 = unsure, null = not collected
+    function showConfidencePrompt(containerEl, callback) {
+        containerEl.innerHTML =
+            '<div class="confidence-prompt">How sure were you?</div>' +
+            '<div class="confidence-buttons">' +
+            '<button class="confidence-btn confidence-sure" type="button">I was sure</button>' +
+            '<button class="confidence-btn confidence-unsure" type="button">I guessed</button>' +
+            '</div>';
+        containerEl.style.display = 'block';
+        containerEl.querySelector('.confidence-sure').onclick = function() {
+            containerEl.style.display = 'none';
+            callback(1);
+        };
+        containerEl.querySelector('.confidence-unsure').onclick = function() {
+            containerEl.style.display = 'none';
+            callback(0);
+        };
+    }
+
     function showConfidenceStep(question, isCorrect, attempts) {
         var checkBtn = question.querySelector('.quiz-check-btn');
         checkBtn.style.display = 'none';
         var confidenceEl = question.querySelector('.quiz-confidence');
-        confidenceEl.style.display = 'block';
-        confidenceEl.dataset.isCorrect = isCorrect;
-        confidenceEl.dataset.attempts = attempts;
+        showConfidencePrompt(confidenceEl, function(confidence) {
+            question.classList.add('answered');
+
+            var correctIdx = parseInt(question.dataset.correct);
+            var options = question.querySelectorAll('.quiz-option');
+            options[correctIdx].classList.add('correct');
+
+            if (!isCorrect) {
+                var selected = question.querySelector('.quiz-option.selected');
+                if (selected) selected.classList.add('incorrect');
+            }
+
+            question.querySelector('.quiz-explanation').classList.add('visible');
+
+            // Hypercorrection: sure + wrong
+            if (confidence === 1 && !isCorrect) {
+                var hyperEl = question.querySelector('.quiz-hypercorrection');
+                hyperEl.textContent = 'You were quite confident, but this is a common misconception. ' +
+                    'Research shows that high-confidence errors, once corrected, are remembered ' +
+                    'better than low-confidence ones. Pay extra attention to this explanation.';
+                hyperEl.style.display = 'block';
+            }
+
+            var slideIdx = parseInt(question.closest('.slide').dataset.index);
+            var bloomBadge = question.closest('.slide').querySelector('.bloom-badge');
+            var bloom = bloomBadge ? bloomBadge.textContent.trim() : '';
+            var quizScore = isCorrect ? Math.max(MIN_SCORE_FLOOR, 1.0 / Math.max(1, attempts)) : 0.0;
+            recordScore(slideIdx, quizScore, confidence, bloom);
+        });
     }
 
-    window.selectConfidence = function(dot) {
-        var container = dot.closest('.confidence-dots');
-        container.querySelectorAll('.confidence-dot').forEach(function(d) {
-            d.classList.remove('selected');
-        });
-        dot.classList.add('selected');
-        var confirmBtn = dot.closest('.quiz-confidence').querySelector('.confidence-confirm-btn');
-        confirmBtn.disabled = false;
-    };
+    // ── Far transfer interaction ────────────────────────────────────────
+    window.checkFarTransfer = function(btn) {
+        var container = btn.closest('.far-transfer-container');
+        if (container.classList.contains('answered')) return;
 
-    window.confirmWithConfidence = function(btn) {
-        var confidenceEl = btn.closest('.quiz-confidence');
-        var question = confidenceEl.closest('.quiz-question');
-        var selectedDot = confidenceEl.querySelector('.confidence-dot.selected');
-        var confidence = selectedDot ? parseInt(selectedDot.dataset.value) : 0;
-        var isCorrect = confidenceEl.dataset.isCorrect === 'true';
-        var attempts = parseInt(confidenceEl.dataset.attempts);
+        var selected = container.querySelector('.quiz-option.selected');
+        if (!selected) return;
 
-        question.classList.add('answered');
-        confidenceEl.style.display = 'none';
+        var attempts = parseInt(container.dataset.attempts || '0') + 1;
+        container.dataset.attempts = attempts;
 
-        var correctIdx = parseInt(question.dataset.correct);
-        var options = question.querySelectorAll('.quiz-option');
-        options[correctIdx].classList.add('correct');
+        var correctIdx = parseInt(container.dataset.correct);
+        var selectedIdx = parseInt(selected.dataset.optionIndex);
+        var isCorrect = selectedIdx === correctIdx;
 
-        if (!isCorrect) {
-            var selected = question.querySelector('.quiz-option.selected');
-            if (selected) selected.classList.add('incorrect');
+        if (isCorrect || attempts >= MAX_EXERCISE_ATTEMPTS) {
+            container.classList.add('answered');
+            btn.disabled = true;
+            btn.textContent = isCorrect ? 'Correct!' : 'Showing answer';
+
+            var options = container.querySelectorAll('.quiz-option');
+            options[correctIdx].classList.add('correct');
+            if (!isCorrect) selected.classList.add('incorrect');
+
+            // Show bridge insight and explanation
+            var bridge = container.querySelector('.far-transfer-bridge');
+            if (bridge) bridge.style.display = 'block';
+            container.querySelector('.quiz-explanation').classList.add('visible');
+
+            var slideEl = container.closest('.slide');
+            var slideIdx = parseInt(slideEl.dataset.index);
+            var bloomBadge = slideEl.querySelector('.bloom-badge');
+            var bloom = bloomBadge ? bloomBadge.textContent.trim() : '';
+            var score = isCorrect ? Math.max(MIN_SCORE_FLOOR, 1.0 / Math.max(1, attempts)) : 0.0;
+            recordScore(slideIdx, score, null, bloom);
+        } else {
+            selected.classList.remove('selected');
+            selected.classList.add('attempted-wrong');
+            btn.disabled = true;
         }
-
-        question.querySelector('.quiz-explanation').classList.add('visible');
-
-        // Hypercorrection: high confidence + wrong
-        if (confidence >= CONFIDENCE_HYPER_THRESHOLD && !isCorrect) {
-            var hyperEl = question.querySelector('.quiz-hypercorrection');
-            hyperEl.textContent = 'You were quite confident, but this is a common misconception. ' +
-                'Research shows that high-confidence errors, once corrected, are remembered ' +
-                'better than low-confidence ones. Pay extra attention to this explanation.';
-            hyperEl.style.display = 'block';
-        }
-
-        // Record score (continuous: 1.0 first try, scaled by attempts)
-        var slideIdx = parseInt(question.closest('.slide').dataset.index);
-        var bloomBadge = question.closest('.slide').querySelector('.bloom-badge');
-        var bloom = bloomBadge ? bloomBadge.textContent.trim() : '';
-        var quizScore = isCorrect ? Math.max(MIN_SCORE_FLOOR, 1.0 / Math.max(1, attempts)) : 0.0;
-        recordScore(slideIdx, quizScore, confidence, bloom);
     };
 
     // ── Fill-in-the-blank interaction (multi-attempt) ────────────────────
@@ -856,7 +913,14 @@ window.__lxpToggleTheme = function() {
             var slideIdx = parseInt(container.closest('.slide').dataset.index);
             var fraction = inputs.length > 0 ? correctBlanks / inputs.length : 0;
             var fitbScore = fraction * Math.max(MIN_SCORE_FLOOR, 1.0 / Math.max(1, attempts));
-            recordScore(slideIdx, fitbScore, 0, '');
+            var confidenceEl = container.querySelector('.confidence-container');
+            if (confidenceEl) {
+                showConfidencePrompt(confidenceEl, function(confidence) {
+                    recordScore(slideIdx, fitbScore, confidence, '');
+                });
+            } else {
+                recordScore(slideIdx, fitbScore, null, '');
+            }
         } else if (attempts === 1) {
             var hintEl = container.querySelector('.fitb-hint');
             if (hintEl) { hintEl.style.display = 'block'; renderMath(hintEl); }
@@ -1272,7 +1336,7 @@ window.__lxpToggleTheme = function() {
             inputs.forEach(function(input) { if (input.classList.contains('cmap-correct')) cmapCorrect++; });
             var cmapFraction = inputs.length > 0 ? cmapCorrect / inputs.length : 0;
             var cmapScore = cmapFraction * Math.max(MIN_SCORE_FLOOR, 1.0 / Math.max(1, attempts));
-            recordScore(slideIdx, cmapScore, 0, '');
+            recordScore(slideIdx, cmapScore, null, '');
         } else if (attempts === 1) {
             if (btn) btn.textContent = 'Try Again';
         } else if (attempts === 2) {
@@ -1335,8 +1399,15 @@ window.__lxpToggleTheme = function() {
                     // Show confidence prompt before recording score
                     var confidenceEl = container.querySelector('.matching-confidence');
                     if (confidenceEl) {
-                        container.dataset.matchWrongAttempts = container.dataset.wrongAttempts || '0';
-                        confidenceEl.style.display = 'block';
+                        var wrongAttempts = parseInt(container.dataset.wrongAttempts || '0');
+                        showConfidencePrompt(confidenceEl, function(confidence) {
+                            var slideIdx = parseInt(container.closest('.slide').dataset.index);
+                            var totalPairs = container.querySelectorAll('.matching-left-item').length;
+                            var matchScore = Math.max(MIN_SCORE_FLOOR, totalPairs / (totalPairs + wrongAttempts));
+                            var bloomBadge = container.closest('.slide').querySelector('.bloom-badge');
+                            var bloom = bloomBadge ? bloomBadge.textContent.trim() : '';
+                            recordScore(slideIdx, matchScore, confidence, bloom);
+                        });
                     }
                 }
             } else {
@@ -1358,33 +1429,6 @@ window.__lxpToggleTheme = function() {
             matchState.left = null;
             matchState.right = null;
         }
-    };
-
-    // ── Matching confidence ─────────────────────────────────────────────
-    window.selectMatchConfidence = function(dot) {
-        var container = dot.closest('.confidence-dots');
-        container.querySelectorAll('.confidence-dot').forEach(function(d) {
-            d.classList.remove('selected');
-        });
-        dot.classList.add('selected');
-        var confirmBtn = dot.closest('.matching-confidence').querySelector('.confidence-confirm-btn');
-        confirmBtn.disabled = false;
-    };
-
-    window.confirmMatchConfidence = function(btn) {
-        var confidenceEl = btn.closest('.matching-confidence');
-        var container = confidenceEl.closest('.matching-container');
-        var selectedDot = confidenceEl.querySelector('.confidence-dot.selected');
-        var confidence = selectedDot ? parseInt(selectedDot.dataset.value) : 0;
-        confidenceEl.style.display = 'none';
-
-        var slideIdx = parseInt(container.closest('.slide').dataset.index);
-        var wrongAttempts = parseInt(container.dataset.matchWrongAttempts || '0');
-        var totalPairs = container.querySelectorAll('.matching-left-item').length;
-        var matchScore = Math.max(MIN_SCORE_FLOOR, totalPairs / (totalPairs + wrongAttempts));
-        var bloomBadge = container.closest('.slide').querySelector('.bloom-badge');
-        var bloom = bloomBadge ? bloomBadge.textContent.trim() : '';
-        recordScore(slideIdx, matchScore, confidence, bloom);
     };
 
     // ── Ordering interaction ─────────────────────────────────────────────
@@ -1449,7 +1493,14 @@ window.__lxpToggleTheme = function() {
             items.forEach(function(item, i) { if (correctOrder[i] === i) orderCorrect++; });
             var orderFraction = items.length > 0 ? orderCorrect / items.length : 0;
             var orderScore = orderFraction * Math.max(MIN_SCORE_FLOOR, 1.0 / Math.max(1, attempts));
-            recordScore(slideIdx, orderScore, 0, '');
+            var confidenceEl = container.querySelector('.confidence-container');
+            if (confidenceEl) {
+                showConfidencePrompt(confidenceEl, function(confidence) {
+                    recordScore(slideIdx, orderScore, confidence, '');
+                });
+            } else {
+                recordScore(slideIdx, orderScore, null, '');
+            }
         } else if (attempts === 1) {
             var hintEl = container.querySelector('.ordering-hint');
             if (hintEl) { hintEl.style.display = 'block'; renderMath(hintEl); }
@@ -1550,7 +1601,14 @@ window.__lxpToggleTheme = function() {
             var catTotal = totalItems + poolItems.length;
             var catFraction = catTotal > 0 ? correctCount / catTotal : 0;
             var catScore = catFraction * Math.max(MIN_SCORE_FLOOR, 1.0 / Math.max(1, attempts));
-            recordScore(slideIdx, catScore, 0, '');
+            var confidenceEl = container.querySelector('.confidence-container');
+            if (confidenceEl) {
+                showConfidencePrompt(confidenceEl, function(confidence) {
+                    recordScore(slideIdx, catScore, confidence, '');
+                });
+            } else {
+                recordScore(slideIdx, catScore, null, '');
+            }
         } else if (attempts === 1) {
             var hintEl = container.querySelector('.categorization-hint');
             if (hintEl) { hintEl.style.display = 'block'; renderMath(hintEl); }
@@ -1575,7 +1633,7 @@ window.__lxpToggleTheme = function() {
         });
         if (allRevealed) {
             var slideIdx = parseInt(container.closest('.slide').dataset.index);
-            recordScore(slideIdx, 1.0, 0, '');
+            recordScore(slideIdx, 1.0, null, '');
         }
     };
 
@@ -1675,7 +1733,7 @@ window.__lxpToggleTheme = function() {
             }
 
             var slideIdx = parseInt(container.closest('.slide').dataset.index);
-            recordScore(slideIdx, score, 0, '');
+            recordScore(slideIdx, score, null, '');
         }
     };
 
@@ -1772,7 +1830,7 @@ window.__lxpToggleTheme = function() {
                     var analogyFraction = questions.length > 0 ? correctItems / questions.length : 0;
                     var avgAttempts = questions.length > 0 ? totalAttempts / questions.length : 1;
                     var analogyScore = analogyFraction * Math.max(MIN_SCORE_FLOOR, 1.0 / Math.max(1, avgAttempts));
-                    recordScore(slideIdx, analogyScore, 0, '');
+                    recordScore(slideIdx, analogyScore, null, '');
                 }
             });
             observer.observe(itemsDiv, { attributes: true, subtree: true, attributeFilter: ['class'] });
@@ -1901,6 +1959,8 @@ window.__lxpToggleTheme = function() {
                 sidebarSections[sectionIdx].querySelector('.sidebar-section-title').textContent.trim() : '';
             var bloomBadge = slideEl.querySelector('.bloom-badge');
             var bloom = bloomBadge ? bloomBadge.textContent.trim() : '';
+            var diffBadge = slideEl.querySelector('.difficulty-badge');
+            var exerciseDifficulty = diffBadge ? diffBadge.textContent.trim().toLowerCase() : 'medium';
 
             var concepts = [];
             try { concepts = JSON.parse(slideEl.getAttribute('data-concepts') || '[]'); } catch(e) {}
@@ -1935,7 +1995,7 @@ window.__lxpToggleTheme = function() {
                     });
                     exercises.push({
                         type: 'quiz', chapter: parseInt(CHAPTER_NUM),
-                        section: sectionTitle, bloom: bloom, concepts: concepts,
+                        section: sectionTitle, bloom: bloom, exerciseDifficulty: exerciseDifficulty, concepts: concepts,
                         reps: 0, difficulty: 0, stability: 0, lastReview: null, nextReview: null, lapses: 0,
                         autoCache: true,
                         data: { question: q.querySelector('.quiz-question-text').innerHTML,
@@ -1952,7 +2012,7 @@ window.__lxpToggleTheme = function() {
             if (fitbEl) {
                 exercises.push({
                     type: 'fitb', chapter: parseInt(CHAPTER_NUM),
-                    section: sectionTitle, bloom: bloom, concepts: concepts,
+                    section: sectionTitle, bloom: bloom, exerciseDifficulty: exerciseDifficulty, concepts: concepts,
                     reps: 0, difficulty: 0, stability: 0, lastReview: null, nextReview: null, lapses: 0,
                     autoCache: true,
                     data: { answers: JSON.parse(fitbEl.dataset.answers || '[]'),
@@ -1966,7 +2026,7 @@ window.__lxpToggleTheme = function() {
             if (matchEl) {
                 exercises.push({
                     type: 'matching', chapter: parseInt(CHAPTER_NUM),
-                    section: sectionTitle, bloom: bloom, concepts: concepts,
+                    section: sectionTitle, bloom: bloom, exerciseDifficulty: exerciseDifficulty, concepts: concepts,
                     reps: 0, difficulty: 0, stability: 0, lastReview: null, nextReview: null, lapses: 0,
                     autoCache: true,
                     data: {
@@ -1985,7 +2045,7 @@ window.__lxpToggleTheme = function() {
                 var sePrompt = seEl.querySelector('.explain-prompt');
                 exercises.push({
                     type: 'self_explain', chapter: parseInt(CHAPTER_NUM),
-                    section: sectionTitle, bloom: bloom, concepts: concepts,
+                    section: sectionTitle, bloom: bloom, exerciseDifficulty: exerciseDifficulty, concepts: concepts,
                     reps: 0, difficulty: 0, stability: 0, lastReview: null, nextReview: null, lapses: 0,
                     autoCache: true,
                     data: {
@@ -2005,7 +2065,7 @@ window.__lxpToggleTheme = function() {
                 );
                 exercises.push({
                     type: 'ordering', chapter: parseInt(CHAPTER_NUM),
-                    section: sectionTitle, bloom: bloom, concepts: concepts,
+                    section: sectionTitle, bloom: bloom, exerciseDifficulty: exerciseDifficulty, concepts: concepts,
                     reps: 0, difficulty: 0, stability: 0, lastReview: null, nextReview: null, lapses: 0,
                     autoCache: true,
                     data: {
@@ -2024,7 +2084,7 @@ window.__lxpToggleTheme = function() {
             if (catEl) {
                 exercises.push({
                     type: 'categorization', chapter: parseInt(CHAPTER_NUM),
-                    section: sectionTitle, bloom: bloom, concepts: concepts,
+                    section: sectionTitle, bloom: bloom, exerciseDifficulty: exerciseDifficulty, concepts: concepts,
                     reps: 0, difficulty: 0, stability: 0, lastReview: null, nextReview: null, lapses: 0,
                     autoCache: true,
                     data: {
@@ -2053,7 +2113,7 @@ window.__lxpToggleTheme = function() {
                 );
                 exercises.push({
                     type: 'error_detection', chapter: parseInt(CHAPTER_NUM),
-                    section: sectionTitle, bloom: bloom, concepts: concepts,
+                    section: sectionTitle, bloom: bloom, exerciseDifficulty: exerciseDifficulty, concepts: concepts,
                     reps: 0, difficulty: 0, stability: 0, lastReview: null, nextReview: null, lapses: 0,
                     autoCache: true,
                     data: {
@@ -2070,7 +2130,7 @@ window.__lxpToggleTheme = function() {
             if (analogyEl) {
                 exercises.push({
                     type: 'analogy', chapter: parseInt(CHAPTER_NUM),
-                    section: sectionTitle, bloom: bloom, concepts: concepts,
+                    section: sectionTitle, bloom: bloom, exerciseDifficulty: exerciseDifficulty, concepts: concepts,
                     reps: 0, difficulty: 0, stability: 0, lastReview: null, nextReview: null, lapses: 0,
                     autoCache: true,
                     data: {
@@ -2080,12 +2140,39 @@ window.__lxpToggleTheme = function() {
                 });
             }
 
+            // Cache far transfer exercises
+            var ftEl = slideEl.querySelector('.far-transfer-container');
+            if (ftEl) {
+                var ftOpts = [];
+                ftEl.querySelectorAll('.quiz-option').forEach(function(o) {
+                    var spans = o.querySelectorAll('span');
+                    ftOpts.push(spans.length > 1 ? spans[1].innerHTML : o.innerHTML);
+                });
+                exercises.push({
+                    type: 'far_transfer', chapter: parseInt(CHAPTER_NUM),
+                    section: sectionTitle, bloom: bloom, exerciseDifficulty: exerciseDifficulty, concepts: concepts,
+                    reps: 0, difficulty: 0, stability: 0, lastReview: null, nextReview: null, lapses: 0,
+                    autoCache: true,
+                    data: {
+                        sourcePrinciple: ftEl.querySelector('.far-transfer-source-principle') ? ftEl.querySelector('.far-transfer-source-principle').innerHTML : '',
+                        sourceDomain: ftEl.querySelector('.far-transfer-source-domain') ? ftEl.querySelector('.far-transfer-source-domain').innerHTML : '',
+                        transferDomain: ftEl.querySelector('.far-transfer-transfer-label') ? ftEl.querySelector('.far-transfer-transfer-label').innerHTML : '',
+                        scenario: ftEl.querySelector('.far-transfer-scenario-text') ? ftEl.querySelector('.far-transfer-scenario-text').innerHTML : '',
+                        question: ftEl.querySelector('.far-transfer-question') ? ftEl.querySelector('.far-transfer-question').innerHTML : '',
+                        options: ftOpts,
+                        correct: parseInt(ftEl.dataset.correct),
+                        bridgeInsight: ftEl.querySelector('.far-transfer-bridge-text') ? ftEl.querySelector('.far-transfer-bridge-text').innerHTML : '',
+                        explanation: ftEl.querySelector('.quiz-explanation') ? ftEl.querySelector('.quiz-explanation').innerHTML : ''
+                    }
+                });
+            }
+
             // Cache worked example exercises
             var weEl = slideEl.querySelector('.worked-example-container');
             if (weEl) {
                 exercises.push({
                     type: 'worked_example', chapter: parseInt(CHAPTER_NUM),
-                    section: sectionTitle, bloom: bloom, concepts: concepts,
+                    section: sectionTitle, bloom: bloom, exerciseDifficulty: exerciseDifficulty, concepts: concepts,
                     reps: 0, difficulty: 0, stability: 0, lastReview: null, nextReview: null, lapses: 0,
                     autoCache: true,
                     data: {
@@ -2176,7 +2263,7 @@ window.__lxpToggleTheme = function() {
         var slideIndex = Array.prototype.indexOf.call(slides, slideEl);
         var bloomBadge = slideEl.querySelector('.bloom-badge');
         var bloom = bloomBadge ? bloomBadge.textContent.trim() : '';
-        recordScore(slideIndex, 0.0, 0, bloom);
+        recordScore(slideIndex, 0.0, null, bloom);
     };
 
     function updateRubricScore(container) {
@@ -2202,7 +2289,7 @@ window.__lxpToggleTheme = function() {
         var bloomBadge = slideEl.querySelector('.bloom-badge');
         var bloom = bloomBadge ? bloomBadge.textContent.trim() : '';
         var fraction = checkboxes.length > 0 ? checked / checkboxes.length : 0;
-        recordScore(slideIndex, fraction, 0, bloom);
+        recordScore(slideIndex, fraction, null, bloom);
     }
 
     function showModelResponse(container) {
@@ -2326,7 +2413,7 @@ window.__lxpToggleTheme = function() {
         var slideIndex = Array.prototype.indexOf.call(slides, slideEl);
         var bloomBadge = slideEl.querySelector('.bloom-badge');
         var bloom = bloomBadge ? bloomBadge.textContent.trim() : '';
-        recordScore(slideIndex, fraction, 0, bloom);
+        recordScore(slideIndex, fraction, null, bloom);
     }
 
     function markEssayComplete(essayEl) {
@@ -2513,8 +2600,59 @@ window.__lxpToggleTheme = function() {
         closeSettings();
     };
 
-    // ── Initialize: resume from saved position or start at 0 ──────────────
+    // ── Initialize: render math in sidebar & breadcrumb, then resume ──────
+    renderMath(document.querySelector('.sidebar'));
+    renderMath(document.querySelector('.course-header'));
     cacheExercisesForReview();
+
+    // ── Adaptive acceleration ─────────────────────────────────────────────
+    // If the learner has already mastered the concepts for a section, collapse
+    // easy exercises so they can move faster. Medium/hard stay mandatory.
+    // If the learner fails a medium/hard exercise, un-collapse the easy ones.
+    (function applyAcceleration() {
+        var acceleratedSections = {};
+        sectionRanges.forEach(function(range, sIdx) {
+            // Gather concepts for this section from all its slides
+            var sectionConcepts = [];
+            for (var si = range.start; si < range.start + range.count; si++) {
+                try {
+                    var sc = JSON.parse(slides[si].getAttribute('data-concepts') || '[]');
+                    sc.forEach(function(c) { if (sectionConcepts.indexOf(c) === -1) sectionConcepts.push(c); });
+                } catch(e) {}
+            }
+            if (sectionConcepts.length === 0) return;
+            if (!learnerModel.getConceptReadiness(sectionConcepts)) return;
+
+            // Mark easy exercises as accelerated (collapsible)
+            acceleratedSections[sIdx] = true;
+            for (var si2 = range.start; si2 < range.start + range.count; si2++) {
+                var diffBadge = slides[si2].querySelector('.difficulty-badge');
+                if (diffBadge && diffBadge.textContent.trim().toLowerCase() === 'easy') {
+                    slides[si2].classList.add('accelerated');
+                }
+            }
+        });
+
+        // If learner fails a medium/hard exercise in an accelerated section,
+        // un-collapse the easy exercises (scaffolding kicks back in).
+        var origRecordScore = window.recordScore;
+        if (origRecordScore) {
+            window.recordScore = function(slideIdx, score, confidence, bloom) {
+                origRecordScore(slideIdx, score, confidence, bloom);
+                if (score === 0) {
+                    var failedSection = findCurrentSection(slideIdx);
+                    if (acceleratedSections[failedSection]) {
+                        var r = sectionRanges[failedSection];
+                        for (var ui = r.start; ui < r.start + r.count; ui++) {
+                            slides[ui].classList.remove('accelerated');
+                        }
+                        delete acceleratedSections[failedSection];
+                    }
+                }
+            };
+        }
+    })();
+
     updateReviewNavBadge();
     updateMasteryNavIndicator();
     if (total > 0) {

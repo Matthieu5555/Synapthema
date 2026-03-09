@@ -23,12 +23,15 @@ from src.transformation.content_pre_analyzer import (
 )
 
 if TYPE_CHECKING:
-    from src.transformation.llm_client import LLMClient
+    from src.protocols import LLMClient
 
 logger = logging.getLogger(__name__)
 
 # Maximum characters of chapter text to send to the LLM.
 # ~20K chars ≈ ~5K tokens, leaves room for the response.
+# Lower: loses content from the end of long chapters, missing late-chapter concepts.
+# Higher: approaches model context limits; diminishing returns past ~30K as the
+# analysis quality plateaus while cost scales linearly.
 MAX_CHAPTER_TEXT_LENGTH = 20_000
 
 
@@ -73,6 +76,12 @@ knows from prior chapters.
 
 7. **Difficulty progression**: How difficulty changes across the chapter \
 (e.g., "starts introductory, builds to advanced by the end").
+
+8. **Legal/boilerplate detection**: If a section contains primarily legal \
+disclaimers, terms of use, warranty language, copyright notices, or \
+regulatory boilerplate rather than educational content, set its \
+dominant_content_type to "boilerplate". Do NOT extract concepts from \
+legal text. It is not teaching material.
 
 Be thorough. Miss nothing. Every concept matters."""
 

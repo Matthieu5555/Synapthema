@@ -7,6 +7,8 @@ from src.transformation.types import (
     CurriculumBlueprint,
     ELEMENT_BLOOM_MAP,
     ELEMENT_ROLE,
+    InteractiveVisualization,
+    InteractiveVisualizationElement,
     ModuleBlueprint,
     SectionBlueprint,
     AnalogyElement,
@@ -86,7 +88,7 @@ class TestTrainingElementValidation:
             "element_type": "fill_in_the_blank",
             "bloom_level": "apply",
             "fill_in_the_blank": {
-                "statement": "The _____ is blue",
+                "statement": "The [BLANK] is blue",
                 "answers": ["sky"],
             },
         })
@@ -362,7 +364,8 @@ class TestElementBloomMap:
         expected = {
             "section_intro", "flashcard", "slide", "mermaid", "quiz", "matching",
             "ordering", "fill_in_the_blank", "categorization", "analogy",
-            "concept_map", "error_detection", "worked_example", "interactive_essay",
+            "concept_map", "error_detection", "worked_example", "far_transfer",
+            "interactive_essay", "interactive_visualization",
         }
         assert set(ELEMENT_BLOOM_MAP.keys()) == expected
 
@@ -386,6 +389,7 @@ class TestElementBloomMap:
         assert ELEMENT_BLOOM_MAP["error_detection"] == "evaluate"
         assert ELEMENT_BLOOM_MAP["worked_example"] == "apply"
         assert ELEMENT_BLOOM_MAP["interactive_essay"] == "evaluate"
+        assert ELEMENT_BLOOM_MAP["interactive_visualization"] == "apply"
 
 
 class TestElementRole:
@@ -472,3 +476,40 @@ class TestSectionBlueprintFocusConcepts:
         # Both sections share source_section_title but have different focus
         assert blueprint.modules[0].sections[0].focus_concepts == ["concept_x"]
         assert blueprint.modules[0].sections[1].focus_concepts == ["concept_y"]
+
+
+class TestInteractiveVisualization:
+    """Tests for the InteractiveVisualization element type."""
+
+    def test_valid_visualization(self) -> None:
+        elem = _ElementAdapter.validate_python({
+            "element_type": "interactive_visualization",
+            "bloom_level": "apply",
+            "interactive_visualization": {
+                "title": "Bond Price Explorer",
+                "description": "Explore how yield changes affect bond price",
+                "html_code": "<html><body><h1>Test</h1></body></html>",
+                "viz_type": "parameter_explorer",
+                "fallback_text": "Interactive bond price visualization",
+            },
+        })
+        assert isinstance(elem, InteractiveVisualizationElement)
+        assert elem.interactive_visualization.title == "Bond Price Explorer"
+        assert elem.interactive_visualization.viz_type == "parameter_explorer"
+
+    def test_direct_construction(self) -> None:
+        elem = InteractiveVisualizationElement(
+            bloom_level="apply",
+            interactive_visualization=InteractiveVisualization(
+                title="Test Viz",
+                description="Test description",
+                html_code="<html></html>",
+                viz_type="process_stepper",
+            ),
+        )
+        assert elem.element_type == "interactive_visualization"
+        assert elem.interactive_visualization.fallback_text == ""
+
+    def test_bloom_map_and_role(self) -> None:
+        assert ELEMENT_BLOOM_MAP["interactive_visualization"] == "apply"
+        assert ELEMENT_ROLE["interactive_visualization"] == "teach"

@@ -33,9 +33,13 @@ from src.transformation.types import (
 logger = logging.getLogger(__name__)
 
 # Maximum characters for the content summary sent to the LLM.
+# Lower: planner has less context to design the curriculum, may misgroup chapters.
+# Higher: approaches model context limits, increases cost/latency. 10K chars ≈ 2.5K tokens.
 _MAX_SUMMARY_LENGTH = 10_000
 
 # Maximum characters of section text snippet included in the summary.
+# Lower: planner sees only titles, loses content-aware grouping ability.
+# Higher: summary fills up faster, reducing the number of sections visible.
 _SECTION_SNIPPET_LENGTH = 200
 
 _PLANNER_SYSTEM_PROMPT = """\
@@ -95,8 +99,12 @@ list section A's title in B's prerequisites. When a concept dependency graph \
 is provided, USE IT to determine prerequisites rather than guessing.
 9. **source_chapter_number** must match the chapter number from the extracted content.
 10. **COVER ALL CHAPTERS** — you MUST create exactly one module per chapter in the \
-source material. Every chapter listed in the content summary must appear as a module \
-in your output. Do NOT skip or omit any chapters.
+source material, UNLESS a chapter consists of: legal disclaimers, terms of use, \
+copyright notices, warranty text, regulatory boilerplate, study guide instructions \
+("how to use this book"), curriculum navigation tips, errata, or other meta-content \
+that does not teach the subject matter itself. Skip such chapters and do NOT create \
+modules for them. Every chapter with actual educational content must appear as a \
+module in your output.
 11. **Set focus_concepts** — for each blueprint section, list the concept names \
 (from the concept inventory) that this section should teach and practice. \
 Use EXACT concept names from the inventory. When a source section is split \
@@ -363,6 +371,8 @@ Return ONLY a JSON object matching this schema (no markdown fences):
 }"""
 
 # Maximum characters for multi-document content summary.
+# Scales with number of books. Lower: cross-document connections get lost.
+# Higher: approaches model context limits for large corpora (3+ books).
 _MAX_MULTI_DOC_SUMMARY_LENGTH = 20_000
 
 
@@ -998,9 +1008,13 @@ def _ensure_all_chapters_covered_multi_doc(
 # ── Concept-level section splitting (deterministic safety net) ─────────────
 
 # Minimum number of core/supporting concepts to trigger automatic splitting.
+# Lower (1): splits everything, creating very granular learning units.
+# Higher: allows multi-concept sections, risking cognitive overload.
 _MIN_CONCEPTS_TO_SPLIT = 2
 
 # Maximum concepts per learning unit when auto-splitting.
+# Lower (1): one concept per section — focused but creates many small units.
+# Higher: fewer units but each covers more ground, reducing exercise specificity.
 _MAX_CONCEPTS_PER_UNIT = 1
 
 
@@ -1265,140 +1279,10 @@ def validate_progression(blueprint: CurriculumBlueprint) -> list[str]:
 # ── Internal: chapter/section matching ───────────────────────────────────────
 
 
-def find_matching_chapter(book: Book, module_bp: ModuleBlueprint) -> Chapter | None:
-    """Find the extracted Chapter that matches a blueprint module.
-
-    Tries sequential chapter_number and title-embedded chapter number in
-    parallel.  When both match **different** chapters, uses section-match
-    count from the blueprint as a validation signal to pick the winner
-    (preferring sequential on ties).  Falls back to title text matching.
-
-    The title-embedded path handles the common case where PDFs start
-    mid-book (e.g. "CHAPTER 3" is the first extracted chapter, numbered
-    chapter_number=1 sequentially).  The LLM may reference the PDF's own
-    chapter number (3) rather than the extraction's sequential number (1).
-    """
-    if module_bp.source_chapter_number is not None:
-        # Pass 1: exact sequential chapter_number match
-        sequential_match: Chapter | None = None
-        for ch in book.chapters:
-            if ch.chapter_number == module_bp.source_chapter_number:
-                sequential_match = ch
-                break
-
-        # Pass 2: match against chapter number embedded in title
-        # e.g. "CHAPTER 3 Fundamentals of Statistics" → 3
-        title_match: Chapter | None = None
-        for ch in book.chapters:
-            title_num = _extract_chapter_number_from_title(ch.title)
-            if title_num is not None and title_num == module_bp.source_chapter_number:
-                title_match = ch
-                break
-
-        if sequential_match and not title_match:
-            return sequential_match
-        if title_match and not sequential_match:
-            return title_match
-        if sequential_match and title_match:
-            if sequential_match is title_match:
-                return sequential_match
-            # Ambiguity: two different chapters claim the number.
-            # Use blueprint section matches as a tiebreaker.
-            if module_bp.sections:
-                seq_hits = _count_section_matches(sequential_match, module_bp.sections)
-                title_hits = _count_section_matches(title_match, module_bp.sections)
-                if title_hits > seq_hits:
-                    logger.info(
-                        "Chapter resolution: title-embedded match '%s' "
-                        "has more section hits (%d) than sequential match '%s' (%d)",
-                        title_match.title, title_hits,
-                        sequential_match.title, seq_hits,
-                    )
-                    return title_match
-            return sequential_match
-
-    # Pass 3: match by title text
-    bp_title_lower = module_bp.title.lower().strip()
-    for ch in book.chapters:
-        if ch.title.lower().strip() == bp_title_lower:
-            return ch
-
-    return None
-
-
-_CHAPTER_NUM_RE = re.compile(r"(?:chapter|ch\.?)\s+(\d+)", re.IGNORECASE)
-
-
-def _extract_chapter_number_from_title(title: str) -> int | None:
-    """Extract a chapter number from a title like 'CHAPTER 3 Fundamentals'."""
-    m = _CHAPTER_NUM_RE.search(title)
-    return int(m.group(1)) if m else None
-
-
-def _count_section_matches(
-    chapter: Chapter, section_bps: list[SectionBlueprint],
-) -> int:
-    """Count how many blueprint sections match sections in *chapter*."""
-    return sum(
-        1 for sbp in section_bps
-        if find_matching_section(chapter, sbp) is not None
-    )
-
-
-def _normalize_section_title(title: str) -> str:
-    """Normalize a section title for fuzzy matching.
-
-    Strips numbering-period differences (e.g. "3.2.1 X" vs "3.2.1. X"),
-    lowercases, and collapses whitespace.
-    """
-    t = title.strip().lower()
-    # Normalize numbering: "3.2.1. " and "3.2.1 " → same form
-    # Strip leading "X.Y.Z. " or "X.Y.Z " prefix entirely for comparison
-    t = re.sub(r"^[\d]+\.[\d.]*\s*", "", t)
-    # Also strip "CHAPTER N: " prefix
-    t = re.sub(r"^chapter\s+\d+[:\s]*", "", t)
-    # Collapse whitespace
-    t = re.sub(r"\s+", " ", t).strip()
-    return t
-
-
-def find_matching_section(
-    chapter: Chapter, section_bp: SectionBlueprint
-) -> Section | None:
-    """Find the extracted Section matching a blueprint section.
-
-    Checks source_section_title against section titles, including subsections.
-    Uses exact match first, then falls back to normalized fuzzy matching
-    (strips numbering prefixes, case-insensitive).
-    """
-    target = section_bp.source_section_title.strip()
-    if not target:
-        target = section_bp.title.strip()
-
-    # Collect all candidate sections (top-level + subsections)
-    candidates: list[Section] = []
-    for section in chapter.sections:
-        candidates.append(section)
-        for sub in section.subsections:
-            candidates.append(sub)
-
-    # Pass 1: exact match
-    for section in candidates:
-        if section.title.strip() == target:
-            return section
-
-    # Pass 2: normalized match (strips numbering prefixes, case-insensitive)
-    target_norm = _normalize_section_title(target)
-    if target_norm:
-        for section in candidates:
-            if _normalize_section_title(section.title) == target_norm:
-                return section
-
-    # Pass 3: substring containment (target text found in section title or vice versa)
-    if target_norm and len(target_norm) >= 5:
-        for section in candidates:
-            section_norm = _normalize_section_title(section.title)
-            if section_norm and (target_norm in section_norm or section_norm in target_norm):
-                return section
-
-    return None
+# Matching functions are defined in section_matching.py (canonical location)
+# and re-exported here for backward compatibility.
+from src.transformation.section_matching import (  # noqa: F401, E402
+    _extract_chapter_number_from_title,
+    find_matching_chapter,
+    find_matching_section,
+)

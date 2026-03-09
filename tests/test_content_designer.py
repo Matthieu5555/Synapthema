@@ -10,6 +10,8 @@ from typing import TypeVar
 
 import pytest
 
+from tests.conftest import FailingLLMClient, MockLLMClient as _BaseMockLLMClient
+
 from src.extraction.types import Chapter, Section
 from src.transformation.analysis_types import (
     ChapterAnalysis,
@@ -24,6 +26,10 @@ from src.transformation.content_designer import (
     MIN_SECTION_TEXT_LENGTH,
 )
 from src.transformation.types import (
+    AnalogyExercise,
+    AnalogyElement,
+    CategorizationExercise,
+    CategorizationElement,
     FillInTheBlank,
     FillInBlankElement,
     Flashcard,
@@ -31,6 +37,8 @@ from src.transformation.types import (
     MatchingExercise,
     MatchingElement,
     ModuleBlueprint,
+    OrderingExercise,
+    OrderingElement,
     Quiz,
     QuizElement,
     QuizQuestion,
@@ -44,9 +52,10 @@ T = TypeVar("T")
 
 
 def _valid_mock_elements() -> list:
-    """Standard mock elements: 1 slide + quiz + matching + 2 flashcards.
+    """Standard mock elements: 1 slide + 4 exercises + 2 flashcards.
 
-    Satisfies validation: 1 teaching element, 2 exercises of different types.
+    Satisfies validation: 1 teaching element, 4 exercises of different types,
+    with ascending difficulty (easy → medium → medium → hard).
     """
     return [
         SlideElement(
@@ -55,6 +64,7 @@ def _valid_mock_elements() -> list:
         ),
         QuizElement(
             bloom_level="apply",
+            difficulty="easy",
             quiz=Quiz(title="Mock Quiz", questions=[
                 QuizQuestion(
                     question="Mock question?",
@@ -65,10 +75,28 @@ def _valid_mock_elements() -> list:
         ),
         MatchingElement(
             bloom_level="apply",
+            difficulty="medium",
             matching=MatchingExercise(
                 title="Mock Matching",
                 left_items=["Term A", "Term B"],
                 right_items=["Def A", "Def B"],
+            ),
+        ),
+        FillInBlankElement(
+            bloom_level="analyze",
+            difficulty="medium",
+            fill_in_the_blank=FillInTheBlank(
+                statement="The [BLANK] is X",
+                answers=["answer"],
+            ),
+        ),
+        OrderingElement(
+            bloom_level="apply",
+            difficulty="hard",
+            ordering=OrderingExercise(
+                title="Mock Ordering",
+                instruction="Order these items.",
+                items=["Step 1", "Step 2", "Step 3"],
             ),
         ),
         FlashcardElement(
@@ -82,32 +110,9 @@ def _valid_mock_elements() -> list:
     ]
 
 
-class MockLLMClient:
-    """Test double returning a fixed structured response.
-
-    Handles both ReinforcementTargetSet (Phase 1) and SectionResponse (Phase 2).
-    """
-
-    def __init__(self, elements: list | None = None) -> None:
-        self._elements = elements or _valid_mock_elements()
-        self._lock = threading.Lock()
-        self.call_count = 0
-        self.last_system_prompt: str = ""
-
-    def complete(self, system_prompt: str, user_prompt: str) -> str:
-        self.last_system_prompt = system_prompt
-        return "mock response"
-
-    def complete_light(self, system_prompt: str, user_prompt: str) -> str:
-        return self.complete(system_prompt, user_prompt)
-
-    def complete_structured(
-        self, system_prompt: str, user_prompt: str, response_model: type[T]
-    ) -> T:
-        with self._lock:
-            self.call_count += 1
-            self.last_system_prompt = system_prompt
-
+def _make_content_designer_response(elements: list):
+    """Build a callable that returns Phase 1 or Phase 2 response by model type."""
+    def _responder(_sys: str, _usr: object, response_model: type):
         from src.transformation.types import ReinforcementTargetSet as RTS
         if response_model is RTS:
             from src.transformation.types import ReinforcementTarget
@@ -133,37 +138,18 @@ class MockLLMClient:
                     bloom_level="analyze",
                     suggested_element_type="interactive_essay",
                 ),
-            ])  # type: ignore[return-value]
-
+            ])
         from src.transformation.content_designer import SectionResponse
-        return SectionResponse(elements=self._elements)  # type: ignore[return-value]
-
-    def complete_structured_light(
-        self, system_prompt: str, user_prompt: str, response_model: type[T]
-    ) -> T:
-        return self.complete_structured(system_prompt, user_prompt, response_model)
+        return SectionResponse(elements=elements)
+    return _responder
 
 
-class FailingLLMClient:
-    """Test double that always raises LLMError."""
+class MockLLMClient(_BaseMockLLMClient):
+    """Content-designer mock: polymorphic (Phase 1 targets vs Phase 2 elements)."""
 
-    def complete(self, system_prompt: str, user_prompt: str) -> str:
-        raise RuntimeError("fail")
-
-    def complete_light(self, system_prompt: str, user_prompt: str) -> str:
-        raise RuntimeError("fail")
-
-    def complete_structured(
-        self, system_prompt: str, user_prompt: str, response_model: type[T]
-    ) -> T:
-        from src.transformation.llm_client import LLMError
-        raise LLMError("API failed")
-
-    def complete_structured_light(
-        self, system_prompt: str, user_prompt: str, response_model: type[T]
-    ) -> T:
-        from src.transformation.llm_client import LLMError
-        raise LLMError("API failed")
+    def __init__(self, elements: list | None = None) -> None:
+        els = elements or _valid_mock_elements()
+        super().__init__(structured_response=_make_content_designer_response(els))
 
 
 def _make_chapter(
@@ -200,7 +186,7 @@ class TestTransformChapter:
 
         assert module.chapter_number == 1
         assert module.title == "Test Chapter"
-        assert len(module.all_elements) == 5  # slide + quiz + matching + 2 flashcards
+        assert len(module.all_elements) == 7  # slide + 4 exercises + 2 flashcards
         # 2 calls per section: target selection + element generation
         assert client.call_count == 2
 
@@ -226,7 +212,7 @@ class TestTransformChapter:
 
         # Only the long section should be processed (2 calls: target + generation)
         assert client.call_count == 2
-        assert len(module.all_elements) == 5
+        assert len(module.all_elements) == 7
 
     def test_handles_all_short_sections(self) -> None:
         short = Section(
@@ -251,8 +237,8 @@ class TestTransformChapter:
         assert len(module.sections) == 1
         assert len(module.all_elements) == 1
         assert module.all_elements[0].element_type == "slide"
-        # Fallback section should have an error verification note
-        assert any("[error]" in n for n in module.sections[0].verification_notes)
+        # Fallback section should have a fallback verification note
+        assert any("[fallback:" in n for n in module.sections[0].verification_notes)
 
     def test_multiple_sections_combined(self) -> None:
         s1 = Section(title="S1", level=3, start_page=1, end_page=3, text="a" * 600)
@@ -264,7 +250,7 @@ class TestTransformChapter:
 
         # 2 sections × 2 calls each (target selection + generation)
         assert client.call_count == 4
-        assert len(module.all_elements) == 10  # 5 elements per section
+        assert len(module.all_elements) == 14  # 7 elements per section
 
 
 class TestTransformChapterWithAnalysis:
@@ -400,7 +386,7 @@ class TestTwoPhaseGeneration:
 
         # Phase 1 failed (1 call) + Phase 2 succeeded (1 call) = 2 calls
         assert client.call_count == 2
-        assert len(module.all_elements) == 5  # slide + quiz + matching + 2 flashcards from Phase 2
+        assert len(module.all_elements) == 7  # slide + 4 exercises + 2 flashcards from Phase 2
         assert module.all_elements[0].slide.title == "Fallback"  # type: ignore[union-attr]
 
 
@@ -550,15 +536,29 @@ class TestSectionResponseValidators:
                     title="M", left_items=["A", "B"], right_items=["1", "2"],
                 ),
             ),
+            FillInBlankElement(
+                bloom_level="remember",  # wrong — should be "analyze"
+                fill_in_the_blank=FillInTheBlank(
+                    statement="The [BLANK] is X", answers=["answer"],
+                ),
+            ),
+            OrderingElement(
+                bloom_level="remember",  # wrong — should be "apply"
+                ordering=OrderingExercise(
+                    title="O", instruction="Order these.", items=["A", "B", "C"],
+                ),
+            ),
             FlashcardElement(
                 bloom_level="evaluate",  # wrong — should be "remember"
                 flashcard=Flashcard(front="Q", back="A"),
             ),
         ])
-        assert resp.elements[0].bloom_level == "understand"
-        assert resp.elements[1].bloom_level == "apply"
-        assert resp.elements[2].bloom_level == "apply"
-        assert resp.elements[3].bloom_level == "remember"
+        assert resp.elements[0].bloom_level == "understand"  # slide
+        assert resp.elements[1].bloom_level == "apply"  # quiz
+        assert resp.elements[2].bloom_level == "apply"  # matching
+        assert resp.elements[3].bloom_level == "analyze"  # fill_in_the_blank
+        assert resp.elements[4].bloom_level == "apply"  # ordering
+        assert resp.elements[5].bloom_level == "remember"  # flashcard
 
     def test_rejects_no_slides(self) -> None:
         """Section must contain at least 1 slide."""
@@ -573,79 +573,200 @@ class TestSectionResponseValidators:
                 ),
             ])
 
-    def test_rejects_no_exercises(self) -> None:
-        """Section must contain at least 2 practice exercises."""
-        from pydantic import ValidationError
+    def test_accepts_few_exercises(self) -> None:
+        """Section with fewer exercises than target is accepted (soft warning)."""
         from src.transformation.content_designer import SectionResponse
 
-        with pytest.raises(ValidationError, match="minimum: 2"):
-            SectionResponse(elements=[
-                SlideElement(
-                    bloom_level="understand",
-                    slide=Slide(title="T", content="C"),
-                ),
-            ])
+        resp = SectionResponse(elements=[
+            SlideElement(
+                bloom_level="understand",
+                slide=Slide(title="T", content="C"),
+            ),
+            QuizElement(
+                bloom_level="apply",
+                quiz=Quiz(title="Q", questions=[
+                    QuizQuestion(question="?", options=["A", "B"], correct_index=0),
+                ]),
+            ),
+        ])
+        assert len([e for e in resp.elements if e.element_type == "quiz"]) == 1
 
     def test_accepts_valid_distribution(self) -> None:
-        """A section with 1 slide, 2+ exercises (different types), and flashcards should pass."""
+        """A section with 1 slide, 4+ exercises (different types), and flashcards should pass."""
         from src.transformation.content_designer import SectionResponse
 
         resp = SectionResponse(elements=_valid_mock_elements())
+        assert len(resp.elements) == 7
+
+    def test_merges_multiple_slides(self) -> None:
+        """Extra slides are merged into the first one."""
+        from src.transformation.content_designer import SectionResponse
+
+        resp = SectionResponse(elements=[
+            SlideElement(
+                bloom_level="understand",
+                slide=Slide(title="Slide 1", content="First part"),
+            ),
+            SlideElement(
+                bloom_level="understand",
+                slide=Slide(title="Slide 2", content="Second part"),
+            ),
+            QuizElement(
+                bloom_level="apply",
+                quiz=Quiz(title="Q", questions=[
+                    QuizQuestion(question="?", options=["A", "B"], correct_index=0),
+                ]),
+            ),
+            MatchingElement(
+                bloom_level="apply",
+                matching=MatchingExercise(
+                    title="M", left_items=["A", "B"], right_items=["1", "2"],
+                ),
+            ),
+            FillInBlankElement(
+                bloom_level="analyze",
+                fill_in_the_blank=FillInTheBlank(
+                    statement="The [BLANK] is X", answers=["answer"],
+                ),
+            ),
+            OrderingElement(
+                bloom_level="apply",
+                ordering=OrderingExercise(
+                    title="O", instruction="Order these.", items=["A", "B", "C"],
+                ),
+            ),
+        ])
+        slide_count = sum(
+            1 for e in resp.elements if e.element_type in ("slide", "worked_example")
+        )
+        assert slide_count == 1
+        assert "First part" in resp.elements[0].slide.content  # pyright: ignore
+        assert "Second part" in resp.elements[0].slide.content  # pyright: ignore
+
+    def test_accepts_low_exercise_variety(self) -> None:
+        """Section with low exercise variety is accepted (soft warning)."""
+        from src.transformation.content_designer import SectionResponse
+
+        resp = SectionResponse(elements=[
+            SlideElement(
+                bloom_level="understand",
+                slide=Slide(title="T", content="C"),
+            ),
+            QuizElement(
+                bloom_level="apply",
+                quiz=Quiz(title="Q1", questions=[
+                    QuizQuestion(question="?", options=["A", "B"], correct_index=0),
+                ]),
+            ),
+            MatchingElement(
+                bloom_level="apply",
+                matching=MatchingExercise(
+                    title="M1", left_items=["A", "B"], right_items=["1", "2"],
+                ),
+            ),
+            MatchingElement(
+                bloom_level="apply",
+                matching=MatchingExercise(
+                    title="M2", left_items=["C", "D"], right_items=["3", "4"],
+                ),
+            ),
+            MatchingElement(
+                bloom_level="apply",
+                matching=MatchingExercise(
+                    title="M3", left_items=["E", "F"], right_items=["5", "6"],
+                ),
+            ),
+        ])
+        # All elements kept despite only 2 exercise types
         assert len(resp.elements) == 5
 
-    def test_rejects_multiple_slides(self) -> None:
-        """Section must contain at most 1 slide/worked_example."""
-        from pydantic import ValidationError
+    def test_trims_excess_quizzes(self) -> None:
+        """Excess quizzes are trimmed to max, not rejected."""
         from src.transformation.content_designer import SectionResponse
 
-        with pytest.raises(ValidationError, match="maximum: 1"):
-            SectionResponse(elements=[
-                SlideElement(
-                    bloom_level="understand",
-                    slide=Slide(title="Slide 1", content="C"),
+        resp = SectionResponse(elements=[
+            SlideElement(
+                bloom_level="understand",
+                slide=Slide(title="T", content="C"),
+            ),
+            QuizElement(
+                bloom_level="apply",
+                quiz=Quiz(title="Q1", questions=[
+                    QuizQuestion(question="?", options=["A", "B"], correct_index=0),
+                ]),
+            ),
+            QuizElement(
+                bloom_level="apply",
+                quiz=Quiz(title="Q2", questions=[
+                    QuizQuestion(question="??", options=["C", "D"], correct_index=1),
+                ]),
+            ),
+            QuizElement(
+                bloom_level="apply",
+                quiz=Quiz(title="Q3", questions=[
+                    QuizQuestion(question="???", options=["E", "F"], correct_index=0),
+                ]),
+            ),
+            MatchingElement(
+                bloom_level="apply",
+                matching=MatchingExercise(
+                    title="M", left_items=["A", "B"], right_items=["1", "2"],
                 ),
-                SlideElement(
-                    bloom_level="understand",
-                    slide=Slide(title="Slide 2", content="D"),
-                ),
-                QuizElement(
-                    bloom_level="apply",
-                    quiz=Quiz(title="Q", questions=[
-                        QuizQuestion(question="?", options=["A", "B"], correct_index=0),
-                    ]),
-                ),
-                MatchingElement(
-                    bloom_level="apply",
-                    matching=MatchingExercise(
-                        title="M", left_items=["A", "B"], right_items=["1", "2"],
-                    ),
-                ),
-            ])
+            ),
+        ])
+        quiz_count = sum(1 for e in resp.elements if e.element_type == "quiz")
+        assert quiz_count == 1  # default max_quizzes is 1
 
-    def test_rejects_same_exercise_types(self) -> None:
-        """Section must use at least 2 different exercise types."""
-        from pydantic import ValidationError
-        from src.transformation.content_designer import SectionResponse
 
-        with pytest.raises(ValidationError, match="same type"):
-            SectionResponse(elements=[
-                SlideElement(
-                    bloom_level="understand",
-                    slide=Slide(title="T", content="C"),
-                ),
-                QuizElement(
-                    bloom_level="apply",
-                    quiz=Quiz(title="Q1", questions=[
-                        QuizQuestion(question="?", options=["A", "B"], correct_index=0),
-                    ]),
-                ),
-                QuizElement(
-                    bloom_level="apply",
-                    quiz=Quiz(title="Q2", questions=[
-                        QuizQuestion(question="??", options=["X", "Y"], correct_index=1),
-                    ]),
-                ),
-            ])
+class TestSmartFallbackElements:
+    """Tests for the smart fallback slide generation."""
+
+    def test_produces_structured_slide(self) -> None:
+        """Smart fallback extracts key terms and sentences instead of raw dump."""
+        from src.transformation.content_designer import _smart_fallback_elements
+
+        section = Section(
+            title="Risk Metrics",
+            level=2,
+            start_page=1,
+            end_page=5,
+            text=(
+                "The **Standard Deviation** measures the dispersion of returns around the mean. "
+                "A higher standard deviation indicates greater volatility. "
+                "The **Sharpe Ratio** adjusts returns for risk by dividing excess return by standard deviation. "
+                "Investors prefer higher Sharpe Ratios as they indicate better risk-adjusted performance."
+            ),
+        )
+        elements = _smart_fallback_elements(section, "test error")
+        assert len(elements) == 1
+        slide = elements[0]
+        assert slide.element_type == "slide"
+        assert "Auto-generated summary" in slide.slide.content
+        assert "Key Points" in slide.slide.content
+        assert "test error" in slide.slide.speaker_notes
+
+    def test_handles_empty_text(self) -> None:
+        """Smart fallback doesn't crash on empty section text."""
+        from src.transformation.content_designer import _smart_fallback_elements
+
+        section = Section(title="Empty", level=2, start_page=1, end_page=1, text="")
+        elements = _smart_fallback_elements(section)
+        assert len(elements) == 1
+        assert elements[0].element_type == "slide"
+
+    def test_caps_content_length(self) -> None:
+        """Smart fallback caps content at 1500 chars."""
+        from src.transformation.content_designer import _smart_fallback_elements
+
+        section = Section(
+            title="Long",
+            level=2,
+            start_page=1,
+            end_page=10,
+            text="This is a very long sentence that should be included. " * 200,
+        )
+        elements = _smart_fallback_elements(section)
+        assert len(elements[0].slide.content) <= 1500
 
 
 class TestPrepareSectionInputsFallback:
@@ -1089,8 +1210,8 @@ class TestParallelSectionProcessing:
         module = transform_chapter(chapter, client, max_workers=4)
 
         assert len(module.sections) == 5
-        # Each section has 5 elements (from mock)
-        assert len(module.all_elements) == 25
+        # Each section has 7 elements (from mock)
+        assert len(module.all_elements) == 35
 
     def test_parallel_preserves_section_order(self) -> None:
         """Sections should be returned in input order despite parallel execution."""
@@ -1160,9 +1281,9 @@ class TestParallelSectionProcessing:
 
         # Both sections present (one normal, one fallback)
         assert len(module.sections) == 2
-        # The failing section should have a fallback slide with error note
+        # The failing section should have a fallback slide with summary note
         fail_sec = [s for s in module.sections if "FAIL" in s.title][0]
-        assert any("[error]" in n for n in fail_sec.verification_notes)
+        assert any("[fallback:" in n for n in fail_sec.verification_notes)
 
 
 class TestLookupSectionAnalysisCanonicalMap:
@@ -1241,3 +1362,44 @@ class TestLookupSectionAnalysisCanonicalMap:
         )
         assert concepts == []
         assert char is None
+
+
+# ── Exercise type randomization tests ─────────────────────────────────────────
+
+
+class TestSelectExerciseTypes:
+    """Tests for _select_exercise_types() randomization."""
+
+    def test_returns_requested_count(self) -> None:
+        from src.transformation.content_designer import _select_exercise_types
+        result = _select_exercise_types(count=4)
+        assert len(result) == 4
+
+    def test_no_duplicate_types(self) -> None:
+        from src.transformation.content_designer import _select_exercise_types
+        for _ in range(20):
+            result = _select_exercise_types(count=5)
+            assert len(result) == len(set(result))
+
+    def test_max_one_quiz(self) -> None:
+        from src.transformation.content_designer import _select_exercise_types
+        for _ in range(50):
+            result = _select_exercise_types(count=5)
+            assert result.count("quiz") <= 1
+
+    def test_biases_away_from_recently_used(self) -> None:
+        from src.transformation.content_designer import _select_exercise_types
+        recent = [["quiz", "matching", "ordering", "categorization"]]
+        recent_set = set(recent[0])
+        # With 4 recent and 3 fresh types, selecting 4 should always include all 3 fresh
+        for _ in range(20):
+            result = _select_exercise_types(count=4, recently_used=recent)
+            fresh = [t for t in result if t not in recent_set]
+            assert len(fresh) >= 3, f"Expected at least 3 fresh types, got {fresh}"
+
+    def test_all_types_from_pool(self) -> None:
+        from src.transformation.content_designer import _select_exercise_types, EXERCISE_POOL
+        for _ in range(50):
+            result = _select_exercise_types(count=4)
+            for t in result:
+                assert t in EXERCISE_POOL

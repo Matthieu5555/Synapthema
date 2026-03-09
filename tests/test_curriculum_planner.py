@@ -11,6 +11,8 @@ from typing import TypeVar
 from src.extraction.types import Book, Chapter, Section
 import pytest
 
+from tests.conftest import FailingLLMClient, MockLLMClient
+
 from src.transformation.curriculum_planner import (
     _build_content_summary,
     _build_rich_content_summary,
@@ -83,92 +85,63 @@ def _make_book(chapters: tuple[Chapter, ...] | None = None) -> Book:
     )
 
 
-class MockPlannerClient:
+def _default_planner_blueprint() -> CurriculumBlueprint:
+    return CurriculumBlueprint(
+        course_title="Mock Course",
+        course_summary="A mock course.",
+        learner_journey="Module 1 → Module 2",
+        modules=[
+            ModuleBlueprint(
+                title="Introduction to Testing",
+                source_chapter_number=1,
+                summary="Intro module",
+                sections=[
+                    SectionBlueprint(
+                        title="What is Testing",
+                        source_section_title="What is Testing",
+                        learning_objectives=["Define testing"],
+                        template="narrative",
+                        bloom_target="remember",
+                    ),
+                    SectionBlueprint(
+                        title="Why Test",
+                        source_section_title="Why Test",
+                        learning_objectives=["Explain importance of testing"],
+                        template="analogy_first",
+                        bloom_target="understand",
+                    ),
+                ],
+            ),
+            ModuleBlueprint(
+                title="Advanced Testing",
+                source_chapter_number=2,
+                summary="Advanced module",
+                sections=[
+                    SectionBlueprint(
+                        title="Unit Tests",
+                        source_section_title="Unit Tests",
+                        learning_objectives=["Write a unit test"],
+                        template="worked_example",
+                        bloom_target="apply",
+                    ),
+                ],
+            ),
+        ],
+    )
+
+
+class MockPlannerClient(MockLLMClient):
     """Returns a fixed CurriculumBlueprint from complete_structured()."""
 
     def __init__(self, blueprint: CurriculumBlueprint | None = None) -> None:
-        self._blueprint = blueprint or CurriculumBlueprint(
-            course_title="Mock Course",
-            course_summary="A mock course.",
-            learner_journey="Module 1 → Module 2",
-            modules=[
-                ModuleBlueprint(
-                    title="Introduction to Testing",
-                    source_chapter_number=1,
-                    summary="Intro module",
-                    sections=[
-                        SectionBlueprint(
-                            title="What is Testing",
-                            source_section_title="What is Testing",
-                            learning_objectives=["Define testing"],
-                            template="narrative",
-                            bloom_target="remember",
-                        ),
-                        SectionBlueprint(
-                            title="Why Test",
-                            source_section_title="Why Test",
-                            learning_objectives=["Explain importance of testing"],
-                            template="analogy_first",
-                            bloom_target="understand",
-                        ),
-                    ],
-                ),
-                ModuleBlueprint(
-                    title="Advanced Testing",
-                    source_chapter_number=2,
-                    summary="Advanced module",
-                    sections=[
-                        SectionBlueprint(
-                            title="Unit Tests",
-                            source_section_title="Unit Tests",
-                            learning_objectives=["Write a unit test"],
-                            template="worked_example",
-                            bloom_target="apply",
-                        ),
-                    ],
-                ),
-            ],
-        )
-        self.call_count = 0
-
-    def complete(self, system_prompt: str, user_prompt: str) -> str:
-        return "mock"
-
-    def complete_light(self, system_prompt: str, user_prompt: str) -> str:
-        return self.complete(system_prompt, user_prompt)
-
-    def complete_structured(
-        self, system_prompt: str, user_prompt: str, response_model: type[T]
-    ) -> T:
-        self.call_count += 1
-        return self._blueprint  # type: ignore[return-value]
-
-    def complete_structured_light(
-        self, system_prompt: str, user_prompt: str, response_model: type[T]
-    ) -> T:
-        return self.complete_structured(system_prompt, user_prompt, response_model)
+        super().__init__(structured_response=blueprint or _default_planner_blueprint())
 
 
-class FailingPlannerClient:
+class FailingPlannerClient(FailingLLMClient):
     """Always raises an error."""
 
-    def complete(self, system_prompt: str, user_prompt: str) -> str:
-        raise RuntimeError("fail")
-
-    def complete_light(self, system_prompt: str, user_prompt: str) -> str:
-        raise RuntimeError("fail")
-
-    def complete_structured(
-        self, system_prompt: str, user_prompt: str, response_model: type[T]
-    ) -> T:
-        from src.transformation.llm_client import LLMError
-        raise LLMError("Planning failed")
-
-    def complete_structured_light(
-        self, system_prompt: str, user_prompt: str, response_model: type[T]
-    ) -> T:
-        from src.transformation.llm_client import LLMError
-        raise LLMError("Planning failed")
+    def __init__(self) -> None:
+        super().__init__(message="Planning failed")
 
 
 # ── Tests ──────────────────────────────────────────────────────────────────────
